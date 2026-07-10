@@ -1,0 +1,138 @@
+import { useState } from 'react';
+import { useProjectStore } from '../projectStore';
+import { uid } from '../../../shared/utils';
+import { matchLorebook } from '../../../ai/lorebookEngine';
+import type { LorebookEntry } from '../../../shared/types';
+
+export function LorebookEditor() {
+  const { project, update } = useProjectStore();
+  const [testText, setTestText] = useState('');
+  if (!project) return null;
+
+  const matched = testText.trim()
+    ? new Set(matchLorebook(project.lorebook, testText).map((e) => e.id))
+    : new Set<string>();
+
+  function add() {
+    update((p) =>
+      p.lorebook.push({
+        id: uid('lb'),
+        title: 'Новая запись',
+        keys: [],
+        content: '',
+        alwaysActive: false,
+        priority: 0,
+      })
+    );
+  }
+  function patch(id: string, fn: (e: LorebookEntry) => void) {
+    update((p) => {
+      const e = p.lorebook.find((e) => e.id === id);
+      if (e) fn(e);
+    });
+  }
+
+  return (
+    <div className="grid lg:grid-cols-[1fr_300px] gap-4">
+      <div>
+        <div className="flex justify-between items-center mb-3">
+          <p className="text-sm text-gray-400">
+            Записи инъектятся в контекст, когда их ключи встречаются в тексте (или всегда).
+          </p>
+          <button className="btn-primary" onClick={add}>
+            + Запись
+          </button>
+        </div>
+        {project.lorebook.length === 0 && (
+          <div className="card text-center text-gray-500 py-10">Лорбук пуст.</div>
+        )}
+        <div className="space-y-3">
+          {project.lorebook.map((e) => (
+            <div
+              key={e.id}
+              className={`card ${matched.has(e.id) ? 'ring-2 ring-accent2' : ''}`}
+            >
+              <div className="flex gap-2 mb-2">
+                <input
+                  className="input flex-1"
+                  value={e.title}
+                  onChange={(ev) => patch(e.id, (x) => (x.title = ev.target.value))}
+                />
+                <input
+                  type="number"
+                  className="input w-20"
+                  title="Приоритет"
+                  value={e.priority}
+                  onChange={(ev) => patch(e.id, (x) => (x.priority = Number(ev.target.value)))}
+                />
+              </div>
+              <label className="label">Ключи (через запятую)</label>
+              <input
+                className="input mb-2"
+                placeholder="Арес, кулон, тайна..."
+                value={e.keys.join(', ')}
+                onChange={(ev) =>
+                  patch(e.id, (x) => (x.keys = ev.target.value.split(',').map((s) => s.trim()).filter(Boolean)))
+                }
+              />
+              <label className="label">Содержимое</label>
+              <textarea
+                className="input h-20"
+                value={e.content}
+                onChange={(ev) => patch(e.id, (x) => (x.content = ev.target.value))}
+              />
+              <div className="flex items-center justify-between mt-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={e.alwaysActive}
+                    onChange={(ev) => patch(e.id, (x) => (x.alwaysActive = ev.target.checked))}
+                  />
+                  Всегда активна
+                </label>
+                <button
+                  className="btn-danger !px-3 !py-1 text-xs"
+                  onClick={() => update((p) => (p.lorebook = p.lorebook.filter((x) => x.id !== e.id)))}
+                >
+                  Удалить
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card h-fit sticky top-20">
+        <h4 className="font-semibold mb-2">Тест ключей</h4>
+        <p className="text-xs text-gray-500 mb-2">
+          Введите текст — подсветятся сработавшие записи.
+        </p>
+        <textarea
+          className="input h-32"
+          placeholder="Например: Арес показал мне кулон..."
+          value={testText}
+          onChange={(e) => setTestText(e.target.value)}
+        />
+        <div className="mt-3 text-sm">
+          {testText.trim() ? (
+            matched.size ? (
+              <ul className="space-y-1">
+                {project.lorebook
+                  .filter((e) => matched.has(e.id))
+                  .map((e) => (
+                    <li key={e.id} className="text-accent2">
+                      ✓ {e.title}
+                    </li>
+                  ))}
+              </ul>
+            ) : (
+              <span className="text-gray-500">Ничего не сработало.</span>
+            )
+          ) : (
+            <span className="text-gray-600">—</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

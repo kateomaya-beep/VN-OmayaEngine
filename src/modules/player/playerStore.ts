@@ -1,0 +1,214 @@
+import { create } from 'zustand';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot } from '../../shared/types';
+import { initialRuntimeState } from '../../shared/factory';
+import { runTurn } from '../../ai/gameEngine';
+import { getProject, putSave, getSave } from '../../storage/db';
+import { playMusic, playSfx } from './audio';
+
+interface PlayerStore {
+  project: Project | null;
+  state: RuntimeState | null;
+  // Beat playback
+  queue: Beat[];
+  visibleBeats: Beat[]; // beats revealed so far this turn
+  phase: 'beats' | 'choices'; // beats still playing vs. choices revealed
+  choices: Choice[];
+  cg: string | null; // active cutscene CG assetId
+  chapterTitle: string | null;
+  // Status
+  loading: boolean;
+  thinking: boolean;
+  error: string | null;
+  statFlash: { statId: string; delta: number }[];
+
+  loadAndStart: (projectId: string, resume?: boolean) => Promise<void>;
+  advance: () => void; // reveal next beat
+  choose: (choice: Choice) => Promise<void>;
+  submitFreeInput: (text: string) => Promise<void>;
+  regenerate: () => Promise<void>;
+  clearError: () => void;
+  save: (slot: number, title: string) => Promise<void>;
+  loadSlot: (slot: number) => Promise<void>;
+  dismissChapter: () => void;
+}
+
+const AUTOSAVE_SLOT = 0;
+
+export const usePlayerStore = create<PlayerStore>((set, get) => ({
+  project: null,
+  state: null,
+  queue: [],
+  visibleBeats: [],
+  phase: 'beats',
+  choices: [],
+  cg: null,
+  chapterTitle: null,
+  loading: true,
+  thinking: false,
+  error: null,
+  statFlash: [],
+
+  async loadAndStart(projectId, resume) {
+    set({ loading: true, error: null });
+    const project = await getProject(projectId);
+    if (!project) {
+      set({ loading: false, error: 'Проект не найден' });
+      return;
+    }
+
+    if (resume) {
+      const save = await getSave(projectId, AUTOSAVE_SLOT);
+      if (save) {
+        applyLoadedState(set, project, save.state);
+        set({ loading: false });
+        return;
+      }
+    }
+
+    const state = initialRuntimeState(project);
+    set({ project, state, loading: false, queue: [], visibleBeats: [], choices: [], cg: null });
+    // Seed the opening turn.
+    await runAndApply(set, get, project, state, `[НАЧАЛО ИГРЫ] ${project.lore.openingScene}`.trim());
+  },
+
+  advance() {
+    const { queue, visibleBeats, phase } = get();
+    if (phase !== 'beats') return;
+    if (queue.length === 0) {
+      // Last beat already shown — reveal choices.
+      set({ phase: 'choices' });
+      return;
+    }
+    const [next, ...rest] = queue;
+    set({ queue: rest, visibleBeats: [...visibleBeats, next] });
+  },
+
+  async choose(choice) {
+    const { state, project } = get();
+    if (!state || !project) return;
+    // Deduct cost if any.
+    let move = choice.text;
+    if (choice.cost) {
+      const cur = state.statValues[choice.cost.statId] ?? 0;
+      if (cur < choice.cost.amount) {
+        set({ error: 'Недостаточно ресурса для этого выбора.' });
+        return;
+      }
+      state.statValues[choice.cost.statId] = cur - choice.cost.amount;
+    }
+    await runAndApply(set, get, project, state, move);
+  },
+
+  async submitFreeInput(text) {
+    const { state, project } = get();
+    if (!state || !project || !text.trim()) return;
+    await runAndApply(set, get, project, state, text.trim());
+  },
+
+  async regenerate() {
+    const { project } = get();
+    const state = get().state;
+    if (!project || !state) return;
+    // Roll back the last exchange from history and replay the same player move.
+    const hist = state.history;
+    if (hist.length < 2) return;
+    const lastMove = hist[hist.length - 2];
+    const rolledBack: RuntimeState = { ...state, history: hist.slice(0, -2) };
+    await runAndApply(set, get, project, rolledBack, lastMove.content);
+  },
+
+  clearError() {
+    set({ error: null });
+  },
+
+  async save(slot, title) {
+    const { project, state } = get();
+    if (!project || !state) return;
+    const save: SaveSlot = {
+      slot,
+      projectId: project.id,
+      savedAt: Date.now(),
+      title,
+      state,
+    };
+    await putSave(save);
+  },
+
+  async loadSlot(slot) {
+    const { project } = get();
+    if (!project) return;
+    const save = await getSave(project.id, slot);
+    if (save) applyLoadedState(set, project, save.state);
+  },
+
+  dismissChapter() {
+    set({ chapterTitle: null });
+  },
+}));
+
+// Reveal a loaded state without replaying beats (show last turn fully).
+function applyLoadedState(
+  set: (partial: Partial<PlayerStore>) => void,
+  project: Project,
+  state: RuntimeState
+) {
+  const last = state.lastTurn;
+  playMusic(state.currentMusicId);
+  set({
+    project,
+    state,
+    queue: [],
+    visibleBeats: last?.beats ?? [],
+    phase: 'choices',
+    choices: last?.choices ?? [],
+    cg: last?.scene.cutsceneCgId ?? null,
+    thinking: false,
+    error: null,
+    chapterTitle: null,
+  });
+}
+
+// Core: run a turn against the LLM and apply its result to the store.
+async function runAndApply(
+  set: (partial: Partial<PlayerStore>) => void,
+  get: () => PlayerStore,
+  project: Project,
+  baseState: RuntimeState,
+  playerMove: string
+) {
+  set({ thinking: true, error: null, choices: [], statFlash: [] });
+  try {
+    const { turn, state } = await runTurn(project, baseState, playerMove);
+
+    // Compute stat flashes vs. the pre-turn values.
+    const flash: { statId: string; delta: number }[] = [];
+    for (const s of project.stats) {
+      const before = baseState.statValues[s.id] ?? s.initial;
+      const after = state.statValues[s.id] ?? s.initial;
+      if (after !== before) flash.push({ statId: s.id, delta: after - before });
+    }
+
+    // Scene fx.
+    void playMusic(state.currentMusicId);
+    if (turn.scene.sfxId) void playSfx(turn.scene.sfxId);
+
+    const [first, ...rest] = turn.beats;
+    // Choices are stored now but the UI reveals them only once the beat queue empties.
+    set({
+      state,
+      queue: rest,
+      visibleBeats: first ? [first] : [],
+      phase: turn.beats.length ? 'beats' : 'choices',
+      choices: turn.choices,
+      thinking: false,
+      cg: turn.scene.cutsceneCgId,
+      statFlash: flash,
+      chapterTitle: turn.chapterEvent === 'chapter_end' ? `Глава ${baseState.memory.chapter}` : null,
+    });
+
+    // Autosave every turn.
+    await get().save(AUTOSAVE_SLOT, `Автосейв · ход ${state.turnCount}`);
+  } catch (e) {
+    set({ thinking: false, error: (e as Error).message });
+  }
+}

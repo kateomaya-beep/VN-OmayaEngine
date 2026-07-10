@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #0f1020;
+  color: #e8e9f3;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-pink-500;
+  }
+  .btn-ghost {
+    @apply btn bg-panel2 text-gray-200 hover:bg-white/10;
+  }
+  .btn-danger {
+    @apply btn bg-red-600/80 text-white hover:bg-red-600;
+  }
+  .card {
+    @apply rounded-xl bg-panel border border-white/5 p-4;
+  }
+  .input {
+    @apply w-full rounded-lg bg-ink border border-white/10 px-3 py-2 text-sm outline-none focus:border-accent2;
+  }
+  .label {
+    @apply block text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full bg-panel2 px-2.5 py-0.5 text-xs;
+  }
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.typewriter-cursor::after {
+  content: '▍';
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
