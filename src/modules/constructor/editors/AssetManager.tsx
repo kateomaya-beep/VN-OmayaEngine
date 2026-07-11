@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
 import { AssetImage, useAssetUrl } from '../../../shared/ui';
 import { uploadAsset, removeAsset } from '../../../storage/assetOps';
-import type { AssetMeta, AssetType, AudioMood } from '../../../shared/types';
+import type { AssetMeta, AssetType } from '../../../shared/types';
 import { AUDIO_MOODS, AUDIO_MOOD_LABELS } from '../../../shared/types';
 import { useLang } from '../../../shared/i18n';
 
@@ -19,12 +19,25 @@ export function AssetManager() {
   const { project, update } = useProjectStore();
   const [filter, setFilter] = useState<AssetType>('background');
   const [uploading, setUploading] = useState(false);
+  const [newMood, setNewMood] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   if (!project) return null;
 
   const current = TYPES.find((t) => t.id === filter)!;
   const list = project.assets.filter((a) => a.type === filter);
   const isMusic = filter === 'music';
+
+  function addCustomMood() {
+    const m = newMood.trim().toLowerCase();
+    if (!m) return;
+    const base = new Set<string>(AUDIO_MOODS);
+    if (base.has(m) || project!.audioMoods.includes(m)) {
+      setNewMood('');
+      return;
+    }
+    update((p) => p.audioMoods.push(m));
+    setNewMood('');
+  }
 
   async function onFiles(files: FileList) {
     setUploading(true);
@@ -80,12 +93,55 @@ export function AssetManager() {
         </p>
       </div>
 
+      {isMusic && (
+        <div className="card mb-4">
+          <h4 className="text-sm font-semibold mb-2">Кастомные настроения проекта</h4>
+          <p className="text-xs text-gray-500 mb-2">
+            Сверх базовых 8 (см. вкладку персонажей/промпта) — свои ключи настроения,
+            доступные ИИ наравне с базовыми, если у них есть треки.
+          </p>
+          <div className="flex flex-wrap gap-1 mb-2">
+            {project.audioMoods.map((m) => (
+              <span key={m} className="chip">
+                {m}
+                <button
+                  className="text-gray-500 hover:text-red-400"
+                  onClick={() => update((p) => (p.audioMoods = p.audioMoods.filter((x) => x !== m)))}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            {project.audioMoods.length === 0 && (
+              <span className="text-xs text-gray-600">— нет кастомных —</span>
+            )}
+          </div>
+          <div className="flex gap-2 max-w-xs">
+            <input
+              className="input text-sm"
+              placeholder="напр. меланхолия"
+              value={newMood}
+              onChange={(e) => setNewMood(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addCustomMood()}
+            />
+            <button className="btn-ghost !px-3" onClick={addCustomMood}>
+              +
+            </button>
+          </div>
+        </div>
+      )}
+
       {list.length === 0 ? (
         <div className="card text-center text-gray-500 py-10">Нет ассетов этого типа.</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {list.map((a) => (
-            <AssetCard key={a.id} asset={a} onRemove={() => update((p) => removeAsset(p, a.id))} />
+            <AssetCard
+              key={a.id}
+              asset={a}
+              customMoods={project.audioMoods}
+              onRemove={() => update((p) => removeAsset(p, a.id))}
+            />
           ))}
         </div>
       )}
@@ -93,7 +149,15 @@ export function AssetManager() {
   );
 }
 
-function AssetCard({ asset, onRemove }: { asset: AssetMeta; onRemove: () => void }) {
+function AssetCard({
+  asset,
+  customMoods,
+  onRemove,
+}: {
+  asset: AssetMeta;
+  customMoods: string[];
+  onRemove: () => void;
+}) {
   const { update } = useProjectStore();
   const lang = useLang((s) => s.lang);
   const [tagInput, setTagInput] = useState('');
@@ -138,12 +202,17 @@ function AssetCard({ asset, onRemove }: { asset: AssetMeta; onRemove: () => void
           <select
             className="input text-sm"
             value={asset.audioMood || ''}
-            onChange={(e) => patch({ audioMood: (e.target.value || undefined) as AudioMood })}
+            onChange={(e) => patch({ audioMood: e.target.value || undefined })}
           >
             <option value="">— не задано —</option>
             {AUDIO_MOODS.map((m) => (
               <option key={m} value={m}>
                 {AUDIO_MOOD_LABELS[m][lang]}
+              </option>
+            ))}
+            {customMoods.map((m) => (
+              <option key={m} value={m}>
+                {m} (своё)
               </option>
             ))}
           </select>

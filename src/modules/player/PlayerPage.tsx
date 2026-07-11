@@ -206,6 +206,12 @@ export function PlayerPage() {
             canContinue={canContinue}
             onSubmit={(txt) => s.submitFreeInput(txt)}
             onContinue={() => s.continueStory()}
+            authorNote={s.state.authorNote}
+            onAuthorNoteChange={(text) =>
+              usePlayerStore.setState((st) => ({
+                state: st.state ? { ...st.state, authorNote: text } : st.state,
+              }))
+            }
           />
         </div>
       )}

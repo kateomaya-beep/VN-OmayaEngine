@@ -36,7 +36,20 @@ export const EMOTION_LABELS: Record<Emotion, { ru: string; en: string }> = {
 };
 
 // Закрытый словарь аудио-настроений (НЕ теги). ИИ выбирает настроение, движок — трек.
-export const AUDIO_MOODS = ['calm', 'tense', 'scary', 'romantic', 'sad', 'joyful'] as const;
+// Базовый закрытый словарь — 8 настроений (см. CR v2 §N.1). Проект может
+// дополнить его своими кастомными ключами (Project.audioMoods, §N.2) — поэтому
+// везде, где реально проверяется/передаётся настроение, используется string,
+// а не этот union; AUDIO_MOODS — только источник базового набора для UI/ядра.
+export const AUDIO_MOODS = [
+  'calm',
+  'tense',
+  'scary',
+  'romantic',
+  'sad',
+  'joyful',
+  'epic',
+  'dangerous',
+] as const;
 export type AudioMood = (typeof AUDIO_MOODS)[number];
 
 export const AUDIO_MOOD_LABELS: Record<AudioMood, { ru: string; en: string }> = {
@@ -46,6 +59,8 @@ export const AUDIO_MOOD_LABELS: Record<AudioMood, { ru: string; en: string }> = 
   romantic: { ru: 'романтичная', en: 'romantic' },
   sad: { ru: 'грустная', en: 'sad' },
   joyful: { ru: 'весёлая', en: 'joyful' },
+  epic: { ru: 'эпичная', en: 'epic' },
+  dangerous: { ru: 'опасная', en: 'dangerous' },
 };
 
 export interface ProjectMeta {
@@ -134,7 +149,7 @@ export interface AssetMeta {
   type: AssetType;
   name: string;
   tags?: string[]; // для background/cg/sfx
-  audioMood?: AudioMood; // для music
+  audioMood?: string; // для music — базовое (AudioMood) или кастомное настроение проекта
   generated?: boolean; // сгенерирован image-API по ходу игры
   blobKey: string;
   mime?: string;
@@ -215,6 +230,7 @@ export interface Project {
   assets: AssetMeta[];
   aiConfig: AiConfig;
   memoryConfig: MemoryConfig;
+  audioMoods: string[]; // кастомные настроения сверх базовых 8 (см. CR v2 §N.2)
 }
 
 // ---- Runtime / AI response types (JSON-контракт с ИИ) ----
@@ -317,6 +333,10 @@ export interface RuntimeState {
   memory: MemoryState;
   lastTurn: AiTurn | null;
   turnCount: number;
+  // Заметка для ИИ (Author's Note, см. CR v2 §M) — инжектится перед ходом игрока
+  // (глубина 0), живёт в сейве истории до ручного изменения/удаления. Пусто —
+  // ничего не инжектится.
+  authorNote: string;
 }
 
 export interface SaveSlot {

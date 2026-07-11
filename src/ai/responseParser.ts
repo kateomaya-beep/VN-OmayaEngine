@@ -54,7 +54,6 @@ function extractJson(raw: string): string | null {
 }
 
 const EMOTION_SET = new Set<string>(EMOTIONS);
-const MOOD_SET = new Set<string>(AUDIO_MOODS);
 
 // Repair ids against the project manifest so hallucinations never crash render.
 function repair(
@@ -66,15 +65,16 @@ function repair(
   const assetIds = new Set(project.assets.map((a) => a.id));
   const charById = new Map(project.characters.map((c) => [c.id, c]));
   const statIds = new Set(project.stats.map((s) => s.id));
+  // Настроения: базовые + кастомные проекта (см. CR v2 §N.2) — единый fallback для всех.
+  const moodSet = new Set<string>([...AUDIO_MOODS, ...project.audioMoods]);
 
   const scene = {
     backgroundId:
       parsed.scene.backgroundId && assetIds.has(parsed.scene.backgroundId)
         ? parsed.scene.backgroundId
         : currentBg,
-    // musicMood: только из закрытого словаря, иначе оставляем текущее настроение.
     musicMood:
-      parsed.scene.musicMood && MOOD_SET.has(parsed.scene.musicMood)
+      parsed.scene.musicMood && moodSet.has(parsed.scene.musicMood)
         ? parsed.scene.musicMood
         : currentMood,
     sfxId: parsed.scene.sfxId && assetIds.has(parsed.scene.sfxId) ? parsed.scene.sfxId : null,

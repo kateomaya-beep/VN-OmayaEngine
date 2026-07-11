@@ -1,4 +1,4 @@
-import type { Project, RuntimeState, LlmMessage, AudioMood } from '../shared/types';
+import type { Project, RuntimeState, LlmMessage } from '../shared/types';
 import { AUDIO_MOODS } from '../shared/types';
 import {
   CORE_PROMPT,
@@ -25,12 +25,14 @@ function assetManifest(project: Project): string {
   if (cg.length) sections.push(`CG (кат-сцены):\n${cg.map(line).join('\n')}`);
   if (sfx.length) sections.push(`Звуки (sfxId):\n${sfx.map(line).join('\n')}`);
 
-  // Аудио-настроения: перечисляем словарь, помечая какие реально доступны (есть трек).
-  const availableMoods = new Set<AudioMood>();
+  // Аудио-настроения: базовые + кастомные проекта (см. CR v2 §N.2), помечая
+  // какие реально доступны (есть трек).
+  const availableMoods = new Set<string>();
   for (const a of project.assets) if (a.type === 'music' && a.audioMood) availableMoods.add(a.audioMood);
-  const moodLine = AUDIO_MOODS.map(
-    (m) => `${m}${availableMoods.has(m) ? '' : ' (нет трека — не выбирать)'}`
-  ).join(', ');
+  const allMoods = [...AUDIO_MOODS, ...project.audioMoods];
+  const moodLine = allMoods
+    .map((m) => `${m}${availableMoods.has(m) ? '' : ' (нет трека — не выбирать)'}`)
+    .join(', ');
   sections.push(`Аудио-настроения (musicMood): ${moodLine}`);
 
   return sections.join('\n') || '  (нет ассетов)';
@@ -221,6 +223,12 @@ export async function buildRequest(
     const depth = Math.max(0, Math.floor(b.depth));
     const insertAt = Math.max(0, withMove.length - depth);
     withMove.splice(insertAt, 0, { role: 'user', content: expandMacros(b.content, ctx) });
+  }
+
+  // Заметка для ИИ (Author's Note, см. CR v2 §M) — тот же слот глубины 0, что и
+  // кастомные вставки Блока F, но со своим UI. Пусто — ничего не инжектится.
+  if (state.authorNote.trim()) {
+    withMove.push({ role: 'user', content: `[ЗАМЕТКА АВТОРА] ${expandMacros(state.authorNote, ctx)}` });
   }
 
   // Ремайндер формата на глубине 0 (в самый конец).

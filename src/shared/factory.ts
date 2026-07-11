@@ -65,6 +65,7 @@ export function createEmptyProject(title = 'Новый проект'): Project {
     assets: [],
     aiConfig: defaultAiConfig(),
     memoryConfig: defaultMemoryConfig(),
+    audioMoods: [],
   };
 }
 
@@ -80,7 +81,13 @@ export function normalizeProject(raw: any): Project {
   const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
   const emotionSet = new Set<string>(EMOTIONS);
-  const moodSet = new Set<string>(AUDIO_MOODS);
+  // Кастомные настроения проекта (см. CR v2 §N.2) — дедуп против базовых 8.
+  const baseMoodSet = new Set<string>(AUDIO_MOODS);
+  const audioMoods = arr<any>(raw?.audioMoods)
+    .filter((m): m is string => typeof m === 'string' && m.trim().length > 0)
+    .map((m) => m.trim())
+    .filter((m, i, list) => !baseMoodSet.has(m) && list.indexOf(m) === i);
+  const moodSet = new Set<string>([...AUDIO_MOODS, ...audioMoods]);
   const roleSet = new Set<CharacterRole>([
     'protagonist',
     'love_interest',
@@ -171,7 +178,7 @@ export function normalizeProject(raw: any): Project {
       type: assetTypes.includes(a.type) ? a.type : 'background',
       name: str(a.name, a.id),
       tags: Array.isArray(a.tags) ? a.tags.filter((t: unknown) => typeof t === 'string') : undefined,
-      audioMood: moodSet.has(a.audioMood) ? (a.audioMood as AudioMood) : undefined,
+      audioMood: moodSet.has(a.audioMood) ? (a.audioMood as string) : undefined,
       generated: bool(a.generated, false) || undefined,
       blobKey: a.blobKey,
       mime: typeof a.mime === 'string' ? a.mime : undefined,
@@ -267,6 +274,7 @@ export function normalizeProject(raw: any): Project {
       vectorization: vecSet.has(mem.vectorization) ? mem.vectorization : 'off',
       embeddingsConnection: normConnection(mem.embeddingsConnection),
     },
+    audioMoods,
   };
 }
 
@@ -305,6 +313,7 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     memory: initialMemory(),
     lastTurn: null,
     turnCount: 0,
+    authorNote: '',
   };
 }
 
@@ -355,6 +364,7 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
     memory: normalizeMemory(raw.memory, str, num, arr),
     lastTurn: raw.lastTurn && typeof raw.lastTurn === 'object' ? raw.lastTurn : null,
     turnCount: num(raw.turnCount, 0),
+    authorNote: str(raw.authorNote),
   };
 }
 
