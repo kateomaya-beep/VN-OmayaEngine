@@ -1,5 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { Project, SaveSlot } from '../shared/types';
+import { normalizeProject } from '../shared/factory';
 
 interface NovelForgeDB extends DBSchema {
   projects: {
@@ -38,12 +39,13 @@ export function getDB(): Promise<IDBPDatabase<NovelForgeDB>> {
 export async function listProjects(): Promise<Project[]> {
   const db = await getDB();
   const all = await db.getAll('projects');
-  return all.sort((a, b) => b.updatedAt - a.updatedAt);
+  return all.map(normalizeProject).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
   const db = await getDB();
-  return db.get('projects', id);
+  const raw = await db.get('projects', id);
+  return raw ? normalizeProject(raw) : undefined;
 }
 
 export async function saveProject(project: Project): Promise<void> {

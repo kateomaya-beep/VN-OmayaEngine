@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import type { Project } from '../shared/types';
 import { getAssetBlob, putAsset, saveProject } from './db';
 import { uid } from '../shared/utils';
+import { normalizeProject } from '../shared/factory';
 
 // Export project as a single .zip: project.json + assets/<blobKey>
 export async function exportProjectZip(project: Project): Promise<Blob> {
@@ -30,7 +31,7 @@ export async function importProjectZip(file: File): Promise<Project> {
   const projFile = zip.file('project.json');
   if (!projFile) throw new Error('project.json не найден в архиве');
   const raw = await projFile.async('string');
-  const project = JSON.parse(raw) as Project;
+  const project = normalizeProject(JSON.parse(raw));
 
   // Re-key project id + blobKeys so imports never clobber existing data.
   const newProjectId = uid('proj');
