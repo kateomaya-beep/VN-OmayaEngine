@@ -41,8 +41,9 @@ export function ErrorScreen() {
           </button>
         </div>
         <p className="text-xs text-gray-600 mt-4">
-          Если ошибка повторяется после обновления кода — остановите dev-сервер, удалите папку
-          <code className="mx-1">node_modules/.vite</code> и запустите заново.
+          Если ошибка повторяется: остановите dev-сервер, запустите{' '}
+          <code>npm run dev:clean</code> и откройте страницу в режиме инкогнито
+          (Ctrl+Shift+N) — это исключит устаревший кэш браузера и Vite.
         </p>
       </div>
     </div>

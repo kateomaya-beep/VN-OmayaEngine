@@ -10,6 +10,9 @@ export function AppLayout() {
           <Link to="/library" className="font-bold text-lg tracking-tight">
             <span className="text-accent">Novel</span>
             <span className="text-accent2">Forge</span>
+            <span className="ml-1.5 text-[10px] font-normal text-gray-500 align-top">
+              v{__APP_VERSION__}
+            </span>
           </Link>
           <nav className="flex items-center gap-1 text-sm">
             <Link
