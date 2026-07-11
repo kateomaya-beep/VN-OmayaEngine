@@ -10,10 +10,12 @@ export function PromptTuner() {
   const [advanced, setAdvanced] = useState(false);
   const [showCore, setShowCore] = useState(false);
   const [key, setKey] = useState('');
+  const [imageKey, setImageKey] = useState('');
 
   const provider = project?.aiConfig.provider ?? 'openai-compatible';
   useEffect(() => {
     setKey(getApiKey(provider));
+    setImageKey(getApiKey('image'));
   }, [provider]);
 
   if (!project) return null;
@@ -228,6 +230,44 @@ export function PromptTuner() {
                 />
               </Field>
             </div>
+          </div>
+
+          <div className="card">
+            <h4 className="font-semibold mb-3">Генерация изображений (image-API)</h4>
+            <p className="text-xs text-gray-500 mb-3">
+              OpenAI-совместимый эндпоинт /images/generations. Ключ хранится только в этом
+              браузере. Используется кнопками «Создать фон/CG» в плеере.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <Field label="Image Base URL" hint="Пусто — берётся Base URL основного провайдера.">
+                <input
+                  className="input"
+                  value={cfg.imageBaseUrl || ''}
+                  placeholder="https://api.openai.com/v1"
+                  onChange={(e) => patch({ imageBaseUrl: e.target.value || undefined })}
+                />
+              </Field>
+              <Field label="Image модель">
+                <input
+                  className="input"
+                  value={cfg.imageModel || ''}
+                  placeholder="gpt-image-1"
+                  onChange={(e) => patch({ imageModel: e.target.value || undefined })}
+                />
+              </Field>
+            </div>
+            <Field label="Image API-ключ" hint="localStorage, уходит только к image-провайдеру.">
+              <input
+                className="input"
+                type="password"
+                value={imageKey}
+                placeholder="sk-..."
+                onChange={(e) => {
+                  setImageKey(e.target.value);
+                  setApiKey('image', e.target.value);
+                }}
+              />
+            </Field>
           </div>
 
           <div className="card">

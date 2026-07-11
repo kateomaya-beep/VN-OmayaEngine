@@ -8,6 +8,8 @@ import { DialogueBox } from './components/DialogueBox';
 import { StatsHUD } from './components/StatsHUD';
 import { ChoiceMenu } from './components/ChoiceMenu';
 import { Mixer } from './components/Mixer';
+import { QuickActions } from './components/QuickActions';
+import { EditPanel } from './components/EditPanel';
 import { HistoryLog, SaveLoadPanel, MemoryPanel } from './components/Panels';
 import { useT } from '../../shared/i18n';
 
@@ -18,8 +20,9 @@ export function PlayerPage() {
   const nav = useNavigate();
   const t = useT();
   const s = usePlayerStore();
-  const [panel, setPanel] = useState<null | 'history' | 'saves' | 'memory'>(null);
+  const [panel, setPanel] = useState<null | 'history' | 'saves' | 'memory' | 'edit'>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
+  const [genOpen, setGenOpen] = useState(false);
   const [setup, setSetup] = useState<Setup>('checking');
   const [name, setName] = useState('');
 
@@ -145,11 +148,14 @@ export function PlayerPage() {
         <CtrlBtn label={t('player.memory')} onClick={() => setPanel('memory')} />
         <CtrlBtn label={t('player.saves')} onClick={() => setPanel('saves')} />
         <CtrlBtn label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
+        <CtrlBtn label="🎨" title="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
+        <CtrlBtn label="✎" title="Правка в игре" onClick={() => setPanel('edit')} />
         <CtrlBtn label="↻" title={t('player.regen')} onClick={() => s.regenerate()} />
         <CtrlBtn label="✕" onClick={() => nav('/library')} />
       </div>
 
       <Mixer open={mixerOpen} onClose={() => setMixerOpen(false)} />
+      <QuickActions open={genOpen} onClose={() => setGenOpen(false)} />
 
       {/* Chapter title card */}
       {s.chapterTitle && (
@@ -216,6 +222,8 @@ export function PlayerPage() {
           )}
         </>
       )}
+
+      <EditPanel open={panel === 'edit'} onClose={() => setPanel(null)} />
 
       <HistoryLog
         open={panel === 'history'}

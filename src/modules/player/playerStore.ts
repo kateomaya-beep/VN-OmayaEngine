@@ -3,7 +3,7 @@ import type { Project, RuntimeState, Beat, Choice, SaveSlot } from '../../shared
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn } from '../../ai/gameEngine';
 import { expandMacros } from '../../ai/macros';
-import { getProject, putSave, getSave } from '../../storage/db';
+import { getProject, putSave, getSave, saveProject } from '../../storage/db';
 import { playMusic, playSfx } from './audio';
 
 // currentMusicAssetId — это id ассета; для проигрывания нужен его blobKey.
@@ -37,6 +37,10 @@ interface PlayerStore {
   save: (slot: number, title: string) => Promise<void>;
   loadSlot: (slot: number) => Promise<void>;
   dismissChapter: () => void;
+  // Правка проекта прямо в игре — общий источник истины с конструктором.
+  // Мутация применяется к живому проекту (влияет на манифест следующего хода)
+  // и сохраняется в IndexedDB.
+  patchProject: (mutator: (p: Project) => void) => Promise<void>;
 }
 
 const AUTOSAVE_SLOT = 0;
@@ -151,6 +155,15 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   dismissChapter() {
     set({ chapterTitle: null });
+  },
+
+  async patchProject(mutator) {
+    const cur = get().project;
+    if (!cur) return;
+    const next: Project = JSON.parse(JSON.stringify(cur));
+    mutator(next);
+    set({ project: next });
+    await saveProject(next);
   },
 }));
 
