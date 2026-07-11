@@ -258,3 +258,58 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     turnCount: 0,
   };
 }
+
+// Coerce a stored save's RuntimeState (raw, possibly from an older schema before
+// relationship stats / protagonistName / currentMusicMood existed) into a complete
+// shape. Same choke-point pattern as normalizeProject — prevents crashes like
+// "Cannot read properties of undefined (reading '<charId>')" in RelationshipsPanel
+// when an old save lacks fields that later builds added.
+export function normalizeRuntimeState(raw: any, project: Project): RuntimeState {
+  const fresh = initialRuntimeState(project);
+  if (!raw || typeof raw !== 'object') return fresh;
+
+  const str = (v: unknown, d = '') => (typeof v === 'string' ? v : d);
+  const num = (v: unknown, d: number) => (typeof v === 'number' && !Number.isNaN(v) ? v : d);
+  const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+
+  const statValues: Record<string, number> = { ...fresh.statValues };
+  if (raw.statValues && typeof raw.statValues === 'object') {
+    for (const [k, v] of Object.entries(raw.statValues)) {
+      if (typeof v === 'number') statValues[k] = v;
+    }
+  }
+
+  // Живые значения отношений: старт из дефолтов проекта, поверх — сохранённые.
+  const relationship: Record<string, RelationshipStats> = { ...fresh.relationship };
+  if (raw.relationship && typeof raw.relationship === 'object') {
+    for (const [charId, v] of Object.entries<any>(raw.relationship)) {
+      relationship[charId] = {
+        affection: clamp(num(v?.affection, 0), -100, 100),
+        passion_stat: clamp(num(v?.passion_stat, 0), -100, 100),
+        friendship: clamp(num(v?.friendship, 0), -100, 100),
+      };
+    }
+  }
+
+  return {
+    protagonistName: str(raw.protagonistName, fresh.protagonistName),
+    statValues,
+    relationship,
+    currentBackgroundId: typeof raw.currentBackgroundId === 'string' ? raw.currentBackgroundId : null,
+    currentMusicMood: typeof raw.currentMusicMood === 'string' ? raw.currentMusicMood : null,
+    currentMusicAssetId:
+      typeof raw.currentMusicAssetId === 'string' ? raw.currentMusicAssetId : null,
+    onScreen: arr<any>(raw.onScreen),
+    history: arr<any>(raw.history).filter(
+      (m: any) => m && typeof m.role === 'string' && typeof m.content === 'string'
+    ),
+    memory: {
+      chronicle: arr<string>(raw.memory?.chronicle).filter((c) => typeof c === 'string'),
+      currentChapterSummary: str(raw.memory?.currentChapterSummary),
+      chapter: num(raw.memory?.chapter, 1),
+      facts: arr<any>(raw.memory?.facts),
+    },
+    lastTurn: raw.lastTurn && typeof raw.lastTurn === 'object' ? raw.lastTurn : null,
+    turnCount: num(raw.turnCount, 0),
+  };
+}

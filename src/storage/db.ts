@@ -1,6 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { Project, SaveSlot } from '../shared/types';
-import { normalizeProject } from '../shared/factory';
+import { normalizeProject, normalizeRuntimeState } from '../shared/factory';
 
 interface NovelForgeDB extends DBSchema {
   projects: {
@@ -95,12 +95,20 @@ export async function putSave(save: SaveSlot): Promise<void> {
 export async function listSaves(projectId: string): Promise<SaveSlot[]> {
   const db = await getDB();
   const all = await db.getAllFromIndex('saves', 'byProject', projectId);
-  return all.sort((a, b) => a.slot - b.slot);
+  const project = await getProject(projectId);
+  if (!project) return all.sort((a, b) => a.slot - b.slot);
+  return all
+    .map((s) => ({ ...s, state: normalizeRuntimeState(s.state, project) }))
+    .sort((a, b) => a.slot - b.slot);
 }
 
 export async function getSave(projectId: string, slot: number): Promise<SaveSlot | undefined> {
   const db = await getDB();
-  return db.get('saves', `${projectId}:${slot}`);
+  const raw = await db.get('saves', `${projectId}:${slot}`);
+  if (!raw) return undefined;
+  const project = await getProject(projectId);
+  if (!project) return raw;
+  return { ...raw, state: normalizeRuntimeState(raw.state, project) };
 }
 
 export async function deleteSave(projectId: string, slot: number): Promise<void> {
