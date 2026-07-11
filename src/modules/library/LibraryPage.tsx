@@ -6,6 +6,7 @@ import { createEmptyProject } from '../../shared/factory';
 import { exportProjectZip, downloadBlob, importProjectZip } from '../../storage/zip';
 import { AssetImage, Modal } from '../../shared/ui';
 import { formatDate } from '../../shared/utils';
+import { useT } from '../../shared/i18n';
 
 export function LibraryPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -14,6 +15,7 @@ export function LibraryPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const nav = useNavigate();
+  const t = useT();
 
   async function refresh() {
     setProjects(await listProjects());
@@ -62,15 +64,15 @@ export function LibraryPage() {
     <div className="max-w-6xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold">Библиотека проектов</h1>
-          <p className="text-gray-400 text-sm">Ваши визуальные новеллы. Всё хранится локально.</p>
+          <h1 className="text-2xl font-bold">{t('library.title')}</h1>
+          <p className="text-gray-400 text-sm">{t('library.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           <button className="btn-ghost" onClick={() => fileRef.current?.click()}>
-            Импорт .zip
+            {t('library.import')}
           </button>
           <button className="btn-primary" onClick={() => setCreating(true)}>
-            + Новый проект
+            {t('library.new')}
           </button>
         </div>
       </div>
@@ -90,9 +92,7 @@ export function LibraryPage() {
       />
 
       {projects.length === 0 ? (
-        <div className="card text-center py-16 text-gray-500">
-          Пока нет проектов. Создайте новый или импортируйте .zip.
-        </div>
+        <div className="card text-center py-16 text-gray-500">{t('library.empty')}</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {projects.map((p) => (
@@ -108,24 +108,25 @@ export function LibraryPage() {
               </div>
               <h3 className="font-semibold truncate">{p.meta.title}</h3>
               <p className="text-xs text-gray-500 mb-1">
-                {p.meta.genre} · {p.characters.length} перс. · {p.assets.length} ассетов
+                {p.characters.length} {t('library.charactersShort')} · {p.assets.length}{' '}
+                {t('library.assetsShort')}
               </p>
               <p className="text-xs text-gray-600 mb-3">{formatDate(p.updatedAt)}</p>
               <div className="mt-auto flex flex-wrap gap-2">
                 <button className="btn-primary !px-3 !py-1.5 text-xs" onClick={() => nav(`/play/${p.id}`)}>
-                  ▶ Играть
+                  {t('library.play')}
                 </button>
                 <button
                   className="btn-ghost !px-3 !py-1.5 text-xs"
                   onClick={() => nav(`/project/${p.id}`)}
                 >
-                  Редактор
+                  {t('library.editor')}
                 </button>
                 <button className="btn-ghost !px-3 !py-1.5 text-xs" onClick={() => onExport(p)}>
-                  Экспорт
+                  {t('library.export')}
                 </button>
                 <button className="btn-danger !px-3 !py-1.5 text-xs" onClick={() => onDelete(p)}>
-                  Удалить
+                  {t('library.delete')}
                 </button>
               </div>
             </div>
@@ -133,10 +134,10 @@ export function LibraryPage() {
         </div>
       )}
 
-      <Modal open={creating} onClose={() => setCreating(false)} title="Новый проект">
+      <Modal open={creating} onClose={() => setCreating(false)} title={t('library.newTitle')}>
         <input
           className="input mb-4"
-          placeholder="Название проекта"
+          placeholder={t('library.namePlaceholder')}
           value={title}
           autoFocus
           onChange={(e) => setTitle(e.target.value)}
@@ -144,10 +145,10 @@ export function LibraryPage() {
         />
         <div className="flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setCreating(false)}>
-            Отмена
+            {t('library.cancel')}
           </button>
           <button className="btn-primary" onClick={create}>
-            Создать
+            {t('library.create')}
           </button>
         </div>
       </Modal>

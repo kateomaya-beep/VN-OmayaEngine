@@ -8,11 +8,13 @@ export function DialogueBox({
   beat,
   onAdvance,
   hasMore,
+  protagonistName,
 }: {
   project: Project;
   beat: Beat | null;
   onAdvance: () => void;
   hasMore: boolean;
+  protagonistName: string;
 }) {
   const [shown, setShown] = useState('');
   const [done, setDone] = useState(false);
@@ -37,12 +39,21 @@ export function DialogueBox({
 
   if (!beat) return null;
 
-  const speaker =
-    beat.type === 'dialogue'
-      ? project.characters.find((c) => c.id === beat.characterId)?.name || '???'
-      : beat.type === 'thought'
-        ? '(мысли)'
-        : '';
+  let speaker = '';
+  if (beat.type === 'dialogue') {
+    const ch = beat.characterId
+      ? project.characters.find((c) => c.id === beat.characterId)
+      : undefined;
+    if (ch) {
+      // Протагонист говорит под именем, введённым игроком.
+      speaker = ch.role === 'protagonist' && protagonistName ? protagonistName : ch.name;
+    } else {
+      // Эпизодический NPC, введённый ИИ (name без characterId).
+      speaker = beat.name || '???';
+    }
+  } else if (beat.type === 'thought') {
+    speaker = '(мысли)';
+  }
 
   function handleClick() {
     if (!done) {

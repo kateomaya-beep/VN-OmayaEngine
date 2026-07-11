@@ -1,14 +1,16 @@
 import { z } from 'zod';
 
-// Zod schema for the AI turn response (see ТЗ §7).
-// Kept permissive on ids/emotions; the parser resolves/repairs against the manifest.
+// Zod schema for the AI turn response. Permissive on ids/emotions/moods;
+// the parser resolves/repairs against the manifest (политика fallback).
 
 export const beatSchema = z.union([
   z.object({ type: z.literal('narration'), text: z.string() }),
   z.object({ type: z.literal('thought'), text: z.string() }),
   z.object({
     type: z.literal('dialogue'),
-    characterId: z.string(),
+    // characterId для персонажей из списка; name для эпизодических NPC от ИИ.
+    characterId: z.string().nullish(),
+    name: z.string().nullish(),
     emotion: z.string().default('neutral'),
     position: z.enum(['left', 'center', 'right']).default('center'),
     text: z.string(),
@@ -17,7 +19,7 @@ export const beatSchema = z.union([
 
 export const sceneSchema = z.object({
   backgroundId: z.string().nullable().default(null),
-  musicId: z.string().nullable().default(null),
+  musicMood: z.string().nullable().default(null),
   sfxId: z.string().nullable().default(null),
   cutsceneCgId: z.string().nullable().default(null),
 });
@@ -40,7 +42,7 @@ export const choiceSchema = z.object({
 export const aiTurnSchema = z.object({
   scene: sceneSchema.default({
     backgroundId: null,
-    musicId: null,
+    musicMood: null,
     sfxId: null,
     cutsceneCgId: null,
   }),

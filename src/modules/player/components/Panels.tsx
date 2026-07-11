@@ -25,12 +25,18 @@ export function HistoryLog({
       const parsed = parseAiResponse(msg.content, project, null, null);
       if (parsed.ok && parsed.turn) {
         for (const b of parsed.turn.beats) {
-          const speaker =
-            b.type === 'dialogue'
-              ? project.characters.find((c) => c.id === b.characterId)?.name || '???'
-              : b.type === 'thought'
-                ? '(мысли)'
-                : '';
+          let speaker = '';
+          if (b.type === 'dialogue') {
+            const ch = b.characterId
+              ? project.characters.find((c) => c.id === b.characterId)
+              : undefined;
+            speaker =
+              ch?.role === 'protagonist' && state.protagonistName
+                ? state.protagonistName
+                : ch?.name || b.name || '???';
+          } else if (b.type === 'thought') {
+            speaker = '(мысли)';
+          }
           entries.push({ speaker, text: b.text });
         }
       }

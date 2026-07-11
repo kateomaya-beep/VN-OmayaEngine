@@ -2,7 +2,9 @@ import { useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
 import { AssetImage, useAssetUrl } from '../../../shared/ui';
 import { uploadAsset, removeAsset } from '../../../storage/assetOps';
-import type { AssetMeta, AssetType } from '../../../shared/types';
+import type { AssetMeta, AssetType, AudioMood } from '../../../shared/types';
+import { AUDIO_MOODS, AUDIO_MOOD_LABELS } from '../../../shared/types';
+import { useLang } from '../../../shared/i18n';
 
 const TYPES: { id: AssetType; label: string; accept: string }[] = [
   { id: 'background', label: 'Фоны', accept: 'image/*' },
@@ -22,12 +24,18 @@ export function AssetManager() {
 
   const current = TYPES.find((t) => t.id === filter)!;
   const list = project.assets.filter((a) => a.type === filter);
+  const isMusic = filter === 'music';
 
   async function onFiles(files: FileList) {
     setUploading(true);
     const metas: AssetMeta[] = [];
     for (const f of Array.from(files)) {
-      metas.push(await uploadAsset(f, filter));
+      const meta = await uploadAsset(f, filter);
+      if (filter === 'music') {
+        meta.tags = undefined;
+        meta.audioMood = 'calm'; // дефолт — юзер уточнит
+      }
+      metas.push(meta);
     }
     update((p) => p.assets.push(...metas));
     setUploading(false);
@@ -66,7 +74,9 @@ export function AssetManager() {
           {uploading ? 'Загрузка…' : `+ Загрузить ${current.label.toLowerCase()}`}
         </button>
         <p className="text-xs text-gray-500">
-          Теги автоматически создаются из имени файла. Уточните их — по тегам ИИ выбирает ассеты.
+          {isMusic
+            ? 'Разложите треки по настроениям — по настроению ИИ подбирает музыку.'
+            : 'Теги создаются из имени файла. Уточните их — по тегам ИИ выбирает ассеты.'}
         </p>
       </div>
 
@@ -85,9 +95,12 @@ export function AssetManager() {
 
 function AssetCard({ asset, onRemove }: { asset: AssetMeta; onRemove: () => void }) {
   const { update } = useProjectStore();
+  const lang = useLang((s) => s.lang);
   const [tagInput, setTagInput] = useState('');
   const isAudio = asset.type === 'music' || asset.type === 'sfx';
+  const isMusic = asset.type === 'music';
   const audioUrl = useAssetUrl(isAudio ? asset.blobKey : null);
+  const tags = asset.tags || [];
 
   function patch(patch: Partial<AssetMeta>) {
     update((p) => {
@@ -97,12 +110,14 @@ function AssetCard({ asset, onRemove }: { asset: AssetMeta; onRemove: () => void
   }
   function addTag() {
     const t = tagInput.trim().toLowerCase();
-    if (t && !asset.tags.includes(t)) patch({ tags: [...asset.tags, t] });
+    if (t && !tags.includes(t)) patch({ tags: [...tags, t] });
     setTagInput('');
   }
 
+  const warn = isMusic ? !asset.audioMood : asset.type === 'background' || asset.type === 'cg' ? tags.length === 0 : false;
+
   return (
-    <div className={`card ${asset.tags.length === 0 ? 'border-amber-400/40' : ''}`}>
+    <div className={`card ${warn ? 'border-amber-400/40' : ''}`}>
       {isAudio ? (
         <audio src={audioUrl || undefined} controls className="w-full mb-2 h-8" />
       ) : (
@@ -116,32 +131,54 @@ function AssetCard({ asset, onRemove }: { asset: AssetMeta; onRemove: () => void
         value={asset.name}
         onChange={(e) => patch({ name: e.target.value })}
       />
-      <div className="flex flex-wrap gap-1 mb-2">
-        {asset.tags.map((t) => (
-          <span key={t} className="chip">
-            {t}
-            <button
-              className="text-gray-500 hover:text-red-400"
-              onClick={() => patch({ tags: asset.tags.filter((x) => x !== t) })}
-            >
-              ✕
+
+      {isMusic ? (
+        <div className="mb-2">
+          <label className="label">Настроение</label>
+          <select
+            className="input text-sm"
+            value={asset.audioMood || ''}
+            onChange={(e) => patch({ audioMood: (e.target.value || undefined) as AudioMood })}
+          >
+            <option value="">— не задано —</option>
+            {AUDIO_MOODS.map((m) => (
+              <option key={m} value={m}>
+                {AUDIO_MOOD_LABELS[m][lang]}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1 mb-2">
+            {tags.map((t) => (
+              <span key={t} className="chip">
+                {t}
+                <button
+                  className="text-gray-500 hover:text-red-400"
+                  onClick={() => patch({ tags: tags.filter((x) => x !== t) })}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            {warn && <span className="text-xs text-amber-400">⚠️ нет тегов</span>}
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="input text-sm"
+              placeholder="+ тег"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addTag()}
+            />
+            <button className="btn-ghost !px-2 !py-1" onClick={addTag}>
+              +
             </button>
-          </span>
-        ))}
-        {asset.tags.length === 0 && <span className="text-xs text-amber-400">⚠️ нет тегов</span>}
-      </div>
-      <div className="flex gap-2">
-        <input
-          className="input text-sm"
-          placeholder="+ тег"
-          value={tagInput}
-          onChange={(e) => setTagInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && addTag()}
-        />
-        <button className="btn-ghost !px-2 !py-1" onClick={addTag}>
-          +
-        </button>
-      </div>
+          </div>
+        </>
+      )}
+
       <div className="flex items-center justify-between mt-2">
         <code className="text-xs text-gray-600">{asset.id}</code>
         <button className="btn-danger !px-2 !py-1 text-xs" onClick={onRemove}>

@@ -3,11 +3,34 @@ import type {
   RuntimeState,
   MemoryState,
   Character,
+  CharacterRole,
   StatDefinition,
   AssetMeta,
+  AssetType,
   LorebookEntry,
+  Emotion,
+  AudioMood,
+  AiConfig,
 } from './types';
+import { EMOTIONS, AUDIO_MOODS } from './types';
 import { uid } from './utils';
+
+export const DEFAULT_STYLE_PRESET = 'romance_club';
+
+export function defaultAiConfig(): AiConfig {
+  return {
+    provider: 'openai-compatible',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    temperature: 0.9,
+    maxContextMessages: 12,
+    contextBudget: 8000,
+    liveWindow: 12,
+    narrativeLanguage: 'ru',
+    stylePreset: DEFAULT_STYLE_PRESET,
+    jailbreakEnabled: false,
+  };
+}
 
 export function createEmptyProject(title = 'Новый проект'): Project {
   const now = Date.now();
@@ -17,9 +40,6 @@ export function createEmptyProject(title = 'Новый проект'): Project {
     updatedAt: now,
     meta: {
       title,
-      author: '',
-      genre: 'романтика',
-      description: '',
       contentRating: 'sfw',
     },
     lore: {
@@ -32,22 +52,14 @@ export function createEmptyProject(title = 'Новый проект'): Project {
     characters: [],
     stats: [],
     assets: [],
-    aiConfig: {
-      provider: 'openai-compatible',
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
-      temperature: 0.9,
-      maxContextMessages: 12,
-      contextBudget: 8000,
-      liveWindow: 12,
-    },
+    aiConfig: defaultAiConfig(),
   };
 }
 
 // Coerce any stored/imported record (including legacy or partial shapes) into a
-// complete, well-formed Project. This is the single choke point that guarantees
-// the UI and game engine never see undefined fields — fixes crashes from old
-// data left in IndexedDB by earlier builds.
+// complete, well-formed Project. Single choke point that guarantees the UI and
+// game engine never see undefined fields, and migrates old schemas (sprite
+// arrays, meta.author/genre/description, scene.musicId) forward.
 export function normalizeProject(raw: any): Project {
   const base = createEmptyProject(raw?.meta?.title || 'Без названия');
   const str = (v: unknown, d = '') => (typeof v === 'string' ? v : d);
@@ -55,22 +67,53 @@ export function normalizeProject(raw: any): Project {
   const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d);
   const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
-  const characters: Character[] = arr<any>(raw?.characters).map((c) => ({
-    id: str(c?.id) || uid('char'),
-    name: str(c?.name, 'Персонаж'),
-    role: ['love_interest', 'npc', 'protagonist'].includes(c?.role) ? c.role : 'npc',
-    card: {
-      appearance: str(c?.card?.appearance),
-      personality: str(c?.card?.personality),
-      backstory: str(c?.card?.backstory),
-      speechStyle: str(c?.card?.speechStyle),
-      relationshipArc: typeof c?.card?.relationshipArc === 'string' ? c.card.relationshipArc : undefined,
-    },
-    sprites: arr<any>(c?.sprites)
-      .filter((s) => s && typeof s.emotion === 'string' && typeof s.assetId === 'string')
-      .map((s) => ({ emotion: s.emotion, assetId: s.assetId })),
-    linkedStatId: typeof c?.linkedStatId === 'string' ? c.linkedStatId : undefined,
-  }));
+  const emotionSet = new Set<string>(EMOTIONS);
+  const moodSet = new Set<string>(AUDIO_MOODS);
+  const roleSet = new Set<CharacterRole>([
+    'protagonist',
+    'love_interest',
+    'important_character',
+    'npc',
+  ]);
+
+  const normSprites = (v: unknown): Partial<Record<Emotion, string>> => {
+    const out: Partial<Record<Emotion, string>> = {};
+    // New shape: record { emotion: assetId }.
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      for (const [emo, assetId] of Object.entries(v as Record<string, unknown>)) {
+        if (emotionSet.has(emo) && typeof assetId === 'string') out[emo as Emotion] = assetId;
+      }
+      return out;
+    }
+    // Legacy shape: array [{ emotion, assetId }].
+    for (const s of arr<any>(v)) {
+      if (s && emotionSet.has(s.emotion) && typeof s.assetId === 'string') {
+        out[s.emotion as Emotion] = s.assetId;
+      }
+    }
+    return out;
+  };
+
+  const characters: Character[] = arr<any>(raw?.characters).map((c) => {
+    let role: CharacterRole = roleSet.has(c?.role) ? c.role : 'npc';
+    // Legacy flag some early builds may have used.
+    if (!roleSet.has(c?.role) && c?.important) role = 'important_character';
+    return {
+      id: str(c?.id) || uid('char'),
+      name: str(c?.name, 'Персонаж'),
+      role,
+      card: {
+        appearance: str(c?.card?.appearance),
+        personality: str(c?.card?.personality),
+        backstory: str(c?.card?.backstory),
+        speechStyle: str(c?.card?.speechStyle),
+        relationshipArc:
+          typeof c?.card?.relationshipArc === 'string' ? c.card.relationshipArc : undefined,
+      },
+      sprites: normSprites(c?.sprites),
+      linkedStatId: typeof c?.linkedStatId === 'string' ? c.linkedStatId : undefined,
+    };
+  });
 
   const stats: StatDefinition[] = arr<any>(raw?.stats).map((s) => ({
     id: str(s?.id) || uid('stat'),
@@ -83,15 +126,16 @@ export function normalizeProject(raw: any): Project {
     description: str(s?.description),
   }));
 
+  const assetTypes: AssetType[] = ['background', 'sprite', 'music', 'sfx', 'cg', 'icon'];
   const assets: AssetMeta[] = arr<any>(raw?.assets)
     .filter((a) => a && typeof a.id === 'string' && typeof a.blobKey === 'string')
     .map((a) => ({
       id: a.id,
-      type: ['background', 'sprite', 'music', 'sfx', 'cg', 'icon'].includes(a.type)
-        ? a.type
-        : 'background',
+      type: assetTypes.includes(a.type) ? a.type : 'background',
       name: str(a.name, a.id),
-      tags: arr<string>(a.tags).filter((t) => typeof t === 'string'),
+      tags: Array.isArray(a.tags) ? a.tags.filter((t: unknown) => typeof t === 'string') : undefined,
+      audioMood: moodSet.has(a.audioMood) ? (a.audioMood as AudioMood) : undefined,
+      generated: bool(a.generated, false) || undefined,
       blobKey: a.blobKey,
       mime: typeof a.mime === 'string' ? a.mime : undefined,
     }));
@@ -105,16 +149,23 @@ export function normalizeProject(raw: any): Project {
     priority: num(e?.priority, 0),
   }));
 
+  const ai = raw?.aiConfig || {};
+  // Legacy: старый «жанр» переносим в customStyle как штрих тона.
+  const legacyGenre = typeof raw?.meta?.genre === 'string' ? raw.meta.genre : '';
+  const customStyle =
+    typeof ai.customStyle === 'string'
+      ? ai.customStyle
+      : legacyGenre
+        ? `Жанр/тон: ${legacyGenre}`
+        : undefined;
+
   return {
     id: str(raw?.id) || base.id,
     createdAt: num(raw?.createdAt, base.createdAt),
     updatedAt: num(raw?.updatedAt, base.updatedAt),
     meta: {
       title: str(raw?.meta?.title, base.meta.title),
-      author: str(raw?.meta?.author),
       coverAssetId: typeof raw?.meta?.coverAssetId === 'string' ? raw.meta.coverAssetId : undefined,
-      genre: str(raw?.meta?.genre, base.meta.genre),
-      description: str(raw?.meta?.description),
       contentRating: raw?.meta?.contentRating === 'mature' ? 'mature' : 'sfw',
     },
     lore: {
@@ -128,19 +179,25 @@ export function normalizeProject(raw: any): Project {
     stats,
     assets,
     aiConfig: {
-      provider: raw?.aiConfig?.provider === 'anthropic' ? 'anthropic' : 'openai-compatible',
-      baseUrl: str(raw?.aiConfig?.baseUrl, base.aiConfig.baseUrl),
-      model: str(raw?.aiConfig?.model, base.aiConfig.model),
-      temperature: num(raw?.aiConfig?.temperature, base.aiConfig.temperature),
-      maxContextMessages: num(raw?.aiConfig?.maxContextMessages, base.aiConfig.maxContextMessages),
-      contextBudget: num(raw?.aiConfig?.contextBudget, base.aiConfig.contextBudget),
-      liveWindow: num(raw?.aiConfig?.liveWindow, base.aiConfig.liveWindow),
-      customDirectorPrompt:
-        typeof raw?.aiConfig?.customDirectorPrompt === 'string'
-          ? raw.aiConfig.customDirectorPrompt
-          : undefined,
-      summarizerModel:
-        typeof raw?.aiConfig?.summarizerModel === 'string' ? raw.aiConfig.summarizerModel : undefined,
+      provider: ai.provider === 'anthropic' ? 'anthropic' : 'openai-compatible',
+      baseUrl: str(ai.baseUrl, base.aiConfig.baseUrl),
+      model: str(ai.model, base.aiConfig.model),
+      temperature: num(ai.temperature, base.aiConfig.temperature),
+      maxContextMessages: num(ai.maxContextMessages, base.aiConfig.maxContextMessages),
+      contextBudget: num(ai.contextBudget, base.aiConfig.contextBudget),
+      liveWindow: num(ai.liveWindow, base.aiConfig.liveWindow),
+      summarizerModel: typeof ai.summarizerModel === 'string' ? ai.summarizerModel : undefined,
+      narrativeLanguage: ai.narrativeLanguage === 'en' ? 'en' : 'ru',
+      stylePreset: str(ai.stylePreset, base.aiConfig.stylePreset),
+      customStyle,
+      jailbreakEnabled: bool(ai.jailbreakEnabled, false),
+      jailbreakPrompt: typeof ai.jailbreakPrompt === 'string' ? ai.jailbreakPrompt : undefined,
+      prefill: typeof ai.prefill === 'string' ? ai.prefill : undefined,
+      advancedBlocks: arr<any>(ai.advancedBlocks)
+        .filter((b) => b && typeof b.content === 'string')
+        .map((b) => ({ content: b.content, depth: num(b.depth, 0) })),
+      imageBaseUrl: typeof ai.imageBaseUrl === 'string' ? ai.imageBaseUrl : undefined,
+      imageModel: typeof ai.imageModel === 'string' ? ai.imageModel : undefined,
     },
   };
 }
@@ -149,13 +206,15 @@ export function initialMemory(): MemoryState {
   return { chronicle: [], currentChapterSummary: '', chapter: 1, facts: [] };
 }
 
-export function initialRuntimeState(project: Project): RuntimeState {
+export function initialRuntimeState(project: Project, protagonistName = ''): RuntimeState {
   const statValues: Record<string, number> = {};
   for (const s of project.stats) statValues[s.id] = s.initial;
   return {
+    protagonistName,
     statValues,
     currentBackgroundId: null,
-    currentMusicId: null,
+    currentMusicMood: null,
+    currentMusicAssetId: null,
     onScreen: [],
     history: [],
     memory: initialMemory(),

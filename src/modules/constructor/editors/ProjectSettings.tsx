@@ -13,19 +13,9 @@ export function ProjectSettings() {
         <Field label="Название">
           <input className="input" value={m.title} onChange={(e) => update((p) => (p.meta.title = e.target.value))} />
         </Field>
-        <Field label="Автор">
-          <input className="input" value={m.author} onChange={(e) => update((p) => (p.meta.author = e.target.value))} />
-        </Field>
-        <Field label="Жанр">
-          <input className="input" value={m.genre} onChange={(e) => update((p) => (p.meta.genre = e.target.value))} />
-        </Field>
-        <Field label="Описание">
-          <textarea
-            className="input h-24"
-            value={m.description}
-            onChange={(e) => update((p) => (p.meta.description = e.target.value))}
-          />
-        </Field>
+        <p className="text-xs text-gray-500 mb-3">
+          Жанр и тон истории задаются на вкладке «ИИ / Промпт» (стиль/пресет).
+        </p>
         <Field label="Рейтинг контента">
           <select
             className="input"

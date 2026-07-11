@@ -78,11 +78,12 @@ function Sprite({
   dim: boolean;
 }) {
   const char = project.characters.find((c) => c.id === sprite.characterId);
-  const binding =
-    char?.sprites.find((s) => s.emotion === sprite.emotion) ||
-    char?.sprites.find((s) => s.emotion === 'neutral') ||
-    char?.sprites[0];
-  const blobKey = project.assets.find((a) => a.id === binding?.assetId)?.blobKey;
+  // Единое правило: спрайт нужной эмоции → neutral → любой имеющийся; нет спрайтов → не рендерим.
+  const assetId =
+    char?.sprites[sprite.emotion as keyof typeof char.sprites] ||
+    char?.sprites.neutral ||
+    (char ? Object.values(char.sprites)[0] : undefined);
+  const blobKey = project.assets.find((a) => a.id === assetId)?.blobKey;
   const url = useAssetUrl(blobKey);
   const posClass =
     sprite.position === 'left' ? 'mr-auto' : sprite.position === 'right' ? 'ml-auto' : 'mx-auto';

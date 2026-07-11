@@ -1,9 +1,19 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
 import { AssetImage, Field } from '../../../shared/ui';
 import { uid } from '../../../shared/utils';
-import { EMOTIONS } from '../../../shared/types';
-import type { Character, CharacterRole } from '../../../shared/types';
+import { EMOTIONS, EMOTION_LABELS } from '../../../shared/types';
+import type { Character, CharacterRole, Emotion, AssetMeta } from '../../../shared/types';
+import { uploadAsset } from '../../../storage/assetOps';
+import { parseSpriteZip } from '../../../storage/spriteZip';
+import { useLang } from '../../../shared/i18n';
+
+const ROLE_META: Record<CharacterRole, { icon: string; label: string }> = {
+  love_interest: { icon: '♥', label: 'Любовный интерес' },
+  important_character: { icon: '★', label: 'Важный персонаж' },
+  protagonist: { icon: '👤', label: 'Протагонист (герой игрока)' },
+  npc: { icon: '•', label: 'NPC (обычно вводит ИИ)' },
+};
 
 export function CharacterEditor() {
   const { project, update } = useProjectStore();
@@ -18,9 +28,9 @@ export function CharacterEditor() {
       p.characters.push({
         id,
         name: 'Новый персонаж',
-        role: 'npc',
+        role: 'love_interest',
         card: { appearance: '', personality: '', backstory: '', speechStyle: '' },
-        sprites: [],
+        sprites: {},
       })
     );
     setSelId(id);
@@ -40,26 +50,27 @@ export function CharacterEditor() {
           + Персонаж
         </button>
         <div className="space-y-1">
-          {project.characters.map((c) => (
-            <button
-              key={c.id}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${
-                selected?.id === c.id ? 'bg-accent text-white' : 'bg-panel2 hover:bg-white/10'
-              }`}
-              onClick={() => setSelId(c.id)}
-            >
-              <AssetImage
-                blobKey={c.sprites.find((s) => s.emotion === 'neutral')?.assetId
-                  ? project.assets.find(
-                      (a) => a.id === c.sprites.find((s) => s.emotion === 'neutral')?.assetId
-                    )?.blobKey
-                  : project.assets.find((a) => a.id === c.sprites[0]?.assetId)?.blobKey}
-                className="w-8 h-8 rounded-full object-cover shrink-0"
-              />
-              <span className="truncate flex-1">{c.name}</span>
-              {c.role === 'love_interest' && <span className="text-xs">💕</span>}
-            </button>
-          ))}
+          {project.characters.map((c) => {
+            const firstSpriteId = c.sprites.neutral || Object.values(c.sprites)[0];
+            return (
+              <button
+                key={c.id}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${
+                  selected?.id === c.id ? 'bg-accent text-white' : 'bg-panel2 hover:bg-white/10'
+                }`}
+                onClick={() => setSelId(c.id)}
+              >
+                <AssetImage
+                  blobKey={project.assets.find((a) => a.id === firstSpriteId)?.blobKey}
+                  className="w-8 h-8 rounded-full object-cover shrink-0"
+                />
+                <span className="truncate flex-1">{c.name}</span>
+                <span className="text-xs" title={ROLE_META[c.role].label}>
+                  {ROLE_META[c.role].icon}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -74,20 +85,25 @@ export function CharacterEditor() {
                   onChange={(e) => patchChar(selected.id, (c) => (c.name = e.target.value))}
                 />
               </Field>
-              <Field label="Роль">
-                <select
-                  className="input"
-                  value={selected.role}
-                  onChange={(e) =>
-                    patchChar(selected.id, (c) => (c.role = e.target.value as CharacterRole))
-                  }
-                >
-                  <option value="protagonist">Протагонист (ГГ)</option>
-                  <option value="love_interest">Любовный интерес</option>
-                  <option value="npc">NPC</option>
-                </select>
-              </Field>
+              <div>
+                <label className="label">Роль</label>
+                <div className="flex flex-wrap gap-2">
+                  {(Object.keys(ROLE_META) as CharacterRole[]).map((role) => (
+                    <button
+                      key={role}
+                      onClick={() => patchChar(selected.id, (c) => (c.role = role))}
+                      className={`chip !px-3 !py-1.5 ${
+                        selected.role === role ? 'bg-accent2 text-white' : ''
+                      }`}
+                      title={ROLE_META[role].label}
+                    >
+                      {ROLE_META[role].icon} {ROLE_META[role].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
+
             <Field label="Внешность">
               <textarea
                 className="input h-16"
@@ -111,7 +127,7 @@ export function CharacterEditor() {
                 onChange={(e) => patchChar(selected.id, (c) => (c.card.backstory = e.target.value))}
               />
             </Field>
-            <Field label="Манера речи" hint="Примеры реплик, лексика, тон.">
+            <Field label="Манера речи" hint="Примеры реплик, лексика, тон. Поддерживаются макросы {{protagonist}} и др.">
               <textarea
                 className="input h-16"
                 value={selected.card.speechStyle}
@@ -153,104 +169,168 @@ export function CharacterEditor() {
 
 function SpriteBinder({ characterId }: { characterId: string }) {
   const { project, update } = useProjectStore();
-  const [customEmotion, setCustomEmotion] = useState('');
+  const lang = useLang((s) => s.lang);
+  const [tray, setTray] = useState<AssetMeta[]>([]);
+  const [busy, setBusy] = useState(false);
+  const zipRef = useRef<HTMLInputElement>(null);
+  const slotRefs = useRef<Record<string, HTMLInputElement | null>>({});
   if (!project) return null;
   const char = project.characters.find((c) => c.id === characterId)!;
-  const spriteAssets = project.assets.filter((a) => a.type === 'sprite');
 
-  const boundEmotions = new Set(char.sprites.map((s) => s.emotion));
-  const allEmotions = [...EMOTIONS, ...char.sprites.map((s) => s.emotion)].filter(
-    (v, i, a) => a.indexOf(v) === i
-  );
-
-  function bind(emotion: string, assetId: string) {
+  function setSprite(emotion: Emotion, assetId: string | null, addAsset?: AssetMeta) {
     update((p) => {
       const c = p.characters.find((c) => c.id === characterId)!;
-      const existing = c.sprites.find((s) => s.emotion === emotion);
-      if (assetId === '') {
-        c.sprites = c.sprites.filter((s) => s.emotion !== emotion);
-      } else if (existing) {
-        existing.assetId = assetId;
-      } else {
-        c.sprites.push({ emotion, assetId });
-      }
+      if (addAsset && !p.assets.some((a) => a.id === addAsset.id)) p.assets.push(addAsset);
+      if (assetId) c.sprites[emotion] = assetId;
+      else delete c.sprites[emotion];
     });
   }
 
+  async function uploadToSlot(emotion: Emotion, file: File) {
+    setBusy(true);
+    const asset = await uploadAsset(file, 'sprite');
+    asset.name = `${char.name}_${emotion}`;
+    setSprite(emotion, asset.id, asset);
+    setBusy(false);
+  }
+
+  async function onZip(file: File) {
+    setBusy(true);
+    const { recognized, unrecognized } = await parseSpriteZip(file);
+    update((p) => {
+      const c = p.characters.find((c) => c.id === characterId)!;
+      for (const { emotion, asset } of recognized) {
+        if (!p.assets.some((a) => a.id === asset.id)) p.assets.push(asset);
+        c.sprites[emotion] = asset.id;
+      }
+      for (const a of unrecognized) if (!p.assets.some((x) => x.id === a.id)) p.assets.push(a);
+    });
+    setTray((t) => [...t, ...unrecognized]);
+    setBusy(false);
+  }
+
+  function assignFromTray(emotion: Emotion, assetId: string) {
+    setSprite(emotion, assetId);
+    setTray((t) => t.filter((a) => a.id !== assetId));
+  }
+
+  const hasNeutral = !!char.sprites.neutral;
+
   return (
     <div className="card">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <div>
           <h4 className="font-semibold">Спрайты и эмоции</h4>
           <p className="text-xs text-gray-500">
-            Обязателен минимум <code>neutral</code> — остальное подменяется им.
+            Нейминг: <code>имя_эмоция.png</code> (напр. <code>{char.name || 'ares'}_joy.png</code>).
+            Обязателен <code>neutral</code> — остальное подменяется им.
           </p>
+        </div>
+        <div className="flex gap-2">
+          <input
+            ref={zipRef}
+            type="file"
+            accept=".zip"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onZip(f);
+              e.target.value = '';
+            }}
+          />
+          <button className="btn-ghost" disabled={busy} onClick={() => zipRef.current?.click()}>
+            {busy ? 'Загрузка…' : '⭳ Загрузить архивом (zip)'}
+          </button>
         </div>
       </div>
 
-      {spriteAssets.length === 0 && (
-        <p className="text-sm text-amber-400 mb-3">
-          Сначала загрузите спрайты на вкладке «Ассеты».
-        </p>
+      {!hasNeutral && (
+        <p className="text-sm text-amber-400 mb-3">⚠️ Не загружен обязательный спрайт neutral.</p>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        {allEmotions.map((emo) => {
-          const binding = char.sprites.find((s) => s.emotion === emo);
-          const asset = binding && project.assets.find((a) => a.id === binding.assetId);
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        {EMOTIONS.map((emo) => {
+          const assetId = char.sprites[emo];
+          const asset = assetId && project.assets.find((a) => a.id === assetId);
           return (
             <div
               key={emo}
               className={`rounded-lg border p-2 ${
-                boundEmotions.has(emo) ? 'border-accent2/40 bg-panel2' : 'border-white/10'
+                assetId ? 'border-accent2/40 bg-panel2' : 'border-white/10'
               }`}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const id = e.dataTransfer.getData('text/plain');
+                if (id) assignFromTray(emo, id);
+              }}
             >
               <div className="aspect-[3/4] rounded overflow-hidden bg-ink mb-2 flex items-center justify-center">
                 {asset ? (
                   <AssetImage blobKey={asset.blobKey} className="w-full h-full object-contain" />
                 ) : (
-                  <span className="text-gray-600 text-xs">пусто</span>
+                  <span className="text-gray-600 text-[10px] text-center px-1">
+                    перетащите сюда
+                  </span>
                 )}
               </div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium">{emo}</span>
+                <span className="text-xs font-medium">{EMOTION_LABELS[emo][lang]}</span>
                 {emo === 'neutral' && <span className="text-xs text-accent">★</span>}
               </div>
-              <select
-                className="input text-xs !py-1"
-                value={binding?.assetId || ''}
-                onChange={(e) => bind(emo, e.target.value)}
-              >
-                <option value="">— нет —</option>
-                {spriteAssets.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
+              <input
+                ref={(el) => (slotRefs.current[emo] = el)}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadToSlot(emo, f);
+                  e.target.value = '';
+                }}
+              />
+              <div className="flex gap-1">
+                <button
+                  className="btn-ghost !px-2 !py-0.5 text-xs flex-1"
+                  onClick={() => slotRefs.current[emo]?.click()}
+                >
+                  {asset ? 'Заменить' : '+ файл'}
+                </button>
+                {asset && (
+                  <button
+                    className="btn-ghost !px-2 !py-0.5 text-xs"
+                    onClick={() => setSprite(emo, null)}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}
       </div>
 
-      <div className="flex gap-2 mt-4 max-w-xs">
-        <input
-          className="input text-sm"
-          placeholder="кастомная эмоция"
-          value={customEmotion}
-          onChange={(e) => setCustomEmotion(e.target.value)}
-        />
-        <button
-          className="btn-ghost"
-          onClick={() => {
-            const e = customEmotion.trim().toLowerCase();
-            if (e && !boundEmotions.has(e) && spriteAssets[0]) bind(e, spriteAssets[0].id);
-            setCustomEmotion('');
-          }}
-        >
-          + эмоция
-        </button>
-      </div>
+      {tray.length > 0 && (
+        <div className="mt-4">
+          <h5 className="text-sm font-semibold mb-2 text-amber-300">
+            Нераспознанные ({tray.length}) — перетащите в нужную ячейку
+          </h5>
+          <div className="flex flex-wrap gap-2">
+            {tray.map((a) => (
+              <div
+                key={a.id}
+                draggable
+                onDragStart={(e) => e.dataTransfer.setData('text/plain', a.id)}
+                className="w-16 rounded border border-white/10 p-1 cursor-grab bg-panel2"
+                title={a.name}
+              >
+                <AssetImage blobKey={a.blobKey} className="w-full aspect-[3/4] object-contain" />
+                <div className="text-[9px] truncate text-center mt-0.5">{a.name}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

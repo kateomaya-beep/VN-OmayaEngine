@@ -6,6 +6,8 @@ export interface ValidationIssue {
 }
 
 // Project validator run before play (see ТЗ §5.6).
+// Sprites are optional for every role now (единое правило отрисовки: нет спрайта →
+// имя+текст), so missing sprites are warnings, never errors.
 export function validateProject(project: Project): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
@@ -21,14 +23,23 @@ export function validateProject(project: Project): ValidationIssue[] {
     issues.push({ level: 'error', message: 'Нет ни одного фона.' });
   }
 
-  const loveInterests = project.characters.filter((c) => c.role === 'love_interest');
-  for (const li of loveInterests) {
-    if (li.sprites.length === 0) {
-      issues.push({ level: 'error', message: `У ЛИ «${li.name}» нет спрайтов.` });
-    } else if (!li.sprites.some((s) => s.emotion === 'neutral')) {
+  // Персонаж, у которого есть хоть какие-то спрайты, должен иметь neutral (fallback).
+  for (const c of project.characters) {
+    const emotions = Object.keys(c.sprites);
+    if (emotions.length > 0 && !c.sprites.neutral) {
       issues.push({
         level: 'warning',
-        message: `У «${li.name}» нет спрайта neutral (используется как fallback).`,
+        message: `У «${c.name}» есть спрайты, но нет neutral (используется как fallback).`,
+      });
+    }
+  }
+
+  const loveInterests = project.characters.filter((c) => c.role === 'love_interest');
+  for (const li of loveInterests) {
+    if (Object.keys(li.sprites).length === 0) {
+      issues.push({
+        level: 'warning',
+        message: `У ЛИ «${li.name}» нет спрайтов — реплики будут рендериться как имя + текст.`,
       });
     }
   }
@@ -37,11 +48,22 @@ export function validateProject(project: Project): ValidationIssue[] {
     issues.push({ level: 'warning', message: 'В проекте нет персонажей.' });
   }
 
-  const untagged = project.assets.filter((a) => a.tags.length === 0);
+  // Untagged backgrounds/CG matter (ИИ выбирает их по тегам); музыка — по настроению.
+  const untagged = project.assets.filter(
+    (a) => (a.type === 'background' || a.type === 'cg') && (!a.tags || a.tags.length === 0)
+  );
   if (untagged.length) {
     issues.push({
       level: 'warning',
-      message: `${untagged.length} ассет(ов) без тегов — ИИ не сможет их осознанно выбрать.`,
+      message: `${untagged.length} фон(ов)/CG без тегов — ИИ не сможет их осознанно выбрать.`,
+    });
+  }
+
+  const musicNoMood = project.assets.filter((a) => a.type === 'music' && !a.audioMood);
+  if (musicNoMood.length) {
+    issues.push({
+      level: 'warning',
+      message: `${musicNoMood.length} трек(ов) без настроения — ИИ не сможет их подобрать.`,
     });
   }
 

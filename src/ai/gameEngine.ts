@@ -1,4 +1,4 @@
-import type { Project, RuntimeState, AiTurn, CanonicalFact } from '../shared/types';
+import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood } from '../shared/types';
 import { buildRequest } from './promptBuilder';
 import { runCompletion } from './providers';
 import { parseAiResponse, applyStatChanges } from './responseParser';
@@ -12,6 +12,24 @@ export interface TurnResult {
 const RETRY_HINT =
   '\n\nОтвет не прошёл валидацию. Верни СТРОГО один JSON-объект по схеме, без markdown и текста вне JSON.';
 
+// Подбор трека под настроение: ротация среди треков этого настроения; нет треков →
+// пробуем 'calm'; ничего нет → null (тишина). Не крашит.
+export function pickTrackForMood(
+  project: Project,
+  mood: AudioMood | string | null,
+  prevAssetId: string | null
+): string | null {
+  if (!mood) return prevAssetId;
+  const pool = project.assets.filter((a) => a.type === 'music' && a.audioMood === mood);
+  const chosen = pool.length ? pool : project.assets.filter((a) => a.type === 'music' && a.audioMood === 'calm');
+  if (!chosen.length) return null;
+  if (chosen.length === 1) return chosen[0].id;
+  // Ротация: избегаем повтора текущего трека.
+  const candidates = chosen.filter((a) => a.id !== prevAssetId);
+  const pickFrom = candidates.length ? candidates : chosen;
+  return pickFrom[Math.floor(Math.random() * pickFrom.length)].id;
+}
+
 // Run one player turn: build context -> call LLM -> parse/repair -> apply to state.
 export async function runTurn(
   project: Project,
@@ -23,21 +41,23 @@ export async function runTurn(
   let raw = await runCompletion(project.aiConfig, {
     system: req.system,
     messages: req.messages,
+    prefill: req.prefill,
     model: project.aiConfig.model,
     temperature: project.aiConfig.temperature,
   });
 
-  let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicId);
+  let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
 
-  // One automatic retry on invalid JSON (see ТЗ §7).
+  // One automatic retry on invalid JSON.
   if (!parsed.ok) {
     raw = await runCompletion(project.aiConfig, {
       system: req.system,
       messages: [...req.messages, { role: 'user', content: RETRY_HINT }],
+      prefill: req.prefill,
       model: project.aiConfig.model,
       temperature: Math.min(project.aiConfig.temperature, 0.5),
     });
-    parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicId);
+    parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
   }
 
   if (!parsed.ok || !parsed.turn) {
@@ -64,10 +84,10 @@ export async function runTurn(
     }
   }
 
-  // Compute on-screen sprites from dialogue beats.
+  // On-screen sprites: только персонажи из списка (с characterId). NPC/name — без слота.
   const onScreenMap = new Map(state.onScreen.map((s) => [s.characterId, s]));
   for (const b of turn.beats) {
-    if (b.type === 'dialogue') {
+    if (b.type === 'dialogue' && b.characterId) {
       onScreenMap.set(b.characterId, {
         characterId: b.characterId,
         emotion: b.emotion,
@@ -77,7 +97,13 @@ export async function runTurn(
   }
   const onScreen = [...onScreenMap.values()].slice(-3);
 
-  // Persist this exchange into the LLM history verbatim.
+  // Музыка: настроение -> конкретный трек (движок сам выбирает).
+  const nextMood = turn.scene.musicMood ?? state.currentMusicMood;
+  const nextTrack =
+    nextMood === state.currentMusicMood
+      ? state.currentMusicAssetId
+      : pickTrackForMood(project, nextMood, state.currentMusicAssetId);
+
   const history = [
     ...state.history,
     { role: 'user' as const, content: playerMove },
@@ -88,7 +114,8 @@ export async function runTurn(
     ...state,
     statValues: values,
     currentBackgroundId: turn.scene.backgroundId ?? state.currentBackgroundId,
-    currentMusicId: turn.scene.musicId ?? state.currentMusicId,
+    currentMusicMood: nextMood,
+    currentMusicAssetId: nextTrack,
     onScreen,
     history,
     lastTurn: turn,
@@ -96,7 +123,6 @@ export async function runTurn(
     memory: { ...state.memory, facts },
   };
 
-  // Memory management (see ТЗ §10). Chapter boundary first, then budget compression.
   if (turn.chapterEvent === 'chapter_end') {
     facts.push({
       chapter: nextState.memory.chapter,

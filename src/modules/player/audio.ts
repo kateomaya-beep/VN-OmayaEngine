@@ -1,9 +1,60 @@
 import { Howl } from 'howler';
 import { getAssetUrl } from '../../storage/assetUrls';
 
-// Music manager with crossfade between tracks (see ТЗ §9).
+// Music manager with crossfade + a 3-channel volume mixer (music / sfx / master),
+// persisted to localStorage (see доработка §5).
+
+interface Volumes {
+  master: number;
+  music: number;
+  sfx: number;
+}
+
+const LS_KEY = 'nf_volumes';
+
+function loadVolumes(): Volumes {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const v = JSON.parse(raw);
+      return {
+        master: typeof v.master === 'number' ? v.master : 0.8,
+        music: typeof v.music === 'number' ? v.music : 0.7,
+        sfx: typeof v.sfx === 'number' ? v.sfx : 0.8,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { master: 0.8, music: 0.7, sfx: 0.8 };
+}
+
+let volumes = loadVolumes();
+const listeners = new Set<(v: Volumes) => void>();
+
 let currentHowl: Howl | null = null;
 let currentKey: string | null = null;
+
+function effectiveMusic(): number {
+  return volumes.master * volumes.music;
+}
+
+export function getVolumes(): Volumes {
+  return { ...volumes };
+}
+
+export function subscribeVolumes(fn: (v: Volumes) => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+export function setVolume(channel: keyof Volumes, value: number): void {
+  volumes = { ...volumes, [channel]: Math.max(0, Math.min(1, value)) };
+  localStorage.setItem(LS_KEY, JSON.stringify(volumes));
+  // Apply live to the playing music track.
+  if (currentHowl) currentHowl.volume(effectiveMusic());
+  for (const fn of listeners) fn(getVolumes());
+}
 
 export async function playMusic(blobKey: string | null, fadeMs = 800): Promise<void> {
   if (blobKey === currentKey) return;
@@ -22,9 +73,10 @@ export async function playMusic(blobKey: string | null, fadeMs = 800): Promise<v
   const url = await getAssetUrl(blobKey);
   if (!url) return;
 
+  const target = effectiveMusic();
   const next = new Howl({ src: [url], loop: true, volume: 0, html5: true });
   next.play();
-  next.fade(0, 0.6, fadeMs);
+  next.fade(0, target, fadeMs);
   currentHowl = next;
   currentKey = blobKey;
 
@@ -38,7 +90,7 @@ export async function playSfx(blobKey: string | null): Promise<void> {
   if (!blobKey) return;
   const url = await getAssetUrl(blobKey);
   if (!url) return;
-  const sfx = new Howl({ src: [url], volume: 0.8, html5: true });
+  const sfx = new Howl({ src: [url], volume: volumes.master * volumes.sfx, html5: true });
   sfx.play();
 }
 

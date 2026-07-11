@@ -6,9 +6,12 @@ export interface CompletionRequest {
   messages: LlmMessage[];
   model: string;
   temperature: number;
+  // Опциональный префилл: начало ответа ассистента (напр. '{"scene":') для
+  // стабилизации чистого JSON. Провайдер добавляет его как хвостовой assistant-
+  // message и ПРЕПЕНДИТ обратно к результату, чтобы вернуть полный текст.
+  prefill?: string;
 }
 
-// A provider adapter turns our neutral request into a call to a specific API.
 export interface Provider {
   complete(cfg: AiConfig, req: CompletionRequest): Promise<string>;
 }
@@ -22,6 +25,7 @@ const openAiCompatible: Provider = {
     const key = getApiKey('openai-compatible');
     const base = (cfg.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
     const messages = [{ role: 'system', content: req.system }, ...req.messages];
+    if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
     const res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -41,15 +45,20 @@ const openAiCompatible: Provider = {
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
     if (typeof content !== 'string') throw new Error('Пустой ответ провайдера');
-    return content;
+    return req.prefill ? req.prefill + content : content;
   },
 };
 
-// Anthropic Messages API.
+// Anthropic Messages API (поддерживает assistant-префилл нативно).
 const anthropic: Provider = {
   async complete(cfg, req) {
     const key = getApiKey('anthropic');
     const base = (cfg.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
+    const messages = req.messages.map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content,
+    }));
+    if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
     const res = await fetch(`${base}/messages`, {
       method: 'POST',
       headers: {
@@ -63,10 +72,7 @@ const anthropic: Provider = {
         max_tokens: 2048,
         temperature: req.temperature,
         system: req.system,
-        messages: req.messages.map((m) => ({
-          role: m.role === 'assistant' ? 'assistant' : 'user',
-          content: m.content,
-        })),
+        messages,
       }),
     });
     if (!res.ok) {
@@ -76,7 +82,7 @@ const anthropic: Provider = {
     const data = await res.json();
     const content = data?.content?.[0]?.text;
     if (typeof content !== 'string') throw new Error('Пустой ответ провайдера');
-    return content;
+    return req.prefill ? req.prefill + content : content;
   },
 };
 

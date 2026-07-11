@@ -2,8 +2,15 @@ import { create } from 'zustand';
 import type { Project, RuntimeState, Beat, Choice, SaveSlot } from '../../shared/types';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn } from '../../ai/gameEngine';
+import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, getSave } from '../../storage/db';
 import { playMusic, playSfx } from './audio';
+
+// currentMusicAssetId — это id ассета; для проигрывания нужен его blobKey.
+function trackBlobKey(project: Project, assetId: string | null): string | null {
+  if (!assetId) return null;
+  return project.assets.find((a) => a.id === assetId)?.blobKey || null;
+}
 
 interface PlayerStore {
   project: Project | null;
@@ -21,7 +28,7 @@ interface PlayerStore {
   error: string | null;
   statFlash: { statId: string; delta: number }[];
 
-  loadAndStart: (projectId: string, resume?: boolean) => Promise<void>;
+  loadAndStart: (projectId: string, resume?: boolean, protagonistName?: string) => Promise<void>;
   advance: () => void; // reveal next beat
   choose: (choice: Choice) => Promise<void>;
   submitFreeInput: (text: string) => Promise<void>;
@@ -48,7 +55,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   error: null,
   statFlash: [],
 
-  async loadAndStart(projectId, resume) {
+  async loadAndStart(projectId, resume, protagonistName = '') {
     set({ loading: true, error: null });
     const project = await getProject(projectId);
     if (!project) {
@@ -65,10 +72,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       }
     }
 
-    const state = initialRuntimeState(project);
+    const state = initialRuntimeState(project, protagonistName);
     set({ project, state, loading: false, queue: [], visibleBeats: [], choices: [], cg: null });
-    // Seed the opening turn.
-    await runAndApply(set, get, project, state, `[НАЧАЛО ИГРЫ] ${project.lore.openingScene}`.trim());
+    // Seed the opening turn (макросы в стартовой сцене раскрываются).
+    const opening = expandMacros(project.lore.openingScene, { project, state });
+    await runAndApply(set, get, project, state, `[НАЧАЛО ИГРЫ] ${opening}`.trim());
   },
 
   advance() {
@@ -153,7 +161,7 @@ function applyLoadedState(
   state: RuntimeState
 ) {
   const last = state.lastTurn;
-  playMusic(state.currentMusicId);
+  playMusic(trackBlobKey(project, state.currentMusicAssetId));
   set({
     project,
     state,
@@ -188,9 +196,9 @@ async function runAndApply(
       if (after !== before) flash.push({ statId: s.id, delta: after - before });
     }
 
-    // Scene fx.
-    void playMusic(state.currentMusicId);
-    if (turn.scene.sfxId) void playSfx(turn.scene.sfxId);
+    // Scene fx: воспроизводим трек, подобранный движком под настроение.
+    void playMusic(trackBlobKey(project, state.currentMusicAssetId));
+    if (turn.scene.sfxId) void playSfx(trackBlobKey(project, turn.scene.sfxId));
 
     const [first, ...rest] = turn.beats;
     // Choices are stored now but the UI reveals them only once the beat queue empties.
