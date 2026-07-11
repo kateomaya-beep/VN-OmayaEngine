@@ -76,6 +76,31 @@ export interface CharacterCard {
   backstory: string;
   speechStyle: string;
   relationshipArc?: string;
+  scenario?: string; // из ST-карточки (стартовый контекст)
+  greetings?: string[]; // first_mes + alternate_greetings
+}
+
+// Три связанных стата отношений у КАЖДОГО персонажа (см. CR v2 §C), -100..100.
+export interface RelationshipStats {
+  affection: number; // ❤️ симпатия
+  passion_stat: number; // 🔥 страсть
+  friendship: number; // 🍀 дружба
+}
+
+export const RELATIONSHIP_FIELDS = ['affection', 'passion_stat', 'friendship'] as const;
+export type RelationshipField = (typeof RELATIONSHIP_FIELDS)[number];
+
+export const RELATIONSHIP_META: Record<
+  RelationshipField,
+  { icon: string; ru: string; en: string }
+> = {
+  affection: { icon: '❤️', ru: 'Симпатия', en: 'Affection' },
+  passion_stat: { icon: '🔥', ru: 'Страсть', en: 'Passion' },
+  friendship: { icon: '🍀', ru: 'Дружба', en: 'Friendship' },
+};
+
+export function emptyRelationship(): RelationshipStats {
+  return { affection: 0, passion_stat: 0, friendship: 0 };
 }
 
 export interface Character {
@@ -86,7 +111,11 @@ export interface Character {
   // emotion -> assetId. Спрайты опциональны для любой роли: нет спрайта —
   // реплика рендерится как имя + текст (единое правило, без крашей).
   sprites: Partial<Record<Emotion, string>>;
+  relationship: RelationshipStats; // стартовые значения (правятся в конструкторе)
+  relationshipHidden?: boolean; // скрыть в инфобоксе
   linkedStatId?: string;
+  importedFrom?: 'tavern_v2' | 'tavern_v3' | 'manual' | 'promoted_npc';
+  sourceSystemPrompt?: string; // из карточки, НЕ применять авто
 }
 
 export interface StatDefinition {
@@ -224,8 +253,10 @@ export interface OnScreenSprite {
 }
 
 export interface RuntimeState {
-  protagonistName: string; // имя героя, введённое игроком на старте
+  protagonistName: string; // имя героя (из карточки протагониста в конструкторе)
   statValues: Record<string, number>;
+  // Живые значения статов отношений per персонаж (charId -> RelationshipStats).
+  relationship: Record<string, RelationshipStats>;
   currentBackgroundId: string | null;
   currentMusicMood: string | null;
   currentMusicAssetId: string | null; // фактический играющий трек

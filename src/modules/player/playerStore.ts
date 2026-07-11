@@ -4,7 +4,8 @@ import { initialRuntimeState } from '../../shared/factory';
 import { runTurn } from '../../ai/gameEngine';
 import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, getSave, saveProject } from '../../storage/db';
-import { playMusic, playSfx } from './audio';
+import { playMusic, playSfx, toggleMute } from './audio';
+import { parseSlash, SLASH_HELP } from './slashCommands';
 
 // currentMusicAssetId — это id ассета; для проигрывания нужен его blobKey.
 function trackBlobKey(project: Project, assetId: string | null): string | null {
@@ -32,6 +33,7 @@ interface PlayerStore {
   advance: () => void; // reveal next beat
   choose: (choice: Choice) => Promise<void>;
   submitFreeInput: (text: string) => Promise<void>;
+  continueStory: () => Promise<void>;
   regenerate: () => Promise<void>;
   clearError: () => void;
   save: (slot: number, title: string) => Promise<void>;
@@ -99,7 +101,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const { state, project } = get();
     if (!state || !project) return;
     // Deduct cost if any.
-    let move = choice.text;
     if (choice.cost) {
       const cur = state.statValues[choice.cost.statId] ?? 0;
       if (cur < choice.cost.amount) {
@@ -108,13 +109,48 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       }
       state.statValues[choice.cost.statId] = cur - choice.cost.amount;
     }
-    await runAndApply(set, get, project, state, move);
+    // Выбор кнопкой → ИИ разворачивает его в реплику/действие героя (Блок B.1).
+    await runAndApply(set, get, project, state, `[ВЫБОР] ${choice.text}`);
+  },
+
+  async continueStory() {
+    const { state, project } = get();
+    if (!state || !project) return;
+    // Игрок продвигает историю без реплики (Блок I.1) — мир движется сам.
+    await runAndApply(set, get, project, state, '[ПРОДОЛЖИТЬ]');
   },
 
   async submitFreeInput(text) {
     const { state, project } = get();
     if (!state || !project || !text.trim()) return;
-    await runAndApply(set, get, project, state, text.trim());
+
+    // Слэш-команды (Блок B.3).
+    const slash = parseSlash(text, project);
+    switch (slash.kind) {
+      case 'none':
+        break;
+      case 'regen':
+        await get().regenerate();
+        return;
+      case 'mute':
+        toggleMute();
+        return;
+      case 'help':
+        set({ error: SLASH_HELP });
+        return;
+      case 'setBackground':
+        usePlayerStore.setState((st) => ({
+          state: st.state ? { ...st.state, currentBackgroundId: slash.assetId } : st.state,
+        }));
+        await get().save(0, `Автосейв · ход ${state.turnCount}`);
+        return;
+      case 'move':
+        await runAndApply(set, get, project, state, slash.text);
+        return;
+    }
+
+    // Обычный ввод — ДОСЛОВНАЯ реплика героя (Блок B.2): ИИ не пишет за протагониста.
+    await runAndApply(set, get, project, state, `[ДОСЛОВНО] ${text.trim()}`);
   },
 
   async regenerate() {

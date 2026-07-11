@@ -2,9 +2,22 @@ import { useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
 import { AssetImage, Field } from '../../../shared/ui';
 import { uid } from '../../../shared/utils';
-import { EMOTIONS, EMOTION_LABELS } from '../../../shared/types';
-import type { Character, CharacterRole, Emotion, AssetMeta } from '../../../shared/types';
+import {
+  EMOTIONS,
+  EMOTION_LABELS,
+  RELATIONSHIP_FIELDS,
+  RELATIONSHIP_META,
+  emptyRelationship,
+} from '../../../shared/types';
+import type {
+  Character,
+  CharacterRole,
+  Emotion,
+  AssetMeta,
+  RelationshipField,
+} from '../../../shared/types';
 import { uploadAsset } from '../../../storage/assetOps';
+import { clamp } from '../../../shared/utils';
 import { parseSpriteZip } from '../../../storage/spriteZip';
 import { useLang } from '../../../shared/i18n';
 
@@ -31,6 +44,7 @@ export function CharacterEditor() {
         role: 'love_interest',
         card: { appearance: '', personality: '', backstory: '', speechStyle: '' },
         sprites: {},
+        relationship: emptyRelationship(),
       })
     );
     setSelId(id);
@@ -40,6 +54,19 @@ export function CharacterEditor() {
     update((p) => {
       const c = p.characters.find((c) => c.id === id);
       if (c) fn(c);
+    });
+  }
+
+  // Один протагонист на проект (CR v2 §B.4): при назначении демотим остальных.
+  function setRole(id: string, role: CharacterRole) {
+    update((p) => {
+      if (role === 'protagonist') {
+        for (const c of p.characters) {
+          if (c.id !== id && c.role === 'protagonist') c.role = 'important_character';
+        }
+      }
+      const c = p.characters.find((c) => c.id === id);
+      if (c) c.role = role;
     });
   }
 
@@ -91,7 +118,7 @@ export function CharacterEditor() {
                   {(Object.keys(ROLE_META) as CharacterRole[]).map((role) => (
                     <button
                       key={role}
-                      onClick={() => patchChar(selected.id, (c) => (c.role = role))}
+                      onClick={() => setRole(selected.id, role)}
                       className={`chip !px-3 !py-1.5 ${
                         selected.role === role ? 'bg-accent2 text-white' : ''
                       }`}
@@ -157,6 +184,52 @@ export function CharacterEditor() {
               Удалить персонажа
             </button>
           </div>
+
+          {selected.role !== 'protagonist' && (
+            <div className="card">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h4 className="font-semibold">Статы отношений (стартовые)</h4>
+                  <p className="text-xs text-gray-500">
+                    Диапазон −100…+100. ИИ учитывает и меняет их по ходу игры.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!selected.relationshipHidden}
+                    onChange={(e) =>
+                      patchChar(selected.id, (c) => (c.relationshipHidden = e.target.checked || undefined))
+                    }
+                  />
+                  Скрыть в инфобоксе
+                </label>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {RELATIONSHIP_FIELDS.map((f) => (
+                  <div key={f}>
+                    <label className="label flex items-center gap-1">
+                      <span>{RELATIONSHIP_META[f].icon}</span>
+                      {RELATIONSHIP_META[f].ru}
+                    </label>
+                    <input
+                      type="number"
+                      min={-100}
+                      max={100}
+                      className="input"
+                      value={selected.relationship[f]}
+                      onChange={(e) =>
+                        patchChar(
+                          selected.id,
+                          (c) => (c.relationship[f as RelationshipField] = clamp(Number(e.target.value), -100, 100))
+                        )
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <SpriteBinder characterId={selected.id} />
         </div>

@@ -1,20 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAssetUrl } from '../../../shared/ui';
-import type { Project, OnScreenSprite } from '../../../shared/types';
+import type { Project } from '../../../shared/types';
 
-// Background with crossfade + sprites in up to 3 positions + CG overlay (see ТЗ §9).
+export interface ActiveSprite {
+  characterId: string;
+  emotion: string;
+}
+
+// Сцена (CR v2 §A): фон с кроссфейдом + МАКСИМУМ один активный говорящий +
+// нижний градиент-затемнение + нормализация размеров + CG-оверлей.
 export function Stage({
   project,
   backgroundId,
-  onScreen,
+  active,
   cg,
-  activeSpeakerId,
 }: {
   project: Project;
   backgroundId: string | null;
-  onScreen: OnScreenSprite[];
+  active: ActiveSprite | null;
   cg: string | null;
-  activeSpeakerId?: string;
 }) {
   const bgKey = project.assets.find((a) => a.id === backgroundId)?.blobKey || null;
   const cgKey = project.assets.find((a) => a.id === cg)?.blobKey || null;
@@ -23,16 +27,12 @@ export function Stage({
     <div className="absolute inset-0 overflow-hidden bg-black">
       <CrossfadeBg blobKey={bgKey} />
 
-      <div className="absolute inset-0 flex items-end justify-center gap-0 pointer-events-none">
-        {onScreen.map((s) => (
-          <Sprite
-            key={s.characterId}
-            project={project}
-            sprite={s}
-            dim={!!activeSpeakerId && activeSpeakerId !== s.characterId}
-          />
-        ))}
-      </div>
+      {/* Активный говорящий (нормализация: единый бокс, object-contain, растёт снизу).
+          Десктоп — снизу по центру; мобилка — крупно сверху по центру. */}
+      {!cgKey && <ActiveSpriteLayer project={project} active={active} />}
+
+      {/* Нижний градиент-затемнение — спрайт «врастает» в него. */}
+      <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black via-black/70 to-transparent pointer-events-none" />
 
       {cgKey && <CgOverlay blobKey={cgKey} />}
     </div>
@@ -58,8 +58,8 @@ function CrossfadeBg({ blobKey }: { blobKey: string | null }) {
         <img
           key={l.id}
           src={l.url}
+          // Фоны нормализуются к единому кадру: object-cover заполняет экран.
           className="absolute inset-0 w-full h-full object-cover transition-opacity duration-[400ms]"
-          style={{ opacity: 1 }}
           alt=""
         />
       ))}
@@ -68,35 +68,50 @@ function CrossfadeBg({ blobKey }: { blobKey: string | null }) {
   );
 }
 
-function Sprite({
-  project,
-  sprite,
-  dim,
-}: {
-  project: Project;
-  sprite: OnScreenSprite;
-  dim: boolean;
-}) {
-  const char = project.characters.find((c) => c.id === sprite.characterId);
-  // Единое правило: спрайт нужной эмоции → neutral → любой имеющийся; нет спрайтов → не рендерим.
-  const assetId =
-    char?.sprites[sprite.emotion as keyof typeof char.sprites] ||
-    char?.sprites.neutral ||
-    (char ? Object.values(char.sprites)[0] : undefined);
-  const blobKey = project.assets.find((a) => a.id === assetId)?.blobKey;
-  const url = useAssetUrl(blobKey);
-  const posClass =
-    sprite.position === 'left' ? 'mr-auto' : sprite.position === 'right' ? 'ml-auto' : 'mx-auto';
+// Держит один активный спрайт с fade in/out. При смене говорящего старый плавно
+// уходит, новый появляется; на чистом нарративе (active=null) — уходит в никого.
+function ActiveSpriteLayer({ project, active }: { project: Project; active: ActiveSprite | null }) {
+  const resolve = (a: ActiveSprite | null): { key: string; assetId?: string } => {
+    if (!a) return { key: '__none__' };
+    const char = project.characters.find((c) => c.id === a.characterId);
+    if (!char) return { key: '__none__' };
+    const assetId =
+      char.sprites[a.emotion as keyof typeof char.sprites] ||
+      char.sprites.neutral ||
+      Object.values(char.sprites)[0];
+    if (!assetId) return { key: '__none__' }; // нет спрайта → рендер имя+текст, тут пусто
+    return { key: `${a.characterId}:${assetId}`, assetId };
+  };
 
-  if (!url) return null;
+  const target = resolve(active);
+  const [shown, setShown] = useState(target);
+  const [visible, setVisible] = useState(!!target.assetId);
+
+  useEffect(() => {
+    if (target.key === shown.key) return;
+    // Fade out текущего, затем подмена и fade in нового.
+    setVisible(false);
+    const t = setTimeout(() => {
+      setShown(target);
+      setVisible(!!target.assetId);
+    }, 220);
+    return () => clearTimeout(t);
+  }, [target.key]);
+
+  const blobKey = project.assets.find((a) => a.id === shown.assetId)?.blobKey;
+  const url = useAssetUrl(blobKey);
+  if (!shown.assetId || !url) return null;
+
   return (
-    <img
-      src={url}
-      alt={char?.name}
-      className={`h-[85%] max-w-[45%] object-contain transition-all duration-300 ${posClass} ${
-        dim ? 'brightness-50 saturate-50' : 'brightness-100'
-      }`}
-    />
+    <div className="absolute inset-0 flex justify-center items-start sm:items-end pointer-events-none">
+      <img
+        src={url}
+        alt=""
+        className={`object-contain object-bottom transition-all duration-300 h-[62%] mt-[6%] sm:mt-0 sm:h-[88%] max-w-[92%] sm:max-w-[46%] ${
+          visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+        }`}
+      />
+    </div>
   );
 }
 

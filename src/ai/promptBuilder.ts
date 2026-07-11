@@ -45,6 +45,12 @@ function characterBlocks(
     important_character: 'важный персонаж',
     npc: 'второстепенный',
   };
+  const rels = ctx.state?.relationship || {};
+  const relLine = (c: (typeof project.characters)[number]) => {
+    if (c.role === 'protagonist') return '';
+    const r = rels[c.id] || c.relationship;
+    return `\nОтношения к ${c.name} (id для statChanges): ❤️ rel:${c.id}:affection=${r.affection}, 🔥 rel:${c.id}:passion_stat=${r.passion_stat}, 🍀 rel:${c.id}:friendship=${r.friendship} (диапазон -100..100)`;
+  };
   const desc = (c: (typeof project.characters)[number]) => {
     const emotions = Object.keys(c.sprites);
     const emo = emotions.length ? emotions.join(', ') : '(спрайтов нет — рендер как имя+текст)';
@@ -54,7 +60,7 @@ function characterBlocks(
 Предыстория: ${expandMacros(c.card.backstory, ctx)}
 Манера речи: ${expandMacros(c.card.speechStyle, ctx)}${
       c.card.relationshipArc ? `\nАрка отношений: ${expandMacros(c.card.relationshipArc, ctx)}` : ''
-    }
+    }${relLine(c)}
 Доступные эмоции: ${emo}`;
   };
 

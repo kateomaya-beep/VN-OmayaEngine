@@ -11,9 +11,10 @@ import type {
   Emotion,
   AudioMood,
   AiConfig,
+  RelationshipStats,
 } from './types';
 import { EMOTIONS, AUDIO_MOODS } from './types';
-import { uid } from './utils';
+import { uid, clamp } from './utils';
 
 export const DEFAULT_STYLE_PRESET = 'romance_club';
 
@@ -94,10 +95,26 @@ export function normalizeProject(raw: any): Project {
     return out;
   };
 
+  const clampRel = (v: unknown) => clamp(num(v, 0), -100, 100);
+  const normRelationship = (v: any): RelationshipStats => ({
+    affection: clampRel(v?.affection),
+    passion_stat: clampRel(v?.passion_stat),
+    friendship: clampRel(v?.friendship),
+  });
+
+  let protagonistSeen = false;
   const characters: Character[] = arr<any>(raw?.characters).map((c) => {
     let role: CharacterRole = roleSet.has(c?.role) ? c.role : 'npc';
     // Legacy flag some early builds may have used.
     if (!roleSet.has(c?.role) && c?.important) role = 'important_character';
+    // Один протагонист на проект (CR v2 §B.4): лишних понижаем.
+    if (role === 'protagonist') {
+      if (protagonistSeen) role = 'important_character';
+      else protagonistSeen = true;
+    }
+    const importFrom = ['tavern_v2', 'tavern_v3', 'manual', 'promoted_npc'].includes(c?.importedFrom)
+      ? c.importedFrom
+      : undefined;
     return {
       id: str(c?.id) || uid('char'),
       name: str(c?.name, 'Персонаж'),
@@ -109,9 +126,18 @@ export function normalizeProject(raw: any): Project {
         speechStyle: str(c?.card?.speechStyle),
         relationshipArc:
           typeof c?.card?.relationshipArc === 'string' ? c.card.relationshipArc : undefined,
+        scenario: typeof c?.card?.scenario === 'string' ? c.card.scenario : undefined,
+        greetings: Array.isArray(c?.card?.greetings)
+          ? c.card.greetings.filter((g: unknown) => typeof g === 'string')
+          : undefined,
       },
       sprites: normSprites(c?.sprites),
+      relationship: normRelationship(c?.relationship),
+      relationshipHidden: bool(c?.relationshipHidden, false) || undefined,
       linkedStatId: typeof c?.linkedStatId === 'string' ? c.linkedStatId : undefined,
+      importedFrom: importFrom,
+      sourceSystemPrompt:
+        typeof c?.sourceSystemPrompt === 'string' ? c.sourceSystemPrompt : undefined,
     };
   });
 
@@ -206,12 +232,22 @@ export function initialMemory(): MemoryState {
   return { chronicle: [], currentChapterSummary: '', chapter: 1, facts: [] };
 }
 
-export function initialRuntimeState(project: Project, protagonistName = ''): RuntimeState {
+export function initialRuntimeState(project: Project, protagonistName?: string): RuntimeState {
   const statValues: Record<string, number> = {};
   for (const s of project.stats) statValues[s.id] = s.initial;
+
+  // Живые значения отношений — из стартовых значений персонажей.
+  const relationship: Record<string, RelationshipStats> = {};
+  for (const c of project.characters) relationship[c.id] = { ...c.relationship };
+
+  // Имя героя берём из карточки протагониста (CR v2 §B.5) — отдельного экрана нет.
+  const protagonist = project.characters.find((c) => c.role === 'protagonist');
+  const name = protagonistName ?? protagonist?.name ?? '';
+
   return {
-    protagonistName,
+    protagonistName: name,
     statValues,
+    relationship,
     currentBackgroundId: null,
     currentMusicMood: null,
     currentMusicAssetId: null,

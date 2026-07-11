@@ -20,7 +20,8 @@ export function HistoryLog({
   const entries: { speaker: string; text: string }[] = [];
   for (const msg of state.history) {
     if (msg.role === 'user') {
-      entries.push({ speaker: '▸ Вы', text: msg.content.replace(/^\[НАЧАЛО ИГРЫ\]\s*/, '') });
+      const clean = msg.content.replace(/^\[(НАЧАЛО ИГРЫ|ВЫБОР|ДОСЛОВНО|OOC|ПРОДОЛЖИТЬ)\]\s*/, '');
+      if (clean.trim()) entries.push({ speaker: '▸ Вы', text: clean });
     } else {
       const parsed = parseAiResponse(msg.content, project, null, null);
       if (parsed.ok && parsed.turn) {

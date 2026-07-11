@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { usePlayerStore } from '../playerStore';
 import { Modal } from '../../../shared/ui';
 import { uid } from '../../../shared/utils';
+import { emptyRelationship } from '../../../shared/types';
 import type { CharacterRole } from '../../../shared/types';
 
 // Всплывающая панель быстрой правки проекта прямо в игре (см. доработка §7).
@@ -19,15 +20,23 @@ export function EditPanel({ open, onClose }: { open: boolean; onClose: () => voi
   function addCharacter() {
     const name = newChar.trim();
     if (!name) return;
+    const cid = uid('char');
     s.patchProject((p) =>
       p.characters.push({
-        id: uid('char'),
+        id: cid,
         name,
         role: newCharRole,
         card: { appearance: '', personality: '', backstory: '', speechStyle: '' },
         sprites: {},
+        relationship: emptyRelationship(),
       })
     );
+    // Сидим живые значения отношений, чтобы стат сразу работал.
+    usePlayerStore.setState((st) => ({
+      state: st.state
+        ? { ...st.state, relationship: { ...st.state.relationship, [cid]: emptyRelationship() } }
+        : st.state,
+    }));
     setNewChar('');
   }
 

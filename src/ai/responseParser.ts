@@ -1,7 +1,22 @@
-import type { Project, AiTurn, Beat } from '../shared/types';
-import { EMOTIONS, AUDIO_MOODS } from '../shared/types';
+import type { Project, AiTurn, Beat, RuntimeState, RelationshipStats } from '../shared/types';
+import { EMOTIONS, AUDIO_MOODS, RELATIONSHIP_FIELDS } from '../shared/types';
 import { aiTurnSchema } from './schema';
 import { clamp } from '../shared/utils';
+
+// Статы отношений адресуются как statId = `rel:<charId>:<field>` (см. CR v2 §C.3).
+const REL_FIELD_SET = new Set<string>(RELATIONSHIP_FIELDS);
+export function parseRelStatId(
+  statId: string
+): { charId: string; field: keyof RelationshipStats } | null {
+  if (!statId.startsWith('rel:')) return null;
+  const rest = statId.slice(4);
+  const idx = rest.lastIndexOf(':');
+  if (idx === -1) return null;
+  const charId = rest.slice(0, idx);
+  const field = rest.slice(idx + 1);
+  if (!charId || !REL_FIELD_SET.has(field)) return null;
+  return { charId, field: field as keyof RelationshipStats };
+}
 
 export interface ParseResult {
   ok: boolean;
@@ -105,7 +120,12 @@ function repair(
     return { type: 'narration', text: b.text };
   });
 
-  const statChanges = parsed.statChanges.filter((s) => statIds.has(s.statId));
+  // Оставляем изменения либо для проектных статов, либо для валидных rel-статов.
+  const statChanges = parsed.statChanges.filter((s) => {
+    if (statIds.has(s.statId)) return true;
+    const rel = parseRelStatId(s.statId);
+    return !!rel && charById.has(rel.charId);
+  });
 
   const choices = parsed.choices.map((c) => ({
     ...c,
@@ -146,6 +166,7 @@ export function applyStatChanges(
   const next = { ...values };
   const effective: { statId: string; delta: number }[] = [];
   for (const ch of changes) {
+    if (parseRelStatId(ch.statId)) continue; // rel-статы обрабатываются отдельно
     const def = project.stats.find((s) => s.id === ch.statId);
     if (!def) continue;
     const before = next[ch.statId] ?? def.initial;
@@ -156,4 +177,31 @@ export function applyStatChanges(
     }
   }
   return { values: next, effective };
+}
+
+// Apply relationship stat changes (rel:<charId>:<field>), clamped -100..100.
+export function applyRelationshipChanges(
+  project: Project,
+  relationship: Record<string, RelationshipStats>,
+  changes: AiTurn['statChanges']
+): {
+  relationship: Record<string, RelationshipStats>;
+  effective: { charId: string; field: keyof RelationshipStats; delta: number }[];
+} {
+  const next: Record<string, RelationshipStats> = {};
+  for (const [k, v] of Object.entries(relationship)) next[k] = { ...v };
+  const effective: { charId: string; field: keyof RelationshipStats; delta: number }[] = [];
+  const charIds = new Set(project.characters.map((c) => c.id));
+  for (const ch of changes) {
+    const rel = parseRelStatId(ch.statId);
+    if (!rel || !charIds.has(rel.charId)) continue;
+    if (!next[rel.charId]) next[rel.charId] = { affection: 0, passion_stat: 0, friendship: 0 };
+    const before = next[rel.charId][rel.field] ?? 0;
+    const after = clamp(before + ch.delta, -100, 100);
+    if (after !== before) {
+      next[rel.charId][rel.field] = after;
+      effective.push({ charId: rel.charId, field: rel.field, delta: after - before });
+    }
+  }
+  return { relationship: next, effective };
 }

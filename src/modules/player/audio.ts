@@ -8,6 +8,7 @@ interface Volumes {
   master: number;
   music: number;
   sfx: number;
+  muted: boolean;
 }
 
 const LS_KEY = 'nf_volumes';
@@ -21,12 +22,13 @@ function loadVolumes(): Volumes {
         master: typeof v.master === 'number' ? v.master : 0.8,
         music: typeof v.music === 'number' ? v.music : 0.7,
         sfx: typeof v.sfx === 'number' ? v.sfx : 0.8,
+        muted: typeof v.muted === 'boolean' ? v.muted : false,
       };
     }
   } catch {
     /* ignore */
   }
-  return { master: 0.8, music: 0.7, sfx: 0.8 };
+  return { master: 0.8, music: 0.7, sfx: 0.8, muted: false };
 }
 
 let volumes = loadVolumes();
@@ -36,7 +38,7 @@ let currentHowl: Howl | null = null;
 let currentKey: string | null = null;
 
 function effectiveMusic(): number {
-  return volumes.master * volumes.music;
+  return volumes.muted ? 0 : volumes.master * volumes.music;
 }
 
 export function getVolumes(): Volumes {
@@ -48,12 +50,24 @@ export function subscribeVolumes(fn: (v: Volumes) => void): () => void {
   return () => listeners.delete(fn);
 }
 
-export function setVolume(channel: keyof Volumes, value: number): void {
-  volumes = { ...volumes, [channel]: Math.max(0, Math.min(1, value)) };
+function persistAndNotify() {
   localStorage.setItem(LS_KEY, JSON.stringify(volumes));
-  // Apply live to the playing music track.
   if (currentHowl) currentHowl.volume(effectiveMusic());
   for (const fn of listeners) fn(getVolumes());
+}
+
+export function setVolume(channel: 'master' | 'music' | 'sfx', value: number): void {
+  volumes = { ...volumes, [channel]: Math.max(0, Math.min(1, value)) };
+  persistAndNotify();
+}
+
+export function toggleMute(): void {
+  volumes = { ...volumes, muted: !volumes.muted };
+  persistAndNotify();
+}
+
+export function isMuted(): boolean {
+  return volumes.muted;
 }
 
 export async function playMusic(blobKey: string | null, fadeMs = 800): Promise<void> {
@@ -90,6 +104,7 @@ export async function playSfx(blobKey: string | null): Promise<void> {
   if (!blobKey) return;
   const url = await getAssetUrl(blobKey);
   if (!url) return;
+  if (volumes.muted) return;
   const sfx = new Howl({ src: [url], volume: volumes.master * volumes.sfx, html5: true });
   sfx.play();
 }

@@ -1,7 +1,8 @@
 import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood } from '../shared/types';
+import { RELATIONSHIP_META } from '../shared/types';
 import { buildRequest } from './promptBuilder';
 import { runCompletion } from './providers';
-import { parseAiResponse, applyStatChanges } from './responseParser';
+import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
 import { maybeCompress, closeChapter } from './memoryEngine';
 
 export interface TurnResult {
@@ -68,6 +69,7 @@ export async function runTurn(
 
   // Apply stat changes (clamped) and collect canonical facts.
   const { values, effective } = applyStatChanges(project, state.statValues, turn.statChanges);
+  const rel = applyRelationshipChanges(project, state.relationship, turn.statChanges);
   const facts: CanonicalFact[] = [
     ...state.memory.facts,
     { chapter: state.memory.chapter, kind: 'choice', text: `выбор: ${playerMove}` },
@@ -82,6 +84,14 @@ export async function runTurn(
         text: `${name} ${orig.delta > 0 ? '+' : ''}${orig.delta} (${ch.reason})`,
       });
     }
+  }
+  for (const e of rel.effective) {
+    const cName = project.characters.find((c) => c.id === e.charId)?.name || e.charId;
+    facts.push({
+      chapter: state.memory.chapter,
+      kind: 'stat',
+      text: `${cName}/${RELATIONSHIP_META[e.field].ru} ${e.delta > 0 ? '+' : ''}${e.delta}`,
+    });
   }
 
   // On-screen sprites: только персонажи из списка (с characterId). NPC/name — без слота.
@@ -113,6 +123,7 @@ export async function runTurn(
   let nextState: RuntimeState = {
     ...state,
     statValues: values,
+    relationship: rel.relationship,
     currentBackgroundId: turn.scene.backgroundId ?? state.currentBackgroundId,
     currentMusicMood: nextMood,
     currentMusicAssetId: nextTrack,

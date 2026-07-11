@@ -1,30 +1,31 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePlayerStore } from './playerStore';
-import { getProject, getSave } from '../../storage/db';
+import { getSave } from '../../storage/db';
 import { stopAllMusic } from './audio';
-import { Stage } from './components/Stage';
+import { Stage, type ActiveSprite } from './components/Stage';
 import { DialogueBox } from './components/DialogueBox';
 import { StatsHUD } from './components/StatsHUD';
 import { ChoiceMenu } from './components/ChoiceMenu';
+import { Console } from './components/Console';
 import { Mixer } from './components/Mixer';
 import { QuickActions } from './components/QuickActions';
 import { EditPanel } from './components/EditPanel';
+import { RelationshipsPanel } from './components/RelationshipsPanel';
 import { HistoryLog, SaveLoadPanel, MemoryPanel } from './components/Panels';
 import { useT } from '../../shared/i18n';
 
-type Setup = 'checking' | 'resume' | 'name' | 'play';
+type Setup = 'checking' | 'resume' | 'play';
 
 export function PlayerPage() {
   const { projectId } = useParams();
   const nav = useNavigate();
   const t = useT();
   const s = usePlayerStore();
-  const [panel, setPanel] = useState<null | 'history' | 'saves' | 'memory' | 'edit'>(null);
+  const [panel, setPanel] = useState<null | 'history' | 'saves' | 'memory' | 'edit' | 'rel'>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
   const [setup, setSetup] = useState<Setup>('checking');
-  const [name, setName] = useState('');
 
   useEffect(() => {
     if (!projectId) return;
@@ -32,23 +33,12 @@ export function PlayerPage() {
       const auto = await getSave(projectId, 0);
       if (auto) setSetup('resume');
       else {
-        // Предзаполним имя протагониста именем persona-персонажа, если задан.
-        const proj = await getProject(projectId);
-        const prot = proj?.characters.find((c) => c.role === 'protagonist');
-        setName(prot?.name || '');
-        setSetup('name');
+        setSetup('play');
+        s.loadAndStart(projectId, false); // имя героя берётся из карточки протагониста
       }
     })();
     return () => stopAllMusic();
   }, [projectId]);
-
-  if (setup === 'checking') {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-ink text-gray-400">
-        {t('player.loading')}
-      </div>
-    );
-  }
 
   if (setup === 'resume') {
     return (
@@ -68,44 +58,12 @@ export function PlayerPage() {
             </button>
             <button
               className="btn-ghost"
-              onClick={async () => {
-                const proj = await getProject(projectId!);
-                const prot = proj?.characters.find((c) => c.role === 'protagonist');
-                setName(prot?.name || '');
-                setSetup('name');
+              onClick={() => {
+                setSetup('play');
+                s.loadAndStart(projectId!, false);
               }}
             >
               {t('player.restart')}
-            </button>
-          </div>
-          <button className="text-xs text-gray-500 mt-4" onClick={() => nav('/library')}>
-            {t('player.toLibrary')}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (setup === 'name') {
-    const start = () => {
-      setSetup('play');
-      s.loadAndStart(projectId!, false, name.trim());
-    };
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-ink">
-        <div className="card max-w-sm w-full text-center">
-          <h2 className="text-lg font-semibold mb-3">{t('player.nameTitle')}</h2>
-          <input
-            className="input mb-4 text-center"
-            autoFocus
-            placeholder={t('player.namePlaceholder')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && name.trim() && start()}
-          />
-          <div className="flex gap-2 justify-center">
-            <button className="btn-primary" disabled={!name.trim()} onClick={start}>
-              {t('player.start')}
             </button>
           </div>
           <button className="text-xs text-gray-500 mt-4" onClick={() => nav('/library')}>
@@ -126,28 +84,27 @@ export function PlayerPage() {
 
   const moreBeatsQueued = s.queue.length > 0;
   const currentBeat = s.visibleBeats[s.visibleBeats.length - 1] || null;
-  const activeSpeakerId =
-    currentBeat?.type === 'dialogue' ? currentBeat.characterId : undefined;
+  // Активный говорящий на сцене — только текущий dialogue-beat с characterId (Блок A.1).
+  const active: ActiveSprite | null =
+    currentBeat?.type === 'dialogue' && currentBeat.characterId
+      ? { characterId: currentBeat.characterId, emotion: currentBeat.emotion }
+      : null;
   const showChoices = s.phase === 'choices' && !s.thinking && s.choices.length > 0 && !s.cg;
+  const canContinue = s.phase === 'choices' && !s.thinking && !s.cg;
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden">
-      <Stage
-        project={s.project}
-        backgroundId={s.state.currentBackgroundId}
-        onScreen={s.cg ? [] : s.state.onScreen}
-        cg={s.cg}
-        activeSpeakerId={activeSpeakerId}
-      />
+      <Stage project={s.project} backgroundId={s.state.currentBackgroundId} active={active} cg={s.cg} />
 
       <StatsHUD project={s.project} state={s.state} flash={s.statFlash} />
 
       {/* Top-right controls */}
-      <div className="absolute top-3 right-3 flex gap-1 z-20">
+      <div className="absolute top-3 right-3 flex gap-1 z-20 flex-wrap justify-end max-w-[70%]">
+        <CtrlBtn label="♥" title={t('player.relationships')} onClick={() => setPanel('rel')} />
         <CtrlBtn label={t('player.history')} onClick={() => setPanel('history')} />
         <CtrlBtn label={t('player.memory')} onClick={() => setPanel('memory')} />
         <CtrlBtn label={t('player.saves')} onClick={() => setPanel('saves')} />
-        <CtrlBtn label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
+        <CtrlBtn label="🔊" title={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
         <CtrlBtn label="🎨" title="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
         <CtrlBtn label="✎" title="Правка в игре" onClick={() => setPanel('edit')} />
         <CtrlBtn label="↻" title={t('player.regen')} onClick={() => s.regenerate()} />
@@ -175,7 +132,7 @@ export function PlayerPage() {
 
       {/* Thinking spinner */}
       {s.thinking && (
-        <div className="absolute inset-x-0 bottom-24 flex justify-center z-20">
+        <div className="absolute inset-x-0 bottom-28 flex justify-center z-20">
           <div className="bg-black/70 rounded-full px-4 py-2 text-sm flex items-center gap-2">
             <span className="inline-block w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
             {t('player.thinking')}
@@ -185,7 +142,7 @@ export function PlayerPage() {
 
       {/* Error toast with retry */}
       {s.error && (
-        <div className="absolute inset-x-0 bottom-24 flex justify-center z-30 px-4">
+        <div className="absolute inset-x-0 bottom-28 flex justify-center z-30 px-4">
           <div className="bg-red-900/90 border border-red-500/50 rounded-xl px-4 py-3 text-sm max-w-md">
             <div className="mb-2">⚠️ {s.error}</div>
             <div className="flex gap-2 justify-end">
@@ -200,18 +157,10 @@ export function PlayerPage() {
         </div>
       )}
 
-      {/* Dialogue or choices */}
-      {!s.thinking && !s.chapterTitle && (
-        <>
-          {showChoices ? (
-            <ChoiceMenu
-              project={s.project}
-              state={s.state}
-              choices={s.choices}
-              onChoose={(c) => s.choose(c)}
-              onFreeInput={(txt) => s.submitFreeInput(txt)}
-            />
-          ) : (
+      {/* Нижний стек: реплика → выборы → консоль (консоль всегда видна) */}
+      {!s.chapterTitle && (
+        <div className="absolute inset-x-0 bottom-0 z-10">
+          {!s.thinking && currentBeat && (
             <DialogueBox
               project={s.project}
               beat={currentBeat}
@@ -220,9 +169,26 @@ export function PlayerPage() {
               onAdvance={() => s.advance()}
             />
           )}
-        </>
+          {showChoices && (
+            <div className="mt-2">
+              <ChoiceMenu
+                project={s.project}
+                state={s.state}
+                choices={s.choices}
+                onChoose={(c) => s.choose(c)}
+              />
+            </div>
+          )}
+          <Console
+            disabled={s.thinking}
+            canContinue={canContinue}
+            onSubmit={(txt) => s.submitFreeInput(txt)}
+            onContinue={() => s.continueStory()}
+          />
+        </div>
       )}
 
+      <RelationshipsPanel open={panel === 'rel'} onClose={() => setPanel(null)} />
       <EditPanel open={panel === 'edit'} onClose={() => setPanel(null)} />
 
       <HistoryLog
