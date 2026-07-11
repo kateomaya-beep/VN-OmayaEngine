@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
+    "@lenml/char-card-reader": "^1.1.1",
     "howler": "^2.2.4",
     "idb": "^8.0.0",
     "jszip": "^3.10.1",

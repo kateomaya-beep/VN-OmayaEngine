@@ -2,8 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+/* Тема приложения (см. CR v2 §H.3) — переключается src/shared/theme.ts через
+   [data-theme] на <html>. Игровая сцена плеера намеренно остаётся тёмной (см.
+   theme.ts) — это иммерсивный экран поверх пользовательского арта, не UI-хром. */
+:root,
+:root[data-theme='dark'] {
   color-scheme: dark;
+  --nf-ink: 15 16 32;
+  --nf-panel: 24 26 46;
+  --nf-panel2: 32 35 61;
+  --nf-text: 232 233 243;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --nf-ink: 244 245 250;
+  --nf-panel: 255 255 255;
+  --nf-panel2: 233 235 242;
+  --nf-text: 26 27 46;
 }
 
 html,
@@ -14,8 +30,8 @@ body,
 }
 
 body {
-  background: #0f1020;
-  color: #e8e9f3;
+  background: rgb(var(--nf-ink));
+  color: rgb(var(--nf-text));
   font-family: 'Inter', system-ui, sans-serif;
 }
 

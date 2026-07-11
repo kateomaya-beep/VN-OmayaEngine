@@ -33,7 +33,9 @@ export function StatsHUD({
                 {s.name[0]}
               </span>
             )}
-            <span className="text-gray-300">{s.name}</span>
+            <span className="text-gray-300 hidden sm:inline" title={s.name}>
+              {s.name}
+            </span>
             <span className="font-semibold">{val}</span>
             {f && (
               <span

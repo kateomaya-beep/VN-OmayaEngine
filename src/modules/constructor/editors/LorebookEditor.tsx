@@ -1,13 +1,34 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
 import { uid } from '../../../shared/utils';
 import { matchLorebook } from '../../../ai/lorebookEngine';
+import { parseWorldInfo, exportWorldInfo } from '../../../storage/worldInfo';
+import { downloadBlob } from '../../../storage/zip';
 import type { LorebookEntry } from '../../../shared/types';
 
 export function LorebookEditor() {
   const { project, update } = useProjectStore();
   const [testText, setTestText] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
   if (!project) return null;
+
+  async function importWorldInfo(file: File) {
+    try {
+      const entries = parseWorldInfo(JSON.parse(await file.text()));
+      if (!entries.length) throw new Error('В файле не найдено ни одной записи');
+      update((p) => p.lorebook.push(...entries));
+    } catch (e) {
+      alert('Не удалось импортировать World Info: ' + (e as Error).message);
+    }
+  }
+
+  function doExportWorldInfo() {
+    const data = exportWorldInfo(project!.lorebook);
+    downloadBlob(
+      new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
+      `${project!.meta.title} — world_info.json`
+    );
+  }
 
   const matched = testText.trim()
     ? new Set(matchLorebook(project.lorebook, testText).map((e) => e.id))
@@ -39,9 +60,32 @@ export function LorebookEditor() {
           <p className="text-sm text-gray-400">
             Записи инъектятся в контекст, когда их ключи встречаются в тексте (или всегда).
           </p>
-          <button className="btn-primary" onClick={add}>
-            + Запись
-          </button>
+          <div className="flex gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".json"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importWorldInfo(f);
+                e.target.value = '';
+              }}
+            />
+            <button
+              className="btn-ghost text-xs"
+              title="Импорт лорбука в формате SillyTavern World Info"
+              onClick={() => fileRef.current?.click()}
+            >
+              Импорт World Info
+            </button>
+            <button className="btn-ghost text-xs" onClick={doExportWorldInfo}>
+              Экспорт World Info
+            </button>
+            <button className="btn-primary" onClick={add}>
+              + Запись
+            </button>
+          </div>
         </div>
         {project.lorebook.length === 0 && (
           <div className="card text-center text-gray-500 py-10">Лорбук пуст.</div>

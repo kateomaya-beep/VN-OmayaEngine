@@ -19,6 +19,7 @@ import type {
 import { uploadAsset } from '../../../storage/assetOps';
 import { clamp } from '../../../shared/utils';
 import { parseSpriteZip } from '../../../storage/spriteZip';
+import { importTavernCard } from '../../../storage/tavernCard';
 import { useLang } from '../../../shared/i18n';
 
 const ROLE_META: Record<CharacterRole, { icon: string; label: string }> = {
@@ -31,6 +32,8 @@ const ROLE_META: Record<CharacterRole, { icon: string; label: string }> = {
 export function CharacterEditor() {
   const { project, update } = useProjectStore();
   const [selId, setSelId] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const importRef = useRef<HTMLInputElement>(null);
   if (!project) return null;
 
   const selected = project.characters.find((c) => c.id === selId) || project.characters[0] || null;
@@ -48,6 +51,30 @@ export function CharacterEditor() {
       })
     );
     setSelId(id);
+  }
+
+  // Импорт карточки персонажа Character Card V2/V3 (PNG/JSON) — см. CR v2 §D1.
+  async function importCard(file: File) {
+    setImportBusy(true);
+    try {
+      const { character, avatarAsset, lorebookEntries, hasSystemPrompt } = await importTavernCard(file);
+      update((p) => {
+        if (avatarAsset) p.assets.push(avatarAsset);
+        p.characters.push(character);
+        p.lorebook.push(...lorebookEntries);
+      });
+      setSelId(character.id);
+      if (hasSystemPrompt) {
+        alert(
+          'В карточке найден system_prompt/post_history_instructions. Он НЕ применён автоматически ' +
+            '(риск prompt-injection) — при желании добавьте нужное вручную в стиль на вкладке «ИИ / Промпт».'
+        );
+      }
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setImportBusy(false);
+    }
   }
 
   function patchChar(id: string, fn: (c: Character) => void) {
@@ -73,8 +100,27 @@ export function CharacterEditor() {
   return (
     <div className="grid md:grid-cols-[220px_1fr] gap-4">
       <div>
-        <button className="btn-primary w-full mb-3" onClick={addChar}>
+        <button className="btn-primary w-full mb-2" onClick={addChar}>
           + Персонаж
+        </button>
+        <input
+          ref={importRef}
+          type="file"
+          accept=".png,.json"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) importCard(f);
+            e.target.value = '';
+          }}
+        />
+        <button
+          className="btn-ghost w-full mb-3 text-xs"
+          disabled={importBusy}
+          title="Импорт карточки персонажа SillyTavern/Janitor (PNG или JSON, v2/v3)"
+          onClick={() => importRef.current?.click()}
+        >
+          {importBusy ? 'Импорт…' : '⭳ Импорт ST-карточки'}
         </button>
         <div className="space-y-1">
           {project.characters.map((c) => {

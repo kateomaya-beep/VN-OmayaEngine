@@ -1,9 +1,29 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { usePlayerStore } from '../playerStore';
 import { Modal } from '../../../shared/ui';
 import { uid } from '../../../shared/utils';
 import { emptyRelationship } from '../../../shared/types';
-import type { CharacterRole } from '../../../shared/types';
+import type { CharacterRole, Project, RuntimeState } from '../../../shared/types';
+import { parseAiResponse } from '../../../ai/responseParser';
+
+// Собирает уникальные имена эпизодических NPC, встреченных в истории (dialogue-beat
+// с name, но без characterId) — см. CR v2 §K.
+function collectEncounteredNpcNames(project: Project, state: RuntimeState): string[] {
+  const known = new Set(project.characters.map((c) => c.name.toLowerCase()));
+  const seen = new Set<string>();
+  for (const msg of state.history) {
+    if (msg.role !== 'assistant') continue;
+    const parsed = parseAiResponse(msg.content, project, null, null);
+    if (!parsed.ok || !parsed.turn) continue;
+    for (const b of parsed.turn.beats) {
+      if (b.type === 'dialogue' && !b.characterId && b.name) {
+        const name = b.name.trim();
+        if (name && !known.has(name.toLowerCase())) seen.add(name);
+      }
+    }
+  }
+  return [...seen];
+}
 
 // Всплывающая панель быстрой правки проекта прямо в игре (см. доработка §7).
 // Пишет в общий стор проекта (patchProject) → изменения сразу в манифесте
@@ -14,8 +34,34 @@ export function EditPanel({ open, onClose }: { open: boolean; onClose: () => voi
   const [newCharRole, setNewCharRole] = useState<CharacterRole>('important_character');
   const [statName, setStatName] = useState('');
 
+  const encounteredNpcs = useMemo(
+    () => (s.project && s.state ? collectEncounteredNpcNames(s.project, s.state) : []),
+    [s.project, s.state?.history.length]
+  );
+
   if (!open || !s.project || !s.state) return null;
   const project = s.project;
+
+  // Промоушен NPC → полноценный персонаж (Блок K): статы отношений активируются сразу.
+  function promoteNpc(name: string, role: CharacterRole) {
+    const cid = uid('char');
+    s.patchProject((p) =>
+      p.characters.push({
+        id: cid,
+        name,
+        role,
+        card: { appearance: '', personality: '', backstory: '', speechStyle: '' },
+        sprites: {},
+        relationship: emptyRelationship(),
+        importedFrom: 'promoted_npc',
+      })
+    );
+    usePlayerStore.setState((st) => ({
+      state: st.state
+        ? { ...st.state, relationship: { ...st.state.relationship, [cid]: emptyRelationship() } }
+        : st.state,
+    }));
+  }
 
   function addCharacter() {
     const name = newChar.trim();
@@ -68,6 +114,37 @@ export function EditPanel({ open, onClose }: { open: boolean; onClose: () => voi
       <p className="text-xs text-gray-500 mb-4">
         Изменения сразу попадают в манифест и сохраняются. Полное редактирование — в конструкторе.
       </p>
+
+      {encounteredNpcs.length > 0 && (
+        <>
+          <h4 className="font-semibold text-sm mb-2">Встреченные NPC</h4>
+          <p className="text-xs text-gray-500 mb-2">
+            Эпизодические персонажи из истории. Добавьте как полноценного — активируются статы
+            отношений, можно будет догрузить спрайты в конструкторе.
+          </p>
+          <div className="flex flex-wrap gap-2 mb-5">
+            {encounteredNpcs.map((name) => (
+              <div key={name} className="chip !py-1.5 gap-2">
+                <span>{name}</span>
+                <button
+                  className="text-accent2 hover:text-white text-xs"
+                  onClick={() => promoteNpc(name, 'important_character')}
+                  title="Добавить как важного персонажа"
+                >
+                  ★+
+                </button>
+                <button
+                  className="text-accent hover:text-white text-xs"
+                  onClick={() => promoteNpc(name, 'love_interest')}
+                  title="Добавить как любовный интерес"
+                >
+                  ♥+
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <h4 className="font-semibold text-sm mb-2">Персонажи</h4>
       <div className="space-y-2 mb-3">

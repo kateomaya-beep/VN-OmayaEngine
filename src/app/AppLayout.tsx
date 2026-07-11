@@ -1,10 +1,20 @@
+import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useLang, useT } from '../shared/i18n';
+import { useTheme } from '../shared/theme';
+import { useProjectStore } from '../modules/constructor/projectStore';
+import { ApiPanel } from '../modules/shared/ApiPanel';
+import { Modal } from '../shared/ui';
 
+// Верхняя панель (см. CR v2 §H.1): Библиотека · Тема · API · (язык — часть настроек).
 export function AppLayout() {
   const loc = useLocation();
   const inProject = loc.pathname.startsWith('/project/');
   const t = useT();
+  const { theme, toggleTheme } = useTheme();
+  const { project, update } = useProjectStore();
+  const [apiOpen, setApiOpen] = useState(false);
+
   return (
     <div className="min-h-full flex flex-col">
       <header className="border-b border-white/10 bg-panel/60 backdrop-blur sticky top-0 z-20">
@@ -26,7 +36,21 @@ export function AppLayout() {
               {t('nav.library')}
             </Link>
           </nav>
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              className="bg-panel2 hover:bg-white/10 rounded-lg px-2.5 py-1.5 text-sm"
+              title="Тема"
+              onClick={toggleTheme}
+            >
+              {theme === 'dark' ? '🌙' : '☀️'}
+            </button>
+            <button
+              className="bg-panel2 hover:bg-white/10 rounded-lg px-2.5 py-1.5 text-sm"
+              title="API-подключения"
+              onClick={() => setApiOpen(true)}
+            >
+              🔌
+            </button>
             <LangSwitch />
             <div className="text-xs text-gray-500 hidden sm:block">{t('app.tagline')}</div>
           </div>
@@ -35,6 +59,17 @@ export function AppLayout() {
       <main className="flex-1">
         <Outlet />
       </main>
+
+      {apiOpen && project ? (
+        <ApiPanel open onClose={() => setApiOpen(false)} project={project} onPatch={update} />
+      ) : (
+        <Modal open={apiOpen} onClose={() => setApiOpen(false)} title="API-подключения">
+          <p className="text-sm text-gray-400">
+            Откройте проект в конструкторе, чтобы настроить его API-подключения — они
+            хранятся отдельно на каждый проект.
+          </p>
+        </Modal>
+      )}
     </div>
   );
 }

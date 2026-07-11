@@ -32,11 +32,14 @@ export function LibraryPage() {
     nav(`/project/${p.id}`);
   }
 
+  const [shareTarget, setShareTarget] = useState<Project | null>(null);
+
   async function onImport(file: File) {
     setBusy('Импорт...');
     try {
-      await importProjectZip(file);
+      const { warnings } = await importProjectZip(file);
       await refresh();
+      if (warnings.length) alert('Проект импортирован с замечаниями:\n' + warnings.join('\n'));
     } catch (e) {
       alert('Ошибка импорта: ' + (e as Error).message);
     } finally {
@@ -49,6 +52,17 @@ export function LibraryPage() {
     try {
       const blob = await exportProjectZip(p);
       downloadBlob(blob, `${p.meta.title || 'project'}.zip`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onShareDownload(p: Project) {
+    setBusy('Экспорт...');
+    try {
+      const blob = await exportProjectZip(p);
+      downloadBlob(blob, `${p.meta.title || 'project'}.zip`);
+      setShareTarget(null);
     } finally {
       setBusy(null);
     }
@@ -125,6 +139,9 @@ export function LibraryPage() {
                 <button className="btn-ghost !px-3 !py-1.5 text-xs" onClick={() => onExport(p)}>
                   {t('library.export')}
                 </button>
+                <button className="btn-ghost !px-3 !py-1.5 text-xs" onClick={() => setShareTarget(p)}>
+                  🔗 Поделиться
+                </button>
                 <button className="btn-danger !px-3 !py-1.5 text-xs" onClick={() => onDelete(p)}>
                   {t('library.delete')}
                 </button>
@@ -151,6 +168,39 @@ export function LibraryPage() {
             {t('library.create')}
           </button>
         </div>
+      </Modal>
+
+      {/* Экспорт для шаринга: превью-карточка + дисклеймер про права на контент (CR v2 §L) */}
+      <Modal open={!!shareTarget} onClose={() => setShareTarget(null)} title="Экспортировать для шаринга">
+        {shareTarget && (
+          <>
+            <div className="aspect-video rounded-lg overflow-hidden mb-3 bg-panel2">
+              <AssetImage
+                blobKey={shareTarget.assets.find((a) => a.id === shareTarget.meta.coverAssetId)?.blobKey}
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <h3 className="font-semibold mb-1">{shareTarget.meta.title}</h3>
+            {shareTarget.lore.worldDescription && (
+              <p className="text-xs text-gray-400 mb-3 line-clamp-3">
+                {shareTarget.lore.worldDescription.slice(0, 200)}
+              </p>
+            )}
+            <div className="bg-amber-500/10 border border-amber-400/30 rounded-lg p-3 text-xs text-amber-200 mb-4">
+              ⚠️ Вы делитесь файлами, которые могут быть защищены авторским правом или условиями
+              стороннего сервиса (сток, AI-генератор и т.д.) — убедитесь, что имеете право их
+              распространять. Ответственность за содержимое — на вас.
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setShareTarget(null)}>
+                Отмена
+              </button>
+              <button className="btn-primary" onClick={() => onShareDownload(shareTarget)}>
+                Скачать .zip
+              </button>
+            </div>
+          </>
+        )}
       </Modal>
     </div>
   );

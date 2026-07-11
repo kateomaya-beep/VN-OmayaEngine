@@ -29,6 +29,7 @@ export function PlayerPage() {
   );
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [setup, setSetup] = useState<Setup>('checking');
 
   useEffect(() => {
@@ -105,18 +106,31 @@ export function PlayerPage() {
         <TokenCounter project={s.project} state={s.state} />
       </div>
 
-      {/* Top-right controls */}
-      <div className="absolute top-3 right-3 flex gap-1 z-20 flex-wrap justify-end max-w-[70%]">
-        <CtrlBtn label="♥" title={t('player.relationships')} onClick={() => setPanel('rel')} />
-        <CtrlBtn label={t('player.history')} onClick={() => setPanel('history')} />
-        <CtrlBtn label={t('player.memory')} onClick={() => setPanel('memory')} />
-        <CtrlBtn label={t('player.saves')} onClick={() => setPanel('saves')} />
-        <CtrlBtn label="🔊" title={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
-        <CtrlBtn label="🎨" title="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
-        <CtrlBtn label="✎" title="Правка в игре" onClick={() => setPanel('edit')} />
-        <CtrlBtn label="🔌" title="API-подключения" onClick={() => setPanel('api')} />
-        <CtrlBtn label="↻" title={t('player.regen')} onClick={() => s.regenerate()} />
-        <CtrlBtn label="✕" onClick={() => nav('/library')} />
+      {/* Игровые опции: иконки без подписей; на мобилке — бургер-меню (см. CR v2 §H.2) */}
+      <div className="absolute top-3 right-3 z-20">
+        <button
+          className="sm:hidden bg-black/60 hover:bg-black/80 backdrop-blur rounded-lg px-3 py-1.5 text-sm"
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          ☰
+        </button>
+        <div
+          className={`${
+            menuOpen ? 'flex' : 'hidden'
+          } sm:flex flex-col sm:flex-row gap-1 mt-1 sm:mt-0 items-end sm:items-center flex-wrap justify-end max-w-[80vw] sm:max-w-[70%]`}
+          onClickCapture={() => setMenuOpen(false)}
+        >
+          <CtrlBtn label="♥" title={t('player.relationships')} onClick={() => setPanel('rel')} />
+          <CtrlBtn label="📜" title={t('player.history')} onClick={() => setPanel('history')} />
+          <CtrlBtn label="🧠" title={t('player.memory')} onClick={() => setPanel('memory')} />
+          <CtrlBtn label="💾" title={t('player.saves')} onClick={() => setPanel('saves')} />
+          <CtrlBtn label="🔊" title={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
+          <CtrlBtn label="🎨" title="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
+          <CtrlBtn label="✎" title="Правка в игре" onClick={() => setPanel('edit')} />
+          <CtrlBtn label="🔌" title="API-подключения" onClick={() => setPanel('api')} />
+          <CtrlBtn label="↻" title={t('player.regen')} onClick={() => s.regenerate()} />
+          <CtrlBtn label="✕" onClick={() => nav('/library')} />
+        </div>
       </div>
 
       <Mixer open={mixerOpen} onClose={() => setMixerOpen(false)} />

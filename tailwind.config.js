@@ -4,9 +4,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: '#0f1020',
-        panel: '#181a2e',
-        panel2: '#20233d',
+        // CSS-переменные (см. index.css) — переключаются через [data-theme] на <html>,
+        // так весь существующий bg-ink/bg-panel/bg-panel2/text-* реагирует на тему
+        // без переписывания классов по всем компонентам.
+        ink: 'rgb(var(--nf-ink) / <alpha-value>)',
+        panel: 'rgb(var(--nf-panel) / <alpha-value>)',
+        panel2: 'rgb(var(--nf-panel2) / <alpha-value>)',
         accent: '#e0578b',
         accent2: '#7c5cff',
       },
