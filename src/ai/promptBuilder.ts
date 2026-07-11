@@ -8,6 +8,8 @@ import {
 } from './directorPrompt';
 import { matchLorebook } from './lorebookEngine';
 import { expandMacros, type MacroContext } from './macros';
+import { retrieveRelevant } from './vectorEngine';
+import { estimateTokens } from '../shared/utils';
 
 // Builds the full request as a system string (layered core → style → jailbreak →
 // dynamic context) plus the live-window history and the player's move.
@@ -98,21 +100,49 @@ function statsState(project: Project, values: Record<string, number>): string {
     .join('\n');
 }
 
-function memoryBlock(state: RuntimeState): string {
+async function memoryBlock(
+  project: Project,
+  state: RuntimeState,
+  playerMove: string,
+  skipVector?: boolean
+): Promise<string> {
   const m = state.memory;
   const parts: string[] = [];
   if (m.chronicle.length) {
-    parts.push(
-      `ХРОНИКА (прошлые главы):\n${m.chronicle.map((c, i) => `[гл.${i + 1}] ${c}`).join('\n')}`
-    );
+    parts.push(`ХРОНИКА (свёрнутые прошлые события):\n${m.chronicle.map((c, i) => `[${i + 1}] ${c}`).join('\n')}`);
   }
-  if (m.currentChapterSummary.trim()) {
-    parts.push(`ТЕКУЩАЯ ГЛАВА (начало, кратко):\n${m.currentChapterSummary}`);
+  if (m.liveSummary.trim()) {
+    parts.push(`ЗАМЕТКА О ТЕКУЩЕЙ АРКЕ (от автора):\n${m.liveSummary}`);
   }
   if (m.facts.length) {
-    const facts = m.facts.map((f) => `[гл.${f.chapter}] ${f.text}`).join('; ');
+    const facts = m.facts
+      .slice(-40)
+      .map((f) => `[ход ${f.turn}] ${f.text}`)
+      .join('; ');
     parts.push(`КЛЮЧЕВЫЕ РЕШЕНИЯ И ФАКТЫ (канон, не искажать):\n${facts}`);
   }
+
+  // Меморибук: закреплённые записи всегда, остальные — последние по времени.
+  const pinned = m.memorybook.filter((e) => e.pinned);
+  const recent = m.memorybook.filter((e) => !e.pinned).slice(-10);
+  const mb = [...pinned, ...recent];
+  if (mb.length) {
+    parts.push(`МЕМОРИБУК (важные события по ходу игры):\n${mb.map((e) => `- ${e.text}`).join('\n')}`);
+  }
+
+  // Векторный подсос релевантного из свёрнутого сырого архива (см. §E3).
+  if (!skipVector && project.memoryConfig.vectorization !== 'off' && m.rawArchive.length) {
+    const corpus = m.rawArchive.map((r, i) => ({ id: String(i), text: r.text }));
+    const hits = await retrieveRelevant(project, playerMove, corpus, 3);
+    if (hits.length) {
+      parts.push(
+        `РЕЛЕВАНТНОЕ ИЗ ПРОШЛОГО (найдено по смыслу хода игрока):\n${hits
+          .map((h) => `- ${h.text.slice(0, 400)}`)
+          .join('\n')}`
+      );
+    }
+  }
+
   return parts.join('\n\n') || '(память пуста — это начало истории)';
 }
 
@@ -122,11 +152,12 @@ export interface BuiltRequest {
   prefill?: string;
 }
 
-export function buildRequest(
+export async function buildRequest(
   project: Project,
   state: RuntimeState,
-  playerMove: string
-): BuiltRequest {
+  playerMove: string,
+  opts?: { skipVector?: boolean }
+): Promise<BuiltRequest> {
   const cfg = project.aiConfig;
   const ctx: MacroContext = { project, state };
   const onScreenIds = state.onScreen.map((s) => s.characterId);
@@ -164,7 +195,7 @@ export function buildRequest(
     })\nНастроение музыки: ${state.currentMusicMood ?? 'нет'}\nНа сцене: ${
       onScreenIds.length ? onScreenIds.join(', ') : 'никого'
     }`,
-    `== ПАМЯТЬ ==\n${memoryBlock(state)}`,
+    `== ПАМЯТЬ ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -196,4 +227,22 @@ export function buildRequest(
   withMove.push({ role: 'user', content: FORMAT_REMINDER });
 
   return { system, messages: withMove, prefill: cfg.prefill?.trim() || undefined };
+}
+
+// Живой счётчик токенов/контекста (см. CR v2 §J) — считает по РЕАЛЬНО собранному
+// промпту (без векторного подсоса, чтобы не гонять эмбеддинги ради индикатора).
+export async function estimateContextTokens(
+  project: Project,
+  state: RuntimeState,
+  playerMove: string
+): Promise<number> {
+  try {
+    const req = await buildRequest(project, state, playerMove || '(следующий ход)', {
+      skipVector: true,
+    });
+    const text = req.system + req.messages.map((m) => m.content).join('\n');
+    return estimateTokens(text);
+  } catch {
+    return 0;
+  }
 }

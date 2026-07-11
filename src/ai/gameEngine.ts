@@ -1,9 +1,14 @@
-import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood } from '../shared/types';
+import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry } from '../shared/types';
 import { RELATIONSHIP_META } from '../shared/types';
 import { buildRequest } from './promptBuilder';
 import { runCompletion } from './providers';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
-import { maybeCompress, closeChapter } from './memoryEngine';
+import { maybeCompress } from './memoryEngine';
+import { uid } from '../shared/utils';
+
+// Порог, с которого сдвиг отношений считается «заметным событием» и попадает
+// в Меморибук автоматически (обычный шаг ±1..5 — см. CR v2 §C.3).
+const NOTABLE_RELATIONSHIP_DELTA = 5;
 
 export interface TurnResult {
   turn: AiTurn;
@@ -37,7 +42,7 @@ export async function runTurn(
   state: RuntimeState,
   playerMove: string
 ): Promise<TurnResult> {
-  const req = buildRequest(project, state, playerMove);
+  const req = await buildRequest(project, state, playerMove);
 
   let raw = await runCompletion(project.aiConfig, {
     system: req.system,
@@ -66,20 +71,22 @@ export async function runTurn(
   }
 
   const turn = parsed.turn;
+  const nextTurnNumber = state.turnCount + 1;
 
-  // Apply stat changes (clamped) and collect canonical facts.
+  // Apply stat changes (clamped) and collect canonical facts (turn-indexed, not chapter-indexed).
   const { values, effective } = applyStatChanges(project, state.statValues, turn.statChanges);
   const rel = applyRelationshipChanges(project, state.relationship, turn.statChanges);
   const facts: CanonicalFact[] = [
     ...state.memory.facts,
-    { chapter: state.memory.chapter, kind: 'choice', text: `выбор: ${playerMove}` },
+    { turn: nextTurnNumber, kind: 'choice', text: `выбор: ${playerMove}` },
   ];
+  const memorybookAdds: MemoryBookEntry[] = [];
   for (const ch of turn.statChanges) {
     const orig = effective.find((e) => e.statId === ch.statId);
     if (orig) {
       const name = project.stats.find((s) => s.id === ch.statId)?.name || ch.statId;
       facts.push({
-        chapter: state.memory.chapter,
+        turn: nextTurnNumber,
         kind: 'stat',
         text: `${name} ${orig.delta > 0 ? '+' : ''}${orig.delta} (${ch.reason})`,
       });
@@ -87,10 +94,21 @@ export async function runTurn(
   }
   for (const e of rel.effective) {
     const cName = project.characters.find((c) => c.id === e.charId)?.name || e.charId;
-    facts.push({
-      chapter: state.memory.chapter,
-      kind: 'stat',
-      text: `${cName}/${RELATIONSHIP_META[e.field].ru} ${e.delta > 0 ? '+' : ''}${e.delta}`,
+    const text = `${cName}: ${RELATIONSHIP_META[e.field].ru} ${e.delta > 0 ? '+' : ''}${e.delta}`;
+    facts.push({ turn: nextTurnNumber, kind: 'stat', text });
+    // Заметные сдвиги отношений — авто-запись в Меморибук (см. CR v2 §E1).
+    if (Math.abs(e.delta) >= NOTABLE_RELATIONSHIP_DELTA) {
+      memorybookAdds.push({ id: uid('mem'), text, turn: nextTurnNumber, source: 'auto', pinned: false });
+    }
+  }
+  if (turn.chapterEvent === 'cg_moment') {
+    const gist = turn.beats.find((b) => b.type === 'narration')?.text || 'Ключевой момент сюжета';
+    memorybookAdds.push({
+      id: uid('mem'),
+      text: gist.slice(0, 200),
+      turn: nextTurnNumber,
+      source: 'auto',
+      pinned: true, // CG-моменты — крупная веха, продвигается в постоянные сразу
     });
   }
 
@@ -120,6 +138,10 @@ export async function runTurn(
     { role: 'assistant' as const, content: raw },
   ];
 
+  if (turn.chapterEvent === 'chapter_end') {
+    facts.push({ turn: nextTurnNumber, kind: 'event', text: 'сюжетная веха' });
+  }
+
   let nextState: RuntimeState = {
     ...state,
     statValues: values,
@@ -130,19 +152,19 @@ export async function runTurn(
     onScreen,
     history,
     lastTurn: turn,
-    turnCount: state.turnCount + 1,
-    memory: { ...state.memory, facts },
+    turnCount: nextTurnNumber,
+    memory: {
+      ...state.memory,
+      facts,
+      memorybook: [...state.memory.memorybook, ...memorybookAdds],
+      messagesSinceSummary: state.memory.messagesSinceSummary + 2,
+    },
   };
 
-  if (turn.chapterEvent === 'chapter_end') {
-    facts.push({
-      chapter: nextState.memory.chapter,
-      kind: 'event',
-      text: `конец главы ${nextState.memory.chapter}`,
-    });
-    nextState = await closeChapter(project, nextState);
-  }
-  nextState = await maybeCompress(project, nextState);
+  // «Веха» из ИИ (бывший chapter_end) — форсируем немедленную свёртку живого окна,
+  // не дожидаясь счётчика (глав больше нет, но крупный сюжетный рубеж всё ещё
+  // повод подытожить историю — см. CR v2 §E).
+  nextState = await maybeCompress(project, nextState, turn.chapterEvent === 'chapter_end');
 
   return { turn, state: nextState };
 }

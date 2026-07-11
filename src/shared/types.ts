@@ -145,6 +145,21 @@ export interface AdvancedPromptBlock {
   depth: number; // глубина от конца истории (0 = сразу перед ходом игрока)
 }
 
+// Переиспользуемое подключение: игра / саммари / эмбеддинги / картинки (см. CR v2 §G).
+// Ключ API НЕ хранится здесь — только локально через ai/keys.ts по роли подключения.
+export interface ApiConnection {
+  provider: 'openai-compatible' | 'anthropic';
+  baseUrl: string;
+  model?: string;
+  availableModels?: string[];
+}
+
+// Тумблеры Слоя 2 (см. CR v2 §F1.2, адаптация пресета Omaya).
+export type PromptLength = 'short' | 'medium' | 'long';
+export type PromptPacing = 'slow_burn' | 'fast' | 'adaptive';
+export type PromptTone = 'neutral' | 'anti_negative' | 'anti_saccharine';
+export type ProseStyleId = 'clean' | 'anne_rice' | 'king' | 'gaiman' | 'dostoevsky' | 'gogol';
+
 export interface AiConfig {
   provider: 'openai-compatible' | 'anthropic';
   baseUrl: string;
@@ -158,13 +173,34 @@ export interface AiConfig {
   narrativeLanguage: 'ru' | 'en'; // язык нарратива (независим от языка UI)
   stylePreset: string; // id пресета или 'custom'
   customStyle?: string;
+  length: PromptLength;
+  pacing: PromptPacing;
+  tone: PromptTone;
+  proseStyle: ProseStyleId;
   jailbreakEnabled: boolean; // слой 3, по умолчанию ВЫКЛ
   jailbreakPrompt?: string;
   prefill?: string; // слой 4 (продвинутый)
   advancedBlocks?: AdvancedPromptBlock[];
-  // Генерация изображений (BYO key, ключ в localStorage)
+  // Генерация изображений (BYO key, ключ в localStorage под ролью 'image')
   imageBaseUrl?: string;
   imageModel?: string;
+  // Отдельное подключение для саммари (см. CR v2 §E2.3/§G). undefined = использовать
+  // основное игровое подключение (provider/baseUrl/model выше).
+  summaryConnection?: ApiConnection;
+}
+
+// Настройки памяти проекта (см. CR v2 §E).
+export type VectorizationMode = 'builtin' | 'custom' | 'off';
+
+export interface MemoryConfig {
+  summaryEveryN: number; // частота свёртки (20/30/40/…) по счётчику сообщений
+  summaryPrompt?: string; // кастомный промпт саммарайзера, иначе дефолт
+  vectorization: VectorizationMode;
+  embeddingsConnection?: ApiConnection; // для 'custom'
+}
+
+export function defaultMemoryConfig(): MemoryConfig {
+  return { summaryEveryN: 30, vectorization: 'off' };
 }
 
 export interface Project {
@@ -173,11 +209,12 @@ export interface Project {
   updatedAt: number;
   meta: ProjectMeta;
   lore: Lore;
-  lorebook: LorebookEntry[];
+  lorebook: LorebookEntry[]; // статичный мир (см. CR v2 §E1) — Меморибук отдельно, в RuntimeState.memory
   characters: Character[];
   stats: StatDefinition[];
   assets: AssetMeta[];
   aiConfig: AiConfig;
+  memoryConfig: MemoryConfig;
 }
 
 // ---- Runtime / AI response types (JSON-контракт с ИИ) ----
@@ -223,19 +260,34 @@ export interface AiTurn {
   chapterEvent: ChapterEvent;
 }
 
-// ---- Memory ----
+// ---- Memory (см. CR v2 §E — без деления на главы, история бесконечна) ----
 
 export interface CanonicalFact {
-  chapter: number;
+  turn: number; // номер хода, на котором произошло событие (не «глава»)
   kind: 'choice' | 'stat' | 'event';
   text: string;
 }
 
+// Меморибук — динамическая, авто-заполняемая сущность (в отличие от статичного
+// Лорбука). Записи создаёт движок по значимым событиям; юзер правит/удаляет/
+// продвигает в постоянные прямо в игре (см. CR v2 §E1).
+export interface MemoryBookEntry {
+  id: string;
+  text: string;
+  turn: number;
+  source: 'auto' | 'manual';
+  pinned: boolean; // «продвинута в постоянные» — всегда в контексте, не сжимается
+}
+
 export interface MemoryState {
-  chronicle: string[];
-  currentChapterSummary: string;
-  chapter: number;
-  facts: CanonicalFact[];
+  chronicle: string[]; // свёрнутые сегменты истории (без привязки к «главам»)
+  liveSummary: string; // ручная заметка о текущей арке (не авто-управляется)
+  facts: CanonicalFact[]; // canonical facts store — не проходит через LLM-сжатие
+  memorybook: MemoryBookEntry[];
+  messagesSinceSummary: number; // счётчик для триггера по частоте (E2.1)
+  // Свёрнутые «сырые» куски истории — НЕ инжектятся целиком, только через
+  // векторный подсос релевантного (см. CR v2 §E3).
+  rawArchive: { turn: number; text: string }[];
 }
 
 export type LlmRole = 'system' | 'user' | 'assistant';

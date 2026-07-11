@@ -12,8 +12,14 @@ import type {
   AudioMood,
   AiConfig,
   RelationshipStats,
+  MemoryConfig,
+  PromptLength,
+  PromptPacing,
+  PromptTone,
+  ProseStyleId,
+  ApiConnection,
 } from './types';
-import { EMOTIONS, AUDIO_MOODS } from './types';
+import { EMOTIONS, AUDIO_MOODS, defaultMemoryConfig } from './types';
 import { uid, clamp } from './utils';
 
 export const DEFAULT_STYLE_PRESET = 'romance_club';
@@ -29,6 +35,10 @@ export function defaultAiConfig(): AiConfig {
     liveWindow: 12,
     narrativeLanguage: 'ru',
     stylePreset: DEFAULT_STYLE_PRESET,
+    length: 'medium',
+    pacing: 'adaptive',
+    tone: 'neutral',
+    proseStyle: 'clean',
     jailbreakEnabled: false,
   };
 }
@@ -54,6 +64,7 @@ export function createEmptyProject(title = 'Новый проект'): Project {
     stats: [],
     assets: [],
     aiConfig: defaultAiConfig(),
+    memoryConfig: defaultMemoryConfig(),
   };
 }
 
@@ -185,6 +196,26 @@ export function normalizeProject(raw: any): Project {
         ? `Жанр/тон: ${legacyGenre}`
         : undefined;
 
+  const lengthSet = new Set<PromptLength>(['short', 'medium', 'long']);
+  const pacingSet = new Set<PromptPacing>(['slow_burn', 'fast', 'adaptive']);
+  const toneSet = new Set<PromptTone>(['neutral', 'anti_negative', 'anti_saccharine']);
+  const proseSet = new Set<ProseStyleId>(['clean', 'anne_rice', 'king', 'gaiman', 'dostoevsky', 'gogol']);
+
+  const normConnection = (v: any): ApiConnection | undefined => {
+    if (!v || typeof v !== 'object' || typeof v.baseUrl !== 'string') return undefined;
+    return {
+      provider: v.provider === 'anthropic' ? 'anthropic' : 'openai-compatible',
+      baseUrl: v.baseUrl,
+      model: typeof v.model === 'string' ? v.model : undefined,
+      availableModels: Array.isArray(v.availableModels)
+        ? v.availableModels.filter((m: unknown) => typeof m === 'string')
+        : undefined,
+    };
+  };
+
+  const mem = raw?.memoryConfig || {};
+  const vecSet = new Set(['builtin', 'custom', 'off']);
+
   return {
     id: str(raw?.id) || base.id,
     createdAt: num(raw?.createdAt, base.createdAt),
@@ -216,6 +247,10 @@ export function normalizeProject(raw: any): Project {
       narrativeLanguage: ai.narrativeLanguage === 'en' ? 'en' : 'ru',
       stylePreset: str(ai.stylePreset, base.aiConfig.stylePreset),
       customStyle,
+      length: lengthSet.has(ai.length) ? ai.length : base.aiConfig.length,
+      pacing: pacingSet.has(ai.pacing) ? ai.pacing : base.aiConfig.pacing,
+      tone: toneSet.has(ai.tone) ? ai.tone : base.aiConfig.tone,
+      proseStyle: proseSet.has(ai.proseStyle) ? ai.proseStyle : base.aiConfig.proseStyle,
       jailbreakEnabled: bool(ai.jailbreakEnabled, false),
       jailbreakPrompt: typeof ai.jailbreakPrompt === 'string' ? ai.jailbreakPrompt : undefined,
       prefill: typeof ai.prefill === 'string' ? ai.prefill : undefined,
@@ -224,12 +259,26 @@ export function normalizeProject(raw: any): Project {
         .map((b) => ({ content: b.content, depth: num(b.depth, 0) })),
       imageBaseUrl: typeof ai.imageBaseUrl === 'string' ? ai.imageBaseUrl : undefined,
       imageModel: typeof ai.imageModel === 'string' ? ai.imageModel : undefined,
+      summaryConnection: normConnection(ai.summaryConnection),
+    },
+    memoryConfig: {
+      summaryEveryN: num(mem.summaryEveryN, 30),
+      summaryPrompt: typeof mem.summaryPrompt === 'string' ? mem.summaryPrompt : undefined,
+      vectorization: vecSet.has(mem.vectorization) ? mem.vectorization : 'off',
+      embeddingsConnection: normConnection(mem.embeddingsConnection),
     },
   };
 }
 
 export function initialMemory(): MemoryState {
-  return { chronicle: [], currentChapterSummary: '', chapter: 1, facts: [] };
+  return {
+    chronicle: [],
+    liveSummary: '',
+    facts: [],
+    memorybook: [],
+    messagesSinceSummary: 0,
+    rawArchive: [],
+  };
 }
 
 export function initialRuntimeState(project: Project, protagonistName?: string): RuntimeState {
@@ -303,13 +352,52 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
     history: arr<any>(raw.history).filter(
       (m: any) => m && typeof m.role === 'string' && typeof m.content === 'string'
     ),
-    memory: {
-      chronicle: arr<string>(raw.memory?.chronicle).filter((c) => typeof c === 'string'),
-      currentChapterSummary: str(raw.memory?.currentChapterSummary),
-      chapter: num(raw.memory?.chapter, 1),
-      facts: arr<any>(raw.memory?.facts),
-    },
+    memory: normalizeMemory(raw.memory, str, num, arr),
     lastTurn: raw.lastTurn && typeof raw.lastTurn === 'object' ? raw.lastTurn : null,
     turnCount: num(raw.turnCount, 0),
+  };
+}
+
+const FACT_KINDS = new Set(['choice', 'stat', 'event']);
+
+// Migrates legacy MemoryState (chapter-based: currentChapterSummary/chapter/facts
+// with a `chapter` field) to the chapter-free shape (см. CR v2 §E: «глав» больше нет).
+function normalizeMemory(
+  raw: any,
+  str: (v: unknown, d?: string) => string,
+  num: (v: unknown, d: number) => number,
+  arr: <T>(v: unknown) => T[]
+): MemoryState {
+  const liveSummary = str(raw?.liveSummary) || str(raw?.currentChapterSummary);
+
+  const facts = arr<any>(raw?.facts)
+    .filter((f) => f && typeof f.text === 'string' && FACT_KINDS.has(f.kind))
+    .map((f) => ({
+      turn: typeof f.turn === 'number' ? f.turn : num(f.chapter, 0),
+      kind: f.kind,
+      text: f.text,
+    }));
+
+  const memorybook = arr<any>(raw?.memorybook)
+    .filter((e) => e && typeof e.text === 'string')
+    .map((e) => ({
+      id: str(e.id) || uid('mem'),
+      text: e.text,
+      turn: num(e.turn, 0),
+      source: (e.source === 'manual' ? 'manual' : 'auto') as 'manual' | 'auto',
+      pinned: typeof e.pinned === 'boolean' ? e.pinned : false,
+    }));
+
+  const rawArchive = arr<any>(raw?.rawArchive)
+    .filter((r) => r && typeof r.text === 'string')
+    .map((r) => ({ turn: num(r.turn, 0), text: r.text }));
+
+  return {
+    chronicle: arr<string>(raw?.chronicle).filter((c: unknown) => typeof c === 'string'),
+    liveSummary,
+    facts,
+    memorybook,
+    messagesSinceSummary: num(raw?.messagesSinceSummary, 0),
+    rawArchive,
   };
 }

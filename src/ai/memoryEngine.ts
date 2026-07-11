@@ -1,86 +1,93 @@
 import type { Project, RuntimeState, LlmMessage } from '../shared/types';
-import { runCompletion } from './providers';
+import { runCompletionWith } from './providers';
 import { SUMMARIZER_PROMPT } from './directorPrompt';
 import { estimateTokens } from '../shared/utils';
 
-// Three-layer memory management (see ТЗ §10).
+// Память без деления на главы (см. CR v2 §E). Саммаризация триггерится по
+// счётчику сообщений (memoryConfig.summaryEveryN), не по сюжетному событию.
 
 export function historyTokens(history: LlmMessage[]): number {
   return history.reduce((sum, m) => sum + estimateTokens(m.content), 0);
 }
 
-// Summarize the oldest turns that fall outside the live window into the current
-// chapter summary, then drop them from verbatim history. Runs in background;
-// on any error it leaves history intact (live window temporarily longer).
-export async function maybeCompress(project: Project, state: RuntimeState): Promise<RuntimeState> {
+async function summarize(project: Project, prompt: string, transcript: string): Promise<string> {
+  return (
+    await runCompletionWith(project.aiConfig, project.aiConfig.summaryConnection, 'summary', {
+      system: prompt,
+      messages: [{ role: 'user', content: transcript }],
+      model: project.aiConfig.summarizerModel || project.aiConfig.model,
+      temperature: 0.3,
+    })
+  ).trim();
+}
+
+// Summarize the oldest turns that fall outside the live window into a new
+// chronicle entry, then drop them from verbatim history. Runs in background;
+// on any error it leaves history intact (live window temporarily longer, счётчик
+// не сбрасывается — попробуем на следующем ходу).
+export async function maybeCompress(
+  project: Project,
+  state: RuntimeState,
+  force = false
+): Promise<RuntimeState> {
   const K = Math.max(2, project.aiConfig.liveWindow);
   const keep = K * 2; // user+assistant per turn
+  const everyN = Math.max(4, project.memoryConfig.summaryEveryN) * 2;
   const overBudget = historyTokens(state.history) > project.aiConfig.contextBudget;
-  if (!overBudget || state.history.length <= keep) return state;
+  const dueByCount = state.memory.messagesSinceSummary >= everyN;
+  if ((!force && !overBudget && !dueByCount) || state.history.length <= keep) return state;
 
   const stale = state.history.slice(0, state.history.length - keep);
   if (!stale.length) return state;
 
+  const transcript = stale
+    .map((m) => `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${m.content}`)
+    .join('\n\n');
+
   try {
-    const transcript = stale
-      .map((m) => `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${m.content}`)
-      .join('\n\n');
-    const prior = state.memory.currentChapterSummary
-      ? `Предыдущий конспект главы:\n${state.memory.currentChapterSummary}\n\nНовые ходы для добавления:\n`
-      : '';
-    const text = await runCompletion(project.aiConfig, {
-      system: SUMMARIZER_PROMPT(12),
-      messages: [{ role: 'user', content: prior + transcript }],
-      model: project.aiConfig.summarizerModel || project.aiConfig.model,
-      temperature: 0.3,
-    });
+    const prompt = project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(12);
+    const text = await summarize(project, prompt, transcript);
+    const chronicle = text ? [...state.memory.chronicle, text] : state.memory.chronicle;
+    // Сырой кусок сохраняем отдельно — не инжектится целиком, только через
+    // векторный подсос релевантного (см. vectorEngine.ts).
+    const rawArchive = [
+      ...state.memory.rawArchive,
+      { turn: state.turnCount, text: transcript.slice(0, 6000) },
+    ];
+
     return {
       ...state,
       history: state.history.slice(state.history.length - keep),
-      memory: { ...state.memory, currentChapterSummary: text.trim() },
+      memory: await recompactChronicle(project, {
+        ...state.memory,
+        chronicle,
+        rawArchive,
+        messagesSinceSummary: 0,
+      }),
     };
   } catch {
-    return state; // graceful: keep verbatim history
+    return state; // graceful: keep verbatim history, retry next turn
   }
 }
 
-// Close current chapter: fold its summary into the chronicle and reset layer 2.
-export async function closeChapter(project: Project, state: RuntimeState): Promise<RuntimeState> {
-  const K = Math.max(2, project.aiConfig.liveWindow);
-  const keep = K * 2;
-  let chapterSummary = state.memory.currentChapterSummary;
-
-  // Summarize any remaining verbatim turns so nothing is lost at the boundary.
-  const tail = state.history.slice(-keep);
+// Ре-саммаризация Хроники: когда записей > 15, сжимаем самые старые 10 в один акт
+// (см. §10 исходного ТЗ — сохранено при переходе на модель «без глав»).
+async function recompactChronicle(
+  project: Project,
+  memory: RuntimeState['memory']
+): Promise<RuntimeState['memory']> {
+  if (memory.chronicle.length <= 15) return memory;
+  const toFold = memory.chronicle.slice(0, 10);
+  const rest = memory.chronicle.slice(10);
   try {
-    if (tail.length) {
-      const transcript = tail
-        .map((m) => `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${m.content}`)
-        .join('\n\n');
-      const prior = chapterSummary ? `Начало главы:\n${chapterSummary}\n\nОкончание главы:\n` : '';
-      chapterSummary = (
-        await runCompletion(project.aiConfig, {
-          system: SUMMARIZER_PROMPT(15),
-          messages: [{ role: 'user', content: prior + transcript }],
-          model: project.aiConfig.summarizerModel || project.aiConfig.model,
-          temperature: 0.3,
-        })
-      ).trim();
-    }
+    const transcript = toFold.map((c, i) => `[${i + 1}] ${c}`).join('\n');
+    const text = await summarize(
+      project,
+      project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(15),
+      transcript
+    );
+    return { ...memory, chronicle: text ? [text, ...rest] : rest };
   } catch {
-    // fall back to whatever summary we have
+    return memory; // не критично — попробуем на следующем триггере
   }
-
-  const chronicle = [...state.memory.chronicle];
-  if (chapterSummary) chronicle.push(chapterSummary);
-
-  return {
-    ...state,
-    memory: {
-      ...state.memory,
-      chronicle,
-      currentChapterSummary: '',
-      chapter: state.memory.chapter + 1,
-    },
-  };
 }

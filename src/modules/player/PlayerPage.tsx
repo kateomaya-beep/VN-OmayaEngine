@@ -6,6 +6,7 @@ import { stopAllMusic } from './audio';
 import { Stage, type ActiveSprite } from './components/Stage';
 import { DialogueBox } from './components/DialogueBox';
 import { StatsHUD } from './components/StatsHUD';
+import { TokenCounter } from './components/TokenCounter';
 import { ChoiceMenu } from './components/ChoiceMenu';
 import { Console } from './components/Console';
 import { Mixer } from './components/Mixer';
@@ -14,6 +15,7 @@ import { EditPanel } from './components/EditPanel';
 import { RelationshipsPanel } from './components/RelationshipsPanel';
 import { HistoryLog, SaveLoadPanel, MemoryPanel } from './components/Panels';
 import { useT } from '../../shared/i18n';
+import { ApiPanel } from '../shared/ApiPanel';
 
 type Setup = 'checking' | 'resume' | 'play';
 
@@ -22,7 +24,9 @@ export function PlayerPage() {
   const nav = useNavigate();
   const t = useT();
   const s = usePlayerStore();
-  const [panel, setPanel] = useState<null | 'history' | 'saves' | 'memory' | 'edit' | 'rel'>(null);
+  const [panel, setPanel] = useState<null | 'history' | 'saves' | 'memory' | 'edit' | 'rel' | 'api'>(
+    null
+  );
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
   const [setup, setSetup] = useState<Setup>('checking');
@@ -97,6 +101,9 @@ export function PlayerPage() {
       <Stage project={s.project} backgroundId={s.state.currentBackgroundId} active={active} cg={s.cg} />
 
       <StatsHUD project={s.project} state={s.state} flash={s.statFlash} />
+      <div className="absolute bottom-2 left-2 z-10">
+        <TokenCounter project={s.project} state={s.state} />
+      </div>
 
       {/* Top-right controls */}
       <div className="absolute top-3 right-3 flex gap-1 z-20 flex-wrap justify-end max-w-[70%]">
@@ -107,6 +114,7 @@ export function PlayerPage() {
         <CtrlBtn label="🔊" title={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
         <CtrlBtn label="🎨" title="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
         <CtrlBtn label="✎" title="Правка в игре" onClick={() => setPanel('edit')} />
+        <CtrlBtn label="🔌" title="API-подключения" onClick={() => setPanel('api')} />
         <CtrlBtn label="↻" title={t('player.regen')} onClick={() => s.regenerate()} />
         <CtrlBtn label="✕" onClick={() => nav('/library')} />
       </div>
@@ -190,6 +198,12 @@ export function PlayerPage() {
 
       <RelationshipsPanel open={panel === 'rel'} onClose={() => setPanel(null)} />
       <EditPanel open={panel === 'edit'} onClose={() => setPanel(null)} />
+      <ApiPanel
+        open={panel === 'api'}
+        onClose={() => setPanel(null)}
+        project={s.project}
+        onPatch={s.patchProject}
+      />
 
       <HistoryLog
         open={panel === 'history'}
@@ -211,11 +225,9 @@ export function PlayerPage() {
         open={panel === 'memory'}
         onClose={() => setPanel(null)}
         state={s.state}
-        onEditChapterSummary={(text) =>
+        onEditLiveSummary={(text) =>
           usePlayerStore.setState((st) => ({
-            state: st.state
-              ? { ...st.state, memory: { ...st.state.memory, currentChapterSummary: text } }
-              : st.state,
+            state: st.state ? { ...st.state, memory: { ...st.state.memory, liveSummary: text } } : st.state,
           }))
         }
         onEditChronicle={(idx, text) =>
@@ -225,6 +237,11 @@ export function PlayerPage() {
             chronicle[idx] = text;
             return { state: { ...st.state, memory: { ...st.state.memory, chronicle } } };
           })
+        }
+        onEditMemorybook={(entries) =>
+          usePlayerStore.setState((st) => ({
+            state: st.state ? { ...st.state, memory: { ...st.state.memory, memorybook: entries } } : st.state,
+          }))
         }
       />
     </div>

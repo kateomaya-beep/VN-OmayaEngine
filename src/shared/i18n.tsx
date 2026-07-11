@@ -61,6 +61,7 @@ const RU: Dict = {
   'tab.assets': 'Ассеты',
   'tab.lorebook': 'Лорбук',
   'tab.ai': 'ИИ / Промпт',
+  'tab.memory': 'Память',
   'constructor.loading': 'Загрузка проекта…',
 
   'player.resumeTitle': 'Продолжить игру?',
@@ -125,6 +126,7 @@ const EN: Dict = {
   'tab.assets': 'Assets',
   'tab.lorebook': 'Lorebook',
   'tab.ai': 'AI / Prompt',
+  'tab.memory': 'Memory',
   'constructor.loading': 'Loading project…',
 
   'player.resumeTitle': 'Resume game?',

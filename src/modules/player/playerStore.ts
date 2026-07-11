@@ -260,7 +260,7 @@ async function runAndApply(
       thinking: false,
       cg: turn.scene.cutsceneCgId,
       statFlash: flash,
-      chapterTitle: turn.chapterEvent === 'chapter_end' ? `Глава ${baseState.memory.chapter}` : null,
+      chapterTitle: turn.chapterEvent === 'chapter_end' ? 'Сюжетная веха' : null,
     });
 
     // Autosave every turn.

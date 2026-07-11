@@ -9,6 +9,9 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 export default defineConfig({
   plugins: [react()],
   server: { port: 5173 },
+  // vectorWorker.ts dynamically imports @huggingface/transformers, which needs
+  // code-splitting inside the worker — only the ES module worker format supports that.
+  worker: { format: 'es' },
   // Keep the dep-optimizer cache OUT of the project tree (OneDrive/antivirus on
   // Windows can lock or half-write files under node_modules/.vite, producing a
   // corrupted React runtime: "hasValidRef ... reading 'get'"). The OS temp dir

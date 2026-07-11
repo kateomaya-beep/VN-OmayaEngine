@@ -1,22 +1,34 @@
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useProjectStore } from '../projectStore';
 import { Field } from '../../../shared/ui';
-import { CORE_PROMPT, STYLE_PRESETS } from '../../../ai/directorPrompt';
+import {
+  CORE_PROMPT,
+  STYLE_PRESETS,
+  PROSE_STYLE_LABELS,
+} from '../../../ai/directorPrompt';
 import { getApiKey, setApiKey } from '../../../ai/keys';
-import type { AiConfig, AdvancedPromptBlock } from '../../../shared/types';
+import { ApiConnectionField } from './ApiConnectionField';
+import { OMAYA_DEFAULT_PRESET, exportPreset, applyPreset, parsePresetJson } from '../../../ai/presets';
+import { downloadBlob } from '../../../storage/zip';
+import type {
+  AiConfig,
+  AdvancedPromptBlock,
+  PromptLength,
+  PromptPacing,
+  PromptTone,
+  ProseStyleId,
+} from '../../../shared/types';
 
 export function PromptTuner() {
   const { project, update } = useProjectStore();
   const [advanced, setAdvanced] = useState(false);
   const [showCore, setShowCore] = useState(false);
-  const [key, setKey] = useState('');
   const [imageKey, setImageKey] = useState('');
+  const presetFileRef = useRef<HTMLInputElement>(null);
 
-  const provider = project?.aiConfig.provider ?? 'openai-compatible';
   useEffect(() => {
-    setKey(getApiKey(provider));
     setImageKey(getApiKey('image'));
-  }, [provider]);
+  }, []);
 
   if (!project) return null;
   const cfg = project.aiConfig;
@@ -29,6 +41,24 @@ export function PromptTuner() {
   }
 
   const mature = project.meta.contentRating === 'mature';
+
+  function exportCurrentPreset() {
+    const preset = exportPreset(cfg, `${project!.meta.title} — пресет`);
+    downloadBlob(
+      new Blob([JSON.stringify(preset, null, 2)], { type: 'application/json' }),
+      `${preset.name}.json`
+    );
+  }
+
+  async function importPresetFile(file: File) {
+    try {
+      const preset = parsePresetJson(JSON.parse(await file.text()));
+      if (!preset) throw new Error('Невалидный файл пресета');
+      update((p) => (p.aiConfig = applyPreset(p.aiConfig, preset)));
+    } catch (e) {
+      alert('Не удалось импортировать пресет: ' + (e as Error).message);
+    }
+  }
 
   return (
     <div className="max-w-5xl space-y-4">
@@ -54,46 +84,13 @@ export function PromptTuner() {
         {/* Провайдер (всегда) */}
         <div className="card">
           <h4 className="font-semibold mb-3">Провайдер LLM</h4>
-          <Field label="Провайдер">
-            <select
-              className="input"
-              value={cfg.provider}
-              onChange={(e) => {
-                const prov = e.target.value as AiConfig['provider'];
-                patch({
-                  provider: prov,
-                  baseUrl:
-                    prov === 'anthropic'
-                      ? 'https://api.anthropic.com/v1'
-                      : 'https://api.openai.com/v1',
-                });
-              }}
-            >
-              <option value="openai-compatible">OpenAI-совместимый (OpenAI, OpenRouter, локальный…)</option>
-              <option value="anthropic">Anthropic</option>
-            </select>
-          </Field>
-          <Field label="Base URL">
-            <input className="input" value={cfg.baseUrl} onChange={(e) => patch({ baseUrl: e.target.value })} />
-          </Field>
-          <Field label="Модель">
-            <input className="input" value={cfg.model} onChange={(e) => patch({ model: e.target.value })} />
-          </Field>
-          <Field
-            label={`API-ключ (${cfg.provider})`}
-            hint="Хранится только в этом браузере (localStorage). Уходит лишь напрямую к провайдеру."
-          >
-            <input
-              className="input"
-              type="password"
-              value={key}
-              placeholder="sk-..."
-              onChange={(e) => {
-                setKey(e.target.value);
-                setApiKey(cfg.provider, e.target.value);
-              }}
-            />
-          </Field>
+          <ApiConnectionField
+            conn={{ provider: cfg.provider, baseUrl: cfg.baseUrl, model: cfg.model }}
+            keyRole={cfg.provider}
+            onChange={(conn) =>
+              patch({ provider: conn.provider, baseUrl: conn.baseUrl, model: conn.model || cfg.model })
+            }
+          />
         </div>
 
         {/* Стиль/тон (Слой 2) */}
@@ -148,11 +145,99 @@ export function PromptTuner() {
               />
             </Field>
           )}
+          {advanced && (
+            <div className="grid grid-cols-2 gap-3 mt-2">
+              <Field label="Длина хода">
+                <select
+                  className="input"
+                  value={cfg.length}
+                  onChange={(e) => patch({ length: e.target.value as PromptLength })}
+                >
+                  <option value="short">Короткая (150–250)</option>
+                  <option value="medium">Средняя (250–450)</option>
+                  <option value="long">Длинная (450–800)</option>
+                </select>
+              </Field>
+              <Field label="Темп">
+                <select
+                  className="input"
+                  value={cfg.pacing}
+                  onChange={(e) => patch({ pacing: e.target.value as PromptPacing })}
+                >
+                  <option value="slow_burn">Slow burn</option>
+                  <option value="fast">Быстрый</option>
+                  <option value="adaptive">Адаптивный</option>
+                </select>
+              </Field>
+              <Field label="Тональность">
+                <select
+                  className="input"
+                  value={cfg.tone}
+                  onChange={(e) => patch({ tone: e.target.value as PromptTone })}
+                >
+                  <option value="neutral">Нейтральная</option>
+                  <option value="anti_negative">Без лишнего пессимизма</option>
+                  <option value="anti_saccharine">Без приторности</option>
+                </select>
+              </Field>
+              <Field label="Стиль прозы">
+                <select
+                  className="input"
+                  value={cfg.proseStyle}
+                  onChange={(e) => patch({ proseStyle: e.target.value as ProseStyleId })}
+                >
+                  {(Object.keys(PROSE_STYLE_LABELS) as ProseStyleId[]).map((id) => (
+                    <option key={id} value={id}>
+                      {PROSE_STYLE_LABELS[id]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          )}
         </div>
       </div>
 
       {advanced && (
         <>
+          <div className="card">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-semibold">Пресеты промпта</h4>
+              <div className="flex gap-2">
+                <button
+                  className="btn-ghost !px-3 !py-1 text-xs"
+                  onClick={() => update((p) => (p.aiConfig = applyPreset(p.aiConfig, OMAYA_DEFAULT_PRESET)))}
+                >
+                  Omaya (дефолт)
+                </button>
+                <button className="btn-ghost !px-3 !py-1 text-xs" onClick={exportCurrentPreset}>
+                  Экспорт
+                </button>
+                <button
+                  className="btn-ghost !px-3 !py-1 text-xs"
+                  onClick={() => presetFileRef.current?.click()}
+                >
+                  Импорт
+                </button>
+                <input
+                  ref={presetFileRef}
+                  type="file"
+                  accept=".json"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) importPresetFile(f);
+                    e.target.value = '';
+                  }}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-gray-500">
+              Пресет — снимок тумблеров Слоя 2/3 (язык, стиль, длина, темп, тон, проза,
+              джейлбрейк, префилл) в JSON-файл — для обмена в комьюнити. Ядро (Слой 1) в пресет
+              не входит и не редактируется.
+            </p>
+          </div>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card">
               <h4 className="font-semibold mb-3">Параметры генерации</h4>
