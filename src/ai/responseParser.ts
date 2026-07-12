@@ -55,12 +55,22 @@ function extractJson(raw: string): string | null {
 
 const EMOTION_SET = new Set<string>(EMOTIONS);
 
+// Иногда ИИ ошибочно префиксит текст служебной меткой хода игрока
+// ([CHOICE]/[VERBATIM]/… или их старыми русскими вариантами). В отображаемом
+// тексте (реплики, варианты выбора) их быть не должно — вырезаем ведущую метку.
+const MOVE_TAG_RE =
+  /^\s*\[(?:choice|verbatim|ooc|continue|game start|author note|выбор|дословно|оос|продолжить|заметка автора|начало игры)\]\s*/i;
+export function stripMoveTag(text: string): string {
+  return typeof text === 'string' ? text.replace(MOVE_TAG_RE, '') : text;
+}
+
 // Чинит один beat против манифеста (используется и потоковым, и обычным путём).
 export function repairBeat(project: Project, b: any): Beat {
   const charById = new Map(project.characters.map((c) => [c.id, c]));
+  const txt = (v: unknown) => stripMoveTag(String(v ?? ''));
   if (!b || b.type !== 'dialogue') {
-    if (b?.type === 'thought') return { type: 'thought', text: String(b.text ?? '') };
-    return { type: 'narration', text: String(b?.text ?? '') };
+    if (b?.type === 'thought') return { type: 'thought', text: txt(b.text) };
+    return { type: 'narration', text: txt(b?.text) };
   }
   const position = ['left', 'center', 'right'].includes(b.position) ? b.position : 'center';
   const cid = b.characterId || undefined;
@@ -72,14 +82,14 @@ export function repairBeat(project: Project, b: any): Beat {
     if (available.length && !available.includes(emotion)) {
       emotion = available.includes('neutral') ? 'neutral' : available[0];
     }
-    return { type: 'dialogue', characterId: ch.id, emotion, position, text: String(b.text ?? '') };
+    return { type: 'dialogue', characterId: ch.id, emotion, position, text: txt(b.text) };
   }
   const name = (b.name || '').trim();
   if (name) {
     const emotion = EMOTION_SET.has(b.emotion) ? b.emotion : 'neutral';
-    return { type: 'dialogue', name, emotion, position, text: String(b.text ?? '') };
+    return { type: 'dialogue', name, emotion, position, text: txt(b.text) };
   }
-  return { type: 'narration', text: String(b.text ?? '') };
+  return { type: 'narration', text: txt(b.text) };
 }
 
 // Чинит объект scene против манифеста.
@@ -122,6 +132,7 @@ function repair(
 
   const choices = parsed.choices.map((c) => ({
     ...c,
+    text: stripMoveTag(c.text),
     cost: c.cost && statIds.has(c.cost.statId) ? c.cost : null,
   }));
 

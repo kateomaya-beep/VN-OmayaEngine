@@ -191,7 +191,7 @@ must begin evolving from their very first meaningful beat. Give a short "reason"
       `1. 3–8 beats per turn, alternating narration and dialogue; spoken lines short and alive.
 2. scene.backgroundId — from the manifest, by tags matching location/mood.
 3. Change statChanges whenever an action earns it (relationships especially — see Relationship Dynamics).
-4. choices AS THE SITUATION DEMANDS: 2–4 options at key moments, otherwise choices: []. Occasionally a "premium" choice with a cost.
+4. choices AS THE SITUATION DEMANDS: 2–4 options at key moments, otherwise choices: []. Occasionally a "premium" choice with a cost. Each choice text is plain player-facing wording (actions in *italics*) — NEVER prefix it with move tags like [CHOICE] or [VERBATIM].
 5. Never speak or decide for the player beyond their move (except expanding [CHOICE]). Honour the lorebook, facts, and history; avoid stalling.
 6. Major milestone → chapterEvent ("chapter_end" | "cg_moment").`
     ),

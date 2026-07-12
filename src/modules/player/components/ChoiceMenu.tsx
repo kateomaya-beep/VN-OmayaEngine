@@ -1,4 +1,5 @@
 import type { Project, Choice, RuntimeState } from '../../../shared/types';
+import { InlineMarkdown } from '../../../shared/markdown';
 
 // Кнопки выбора (могут отсутствовать — Блок I.1). Свободный ввод — в консоли ниже.
 export function ChoiceMenu({
@@ -30,7 +31,7 @@ export function ChoiceMenu({
                   : 'bg-black/70 border-white/10 hover:border-accent2 hover:bg-accent2/10'
               } disabled:opacity-40`}
             >
-              <span>{c.text}</span>
+              <InlineMarkdown text={c.text} />
               {c.cost && costStat && (
                 <span className="float-right text-amber-300 text-sm">
                   {c.cost.amount} {costStat.name}

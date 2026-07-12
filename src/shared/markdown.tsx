@@ -102,3 +102,13 @@ export function renderMarkdown(text: string): string {
 export function Markdown({ text, className }: { text: string; className?: string }) {
   return <span className={className} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
 }
+
+// Только инлайновая разметка (жирный/курсив/моно), без блочных элементов —
+// подходит для мест, где нельзя <p>/<ul> (например, внутри <button> с выбором).
+export function renderInlineMarkdown(text: string): string {
+  return inline(escapeHtml(text));
+}
+
+export function InlineMarkdown({ text, className }: { text: string; className?: string }) {
+  return <span className={className} dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(text) }} />;
+}
