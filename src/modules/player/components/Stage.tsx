@@ -103,11 +103,12 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
   if (!shown.assetId || !url) return null;
 
   return (
-    <div className="absolute inset-0 flex justify-center items-start sm:items-end pointer-events-none">
+    // Спрайт прижат к низу и на мобилке (растёт снизу, «врастает» в градиент), крупнее.
+    <div className="absolute inset-0 flex justify-center items-end pointer-events-none">
       <img
         src={url}
         alt=""
-        className={`object-contain object-bottom transition-all duration-300 h-[56%] mt-[22%] sm:mt-0 sm:h-[88%] max-w-[92%] sm:max-w-[46%] ${
+        className={`object-contain object-bottom transition-all duration-300 h-[82%] sm:h-[88%] max-w-[100%] sm:max-w-[46%] ${
           visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
         }`}
       />
