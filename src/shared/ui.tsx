@@ -52,6 +52,14 @@ export function Modal({
   children: ReactNode;
   wide?: boolean;
 }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
   if (!open) return null;
   // Портал в document.body: панель верхняя имеет backdrop-blur, а backdrop-filter
   // создаёт containing block для position:fixed — без портала модалки якорятся к

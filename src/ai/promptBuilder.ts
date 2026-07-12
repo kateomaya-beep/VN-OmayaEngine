@@ -144,6 +144,47 @@ async function memoryBlock(
   return parts.join('\n\n') || '(memory is empty — this is the start of the story)';
 }
 
+// Компактный дамп состояния Game Master для контекста ИИ (Horae-подобная память):
+// часы, досье персонажей тегами, сетка отношений, открытые задачи, последние события.
+function gameMasterBlock(state: RuntimeState): string {
+  const gm = state.gm;
+  const parts: string[] = [];
+  if (gm.clock.date || gm.clock.time) {
+    parts.push(`Time: ${[gm.clock.date, gm.clock.time].filter(Boolean).join(', ')}`);
+  }
+  if (gm.characters.length) {
+    const lines = gm.characters.map((c) => {
+      const bits = [
+        c.roleToHero && `to hero: ${c.roleToHero}`,
+        c.status && `status: ${c.status}`,
+        c.mood && `mood: ${c.mood}`,
+        c.outfit && `outfit: ${c.outfit}`,
+        c.location && `at: ${c.location}`,
+      ].filter(Boolean);
+      const tags = c.tags.length ? ` [${c.tags.join(', ')}]` : '';
+      const dossier = c.dossier ? ` — ${c.dossier}` : '';
+      return `- ${c.name}${dossier}${bits.length ? ` (${bits.join('; ')})` : ''}${tags}`;
+    });
+    parts.push(`Characters (dossiers):\n${lines.join('\n')}`);
+  }
+  if (gm.relations.length) {
+    parts.push(
+      `Relationship grid:\n${gm.relations.map((r) => `- ${r.from} → ${r.to}: ${r.label}`).join('\n')}`
+    );
+  }
+  const openTasks = gm.agenda.filter((t) => !t.done);
+  if (openTasks.length) {
+    parts.push(`Open agenda:\n${openTasks.map((t) => `- ${t.text}`).join('\n')}`);
+  }
+  if (gm.events.length) {
+    const recent = gm.events.slice(-5);
+    parts.push(`Recent scene log:\n${recent.map((e) => `- [t${e.turn}] ${e.summary}`).join('\n')}`);
+  }
+  return parts.length
+    ? parts.join('\n\n')
+    : '(no game-master state yet — establish it via worldState this turn)';
+}
+
 export interface BuiltRequest {
   system: string;
   messages: LlmMessage[];
@@ -198,6 +239,7 @@ export async function buildRequest(
         onScreenIds.length ? onScreenIds.join(', ') : 'nobody'
       }`,
     memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
+    gamemaster: () => gameMasterBlock(state),
   };
 
   // Собираем промпт из редактируемого пресета (Batch 3 §8): по порядку, только

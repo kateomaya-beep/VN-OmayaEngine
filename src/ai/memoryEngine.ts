@@ -2,6 +2,13 @@ import type { Project, RuntimeState, LlmMessage } from '../shared/types';
 import { runCompletionWith } from './providers';
 import { SUMMARIZER_PROMPT } from './directorPrompt';
 import { estimateTokens } from '../shared/utils';
+import { pushToast, updateToast } from '../shared/toast';
+import { useLang } from '../shared/i18n';
+
+// Двуязычные тексты тостов саммари (язык — из глобального переключателя UI).
+function tt(ru: string, en: string): string {
+  return useLang.getState().lang === 'en' ? en : ru;
+}
 
 // Память без деления на главы (см. CR v2 §E). Саммаризация триггерится по
 // счётчику сообщений (memoryConfig.summaryEveryN), не по сюжетному событию.
@@ -44,9 +51,11 @@ export async function maybeCompress(
     .map((m) => `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${m.content}`)
     .join('\n\n');
 
+  const toastId = pushToast('info', tt('Сжимаю память…', 'Summarizing memory…'));
   try {
     const prompt = project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(12);
     const text = await summarize(project, prompt, transcript);
+    updateToast(toastId, 'success', tt('Память обновлена', 'Memory updated'));
     const chronicle = text ? [...state.memory.chronicle, text] : state.memory.chronicle;
     // Сырой кусок сохраняем отдельно — не инжектится целиком, только через
     // векторный подсос релевантного (см. vectorEngine.ts).
@@ -65,7 +74,12 @@ export async function maybeCompress(
         messagesSinceSummary: 0,
       }),
     };
-  } catch {
+  } catch (e) {
+    updateToast(
+      toastId,
+      'error',
+      tt('Ошибка автосаммари: ', 'Auto-summary error: ') + (e as Error).message
+    );
     return state; // graceful: keep verbatim history, retry next turn
   }
 }

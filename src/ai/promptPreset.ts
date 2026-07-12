@@ -12,7 +12,8 @@ export type DynamicSource =
   | 'characters'
   | 'manifest'
   | 'state'
-  | 'memory';
+  | 'memory'
+  | 'gamemaster';
 
 export interface PromptBlock {
   id: string;
@@ -44,10 +45,25 @@ RESPONSE SCHEMA:
   ],
   "statChanges": [ { "statId": string, "delta": number, "reason": string } ],
   "choices": [ { "id": string, "text": string, "cost": null | { "statId": string, "amount": number } } ],
-  "chapterEvent": null | "chapter_end" | "cg_moment"
+  "chapterEvent": null | "chapter_end" | "cg_moment",
+  "worldState": {
+    "clock": { "date": string, "time": string },
+    "characters": [ { "name": string, "charId": string|null, "dossier": string, "appearance": string, "personality": string, "roleToHero": string, "outfit": string, "mood": string, "status": string, "location": string, "tags": [string] } ],
+    "relations": [ { "from": string, "to": string, "label": string } ],
+    "event": string, "mood": string,
+    "agendaAdd": [string], "agendaDone": [string]
+  }
 }
 Literary prose lives INSIDE the beats text fields. Markdown is allowed in text
-(*italics* for actions/description, **bold** for emphasis). Inner thoughts go in a "thought" beat.`;
+(*italics* for actions/description, **bold** for emphasis). Inner thoughts go in a "thought" beat.
+
+worldState is the GAME MASTER update — keep it accurate EVERY turn (it is how you remember characters and the world; write it in English regardless of the story language):
+- clock: advance in-game date/time to match what happened this turn.
+- characters: for anyone present or affected, give/refresh a compact dossier — who they are, appearance, personality, roleToHero (who they are to the hero), current outfit, mood, status, location, and tags. Send only changed/new characters.
+- relations: character-to-character ties (label the relationship), send edges that changed.
+- event: one-line analysis of this scene; mood: the scene's overall mood.
+- agendaAdd: new goals/tasks the plot introduced; agendaDone: tasks now completed.
+If nothing changed for a field, omit it.`;
 
 // Дефолтные блоки Omaya-пресета. Каждый — редактируемый; порядок можно менять.
 function makeDefaults(): PromptBlock[] {
@@ -193,6 +209,7 @@ drama, flirtation, intrigue. Prose is alive and sensory. Medium turn length (~25
     b('scene_chars', '↳ Characters in Focus', '', { dynamic: 'characters' }),
     b('asset_manifest', '↳ Asset Manifest', '', { dynamic: 'manifest' }),
     b('current_state', '↳ Current State', '', { dynamic: 'state' }),
+    b('game_master', '↳ Game Master State', '', { dynamic: 'gamemaster' }),
     b('memory', '↳ Memory', '', { dynamic: 'memory' }),
   ];
 }

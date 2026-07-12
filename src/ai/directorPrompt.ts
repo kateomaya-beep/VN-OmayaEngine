@@ -244,7 +244,7 @@ MUST keep: 1) plot facts and the player's decisions; 2) relationship shifts
 (who learned or felt what); 3) promises, secrets, unresolved plot threads;
 4) important items and places. DROP: weather, atmosphere, verbatim lines.
 Format: a bulleted list of facts, at most ${n} items. Past tense, third person.
-Write the digest in the same language the story is told in.`;
+Always write the digest in ENGLISH, even if the story itself is told in another language.`;
 
 // Короткий ремайндер формата в самый конец (глубина 0) — модели на длинном
 // контексте забывают отдавать чистый JSON.

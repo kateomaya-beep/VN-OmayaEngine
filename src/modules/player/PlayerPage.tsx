@@ -12,8 +12,7 @@ import { Console } from './components/Console';
 import { Mixer } from './components/Mixer';
 import { QuickActions } from './components/QuickActions';
 import { EditPanel } from './components/EditPanel';
-import { RelationshipsPanel } from './components/RelationshipsPanel';
-import { HistoryLog, SaveLoadPanel, MemoryPanel } from './components/Panels';
+import { SaveLoadPanel } from './components/Panels';
 import { useT } from '../../shared/i18n';
 import { TopBar } from '../../app/TopBar';
 
@@ -24,7 +23,7 @@ export function PlayerPage() {
   const nav = useNavigate();
   const t = useT();
   const s = usePlayerStore();
-  const [panel, setPanel] = useState<null | 'history' | 'saves' | 'memory' | 'edit' | 'rel'>(null);
+  const [panel, setPanel] = useState<null | 'saves' | 'edit'>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -121,9 +120,7 @@ export function PlayerPage() {
                   className="absolute right-0 mt-1 z-40 w-48 rounded-lg bg-panel border border-white/10 shadow-xl py-1 text-sm"
                   onClick={() => setMenuOpen(false)}
                 >
-                  <MenuItem icon="♥" label={t('player.relationships')} onClick={() => setPanel('rel')} />
-                  <MenuItem icon="📜" label={t('player.history')} onClick={() => setPanel('history')} />
-                  <MenuItem icon="🧠" label={t('player.memory')} onClick={() => setPanel('memory')} />
+                  {/* Отношения/память/история переехали в Game Master (🎮) на верхней панели. */}
                   <MenuItem icon="💾" label={t('player.saves')} onClick={() => setPanel('saves')} />
                   <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
                   <MenuItem icon="🎨" label="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
@@ -140,6 +137,13 @@ export function PlayerPage() {
       <div className="absolute bottom-2 left-2 z-10">
         <TokenCounter project={s.project} state={s.state} />
       </div>
+
+      {/* Внутриигровые часы/дата (вынесены галочкой в Game Master → Календарь). */}
+      {s.state.gm.showClockInGame && (s.state.gm.clock.date || s.state.gm.clock.time) && (
+        <div className="absolute top-16 right-3 z-10 bg-black/55 backdrop-blur rounded-lg px-3 py-1.5 text-sm text-gray-100">
+          🗓 {[s.state.gm.clock.date, s.state.gm.clock.time].filter(Boolean).join(' · ')}
+        </div>
+      )}
 
       <Mixer open={mixerOpen} onClose={() => setMixerOpen(false)} />
       <QuickActions open={genOpen} onClose={() => setGenOpen(false)} />
@@ -224,15 +228,7 @@ export function PlayerPage() {
         </div>
       )}
 
-      <RelationshipsPanel open={panel === 'rel'} onClose={() => setPanel(null)} />
       <EditPanel open={panel === 'edit'} onClose={() => setPanel(null)} />
-
-      <HistoryLog
-        open={panel === 'history'}
-        onClose={() => setPanel(null)}
-        project={s.project}
-        state={s.state}
-      />
       <SaveLoadPanel
         open={panel === 'saves'}
         onClose={() => setPanel(null)}
@@ -242,29 +238,6 @@ export function PlayerPage() {
           s.loadSlot(slot);
           setPanel(null);
         }}
-      />
-      <MemoryPanel
-        open={panel === 'memory'}
-        onClose={() => setPanel(null)}
-        state={s.state}
-        onEditLiveSummary={(text) =>
-          usePlayerStore.setState((st) => ({
-            state: st.state ? { ...st.state, memory: { ...st.state.memory, liveSummary: text } } : st.state,
-          }))
-        }
-        onEditChronicle={(idx, text) =>
-          usePlayerStore.setState((st) => {
-            if (!st.state) return {};
-            const chronicle = [...st.state.memory.chronicle];
-            chronicle[idx] = text;
-            return { state: { ...st.state, memory: { ...st.state.memory, chronicle } } };
-          })
-        }
-        onEditMemorybook={(entries) =>
-          usePlayerStore.setState((st) => ({
-            state: st.state ? { ...st.state, memory: { ...st.state.memory, memorybook: entries } } : st.state,
-          }))
-        }
       />
     </div>
   );

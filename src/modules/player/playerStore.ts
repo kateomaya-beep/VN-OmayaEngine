@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState } from '../../shared/types';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn } from '../../ai/gameEngine';
 import { expandMacros } from '../../ai/macros';
@@ -43,6 +43,9 @@ interface PlayerStore {
   // Мутация применяется к живому проекту (влияет на манифест следующего хода)
   // и сохраняется в IndexedDB.
   patchProject: (mutator: (p: Project) => void) => Promise<void>;
+  // Правка состояния Game Master (досье/часы/адженда…) прямо в игре — обновляет
+  // runtime и автосохраняется.
+  patchGm: (mutator: (gm: GameMasterState) => void) => void;
 }
 
 const AUTOSAVE_SLOT = 0;
@@ -200,6 +203,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     mutator(next);
     set({ project: next });
     await saveProject(next);
+  },
+
+  patchGm(mutator) {
+    const st = get();
+    if (!st.state) return;
+    const gm: GameMasterState = JSON.parse(JSON.stringify(st.state.gm));
+    mutator(gm);
+    const nextState = { ...st.state, gm };
+    set({ state: nextState });
+    // Автосейв (fire-and-forget) — правки GM переживают перезагрузку.
+    void get().save(AUTOSAVE_SLOT, `Автосейв · ход ${nextState.turnCount}`);
   },
 }));
 

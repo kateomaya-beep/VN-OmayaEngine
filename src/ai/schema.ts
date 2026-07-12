@@ -39,6 +39,37 @@ export const choiceSchema = z.object({
     .default(null),
 });
 
+// Game Master delta (все поля опциональны; движок мержит в RuntimeState.gm).
+export const worldStateSchema = z
+  .object({
+    clock: z.object({ date: z.string().nullish(), time: z.string().nullish() }).partial().nullish(),
+    characters: z
+      .array(
+        z.object({
+          name: z.string(),
+          charId: z.string().nullish(),
+          dossier: z.string().nullish(),
+          appearance: z.string().nullish(),
+          personality: z.string().nullish(),
+          roleToHero: z.string().nullish(),
+          outfit: z.string().nullish(),
+          mood: z.string().nullish(),
+          status: z.string().nullish(),
+          location: z.string().nullish(),
+          tags: z.array(z.string()).nullish(),
+        })
+      )
+      .nullish(),
+    relations: z
+      .array(z.object({ from: z.string(), to: z.string(), label: z.string().default('') }))
+      .nullish(),
+    event: z.string().nullish(),
+    mood: z.string().nullish(),
+    agendaAdd: z.array(z.string()).nullish(),
+    agendaDone: z.array(z.string()).nullish(),
+  })
+  .nullish();
+
 export const aiTurnSchema = z.object({
   scene: sceneSchema.default({
     backgroundId: null,
@@ -50,6 +81,7 @@ export const aiTurnSchema = z.object({
   statChanges: z.array(statChangeSchema).default([]),
   choices: z.array(choiceSchema).default([]),
   chapterEvent: z.enum(['chapter_end', 'cg_moment']).nullable().default(null),
+  worldState: worldStateSchema,
 });
 
 export type ParsedAiTurn = z.infer<typeof aiTurnSchema>;

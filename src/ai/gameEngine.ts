@@ -3,6 +3,7 @@ import { RELATIONSHIP_META } from '../shared/types';
 import { buildRequest } from './promptBuilder';
 import { runCompletion } from './providers';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
+import { mergeWorldState } from './gameMaster';
 import { maybeCompress } from './memoryEngine';
 import { uid } from '../shared/utils';
 
@@ -125,6 +126,9 @@ export async function applyTurn(
     facts.push({ turn: nextTurnNumber, kind: 'event', text: 'сюжетная веха' });
   }
 
+  // Game Master: мержим дельту мира от ИИ (досье/статусы/часы/отношения/адженда).
+  const gm = mergeWorldState(state.gm, turn.worldState, nextTurnNumber);
+
   let nextState: RuntimeState = {
     ...state,
     statValues: values,
@@ -134,6 +138,7 @@ export async function applyTurn(
     currentMusicAssetId: nextTrack,
     onScreen,
     history,
+    gm,
     lastTurn: turn,
     turnCount: nextTurnNumber,
     memory: {

@@ -277,6 +277,19 @@ export interface AiTurn {
   statChanges: StatChange[];
   choices: Choice[];
   chapterEvent: ChapterEvent;
+  worldState?: WorldStateUpdate; // обновление Game Master за этот ход (опц.)
+}
+
+// Дельта состояния мира, которую ИИ присылает каждый ход (Game Master). Все поля
+// опциональны — движок мержит их в RuntimeState.gm.
+export interface WorldStateUpdate {
+  clock?: { date?: string; time?: string };
+  characters?: Array<Partial<Omit<GmCharacter, 'tags'>> & { name: string; tags?: string[] }>;
+  relations?: GmRelationEdge[];
+  event?: string; // анализ текущей сцены
+  mood?: string; // общее настроение сцены
+  agendaAdd?: string[]; // новые задачи в адженду
+  agendaDone?: string[]; // задачи, отмеченные выполненными (по тексту)
 }
 
 // ---- Memory (см. CR v2 §E — без деления на главы, история бесконечна) ----
@@ -315,6 +328,63 @@ export interface LlmMessage {
   content: string;
 }
 
+// ---- Game Master (вдохновлено Horae) — динамическое состояние мира, которое ИИ
+// обновляет каждый ход: досье персонажей, статусы/настроение/одежда, сетка
+// отношений, календарь/часы, анализ сцен (события), адженда (задачи). Живёт в
+// сейве, редактируется в панели Game Master. Помогает ИИ не путаться в персонажах
+// и сюжете (структурированная память вместо раздутого контекста). ----
+
+export interface GmCharacter {
+  charId?: string; // связь с персонажем проекта, если есть
+  name: string;
+  dossier: string; // кто это (кратко)
+  appearance: string;
+  personality: string;
+  roleToHero: string; // кто он для протагониста
+  outfit: string; // во что одет сейчас
+  mood: string; // текущее настроение
+  status: string; // текущий статус (ранен, присутствует, ушёл…)
+  location: string;
+  tags: string[]; // вся инфа тегами (для ИИ)
+}
+
+export interface GmRelationEdge {
+  from: string; // имя персонажа
+  to: string;
+  label: string; // характер связи между персонажами
+}
+
+export interface GmEvent {
+  turn: number;
+  summary: string; // анализ сцены / событие
+  mood: string; // общее настроение сцены
+}
+
+export interface GmTask {
+  id: string;
+  text: string;
+  done: boolean;
+  source: 'auto' | 'manual';
+}
+
+export interface GmClock {
+  date: string; // внутриигровая дата, напр. "Day 3"
+  time: string; // внутриигровое время, напр. "14:30" / "evening"
+}
+
+export interface GameMasterState {
+  clock: GmClock;
+  showClockInGame: boolean; // выносить часы/дату отдельно в игру
+  characters: GmCharacter[];
+  relations: GmRelationEdge[];
+  events: GmEvent[];
+  agenda: GmTask[];
+}
+
+export function emptyGameMaster(): GameMasterState {
+  return { clock: { date: '', time: '' }, showClockInGame: false, characters: [], relations: [], events: [], agenda: [] };
+}
+
 // ---- Save slots ----
 
 export interface OnScreenSprite {
@@ -334,6 +404,7 @@ export interface RuntimeState {
   onScreen: OnScreenSprite[];
   history: LlmMessage[];
   memory: MemoryState;
+  gm: GameMasterState; // динамическое состояние мира (Game Master)
   lastTurn: AiTurn | null;
   turnCount: number;
   // Заметка для ИИ (Author's Note, см. CR v2 §M) — инжектится перед ходом игрока

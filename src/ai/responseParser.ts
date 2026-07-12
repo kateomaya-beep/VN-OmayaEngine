@@ -125,7 +125,7 @@ function repair(
     cost: c.cost && statIds.has(c.cost.statId) ? c.cost : null,
   }));
 
-  return { scene, beats, statChanges, choices, chapterEvent: parsed.chapterEvent };
+  return { scene, beats, statChanges, choices, chapterEvent: parsed.chapterEvent, worldState: parsed.worldState };
 }
 
 export function parseAiResponse(

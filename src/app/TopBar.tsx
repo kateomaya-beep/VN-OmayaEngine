@@ -5,6 +5,8 @@ import { useTheme } from '../shared/theme';
 import { ConnectionPanel } from '../modules/shared/ConnectionPanel';
 import { ExtensionsPanel } from '../modules/shared/ExtensionsPanel';
 import { PresetPanel } from '../modules/shared/PresetPanel';
+import { GameMasterPanel } from '../modules/shared/GameMasterPanel';
+import { ToastHost } from '../shared/ToastHost';
 import type { Project } from '../shared/types';
 
 // Единая постоянная верхняя панель (Batch 3 §1): одинаковая на главном экране и в
@@ -66,6 +68,7 @@ export function TopBarControls({
   const [connOpen, setConnOpen] = useState(false);
   const [extOpen, setExtOpen] = useState(false);
   const [presetOpen, setPresetOpen] = useState(false);
+  const [gmOpen, setGmOpen] = useState(false);
 
   const btn = 'bg-black/40 hover:bg-black/60 dark:bg-panel2 rounded-lg px-2.5 py-1.5 text-sm';
 
@@ -76,6 +79,9 @@ export function TopBarControls({
       </button>
       <button className={btn} title="Пресет промпта" onClick={() => setPresetOpen(true)}>
         🎚
+      </button>
+      <button className={btn} title="Game Master" onClick={() => setGmOpen(true)}>
+        🎮
       </button>
       <button className={btn} title="Управление расширениями" onClick={() => setExtOpen(true)}>
         🧩
@@ -104,12 +110,19 @@ export function TopBarControls({
         project={project}
         onPatch={onPatchProject}
       />
+      <GameMasterPanel
+        open={gmOpen}
+        onClose={() => setGmOpen(false)}
+        project={project}
+        onPatch={onPatchProject}
+      />
       <ExtensionsPanel
         open={extOpen}
         onClose={() => setExtOpen(false)}
         project={project}
         onPatch={onPatchProject}
       />
+      <ToastHost />
     </>
   );
 }

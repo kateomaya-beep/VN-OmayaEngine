@@ -18,8 +18,9 @@ import type {
   PromptTone,
   ProseStyleId,
   ApiConnection,
+  GameMasterState,
 } from './types';
-import { EMOTIONS, AUDIO_MOODS, defaultMemoryConfig } from './types';
+import { EMOTIONS, AUDIO_MOODS, defaultMemoryConfig, emptyGameMaster } from './types';
 import { uid, clamp } from './utils';
 
 export const DEFAULT_STYLE_PRESET = 'romance_club';
@@ -312,10 +313,39 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     onScreen: [],
     history: [],
     memory: initialMemory(),
+    gm: initialGameMaster(project),
     lastTurn: null,
     turnCount: 0,
     authorNote: '',
   };
+}
+
+// Стартовое состояние Game Master: досье персонажей из карточек конструктора,
+// далее ИИ обновляет их каждый ход.
+function initialGameMaster(project: Project): GameMasterState {
+  const gm = emptyGameMaster();
+  const roleToHero: Record<string, string> = {
+    protagonist: 'the player hero',
+    love_interest: 'love interest',
+    important_character: 'important character',
+    npc: 'minor character',
+  };
+  gm.characters = project.characters
+    .filter((c) => c.role !== 'protagonist')
+    .map((c) => ({
+      charId: c.id,
+      name: c.name,
+      dossier: (c.card.personality || '').slice(0, 160),
+      appearance: c.card.appearance || '',
+      personality: c.card.personality || '',
+      roleToHero: roleToHero[c.role] || c.role,
+      outfit: '',
+      mood: 'neutral',
+      status: '',
+      location: '',
+      tags: [],
+    }));
+  return gm;
 }
 
 // Coerce a stored save's RuntimeState (raw, possibly from an older schema before
@@ -363,9 +393,58 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
       (m: any) => m && typeof m.role === 'string' && typeof m.content === 'string'
     ),
     memory: normalizeMemory(raw.memory, str, num, arr),
+    gm: normalizeGameMaster(raw.gm, fresh.gm, str, num, arr),
     lastTurn: raw.lastTurn && typeof raw.lastTurn === 'object' ? raw.lastTurn : null,
     turnCount: num(raw.turnCount, 0),
     authorNote: str(raw.authorNote),
+  };
+}
+
+// Мягкая нормализация состояния Game Master из сейва (старые сейвы без gm → fresh).
+function normalizeGameMaster(
+  raw: any,
+  fresh: GameMasterState,
+  str: (v: unknown, d?: string) => string,
+  num: (v: unknown, d: number) => number,
+  arr: <T>(v: unknown) => T[]
+): GameMasterState {
+  if (!raw || typeof raw !== 'object') return fresh;
+  const strArr = (v: unknown): string[] => arr<any>(v).filter((x) => typeof x === 'string');
+  return {
+    clock: {
+      date: str(raw?.clock?.date),
+      time: str(raw?.clock?.time),
+    },
+    showClockInGame: typeof raw.showClockInGame === 'boolean' ? raw.showClockInGame : false,
+    characters: arr<any>(raw.characters)
+      .filter((c) => c && typeof c.name === 'string')
+      .map((c) => ({
+        charId: typeof c.charId === 'string' ? c.charId : undefined,
+        name: c.name,
+        dossier: str(c.dossier),
+        appearance: str(c.appearance),
+        personality: str(c.personality),
+        roleToHero: str(c.roleToHero),
+        outfit: str(c.outfit),
+        mood: str(c.mood),
+        status: str(c.status),
+        location: str(c.location),
+        tags: strArr(c.tags),
+      })),
+    relations: arr<any>(raw.relations)
+      .filter((r) => r && typeof r.from === 'string' && typeof r.to === 'string')
+      .map((r) => ({ from: r.from, to: r.to, label: str(r.label) })),
+    events: arr<any>(raw.events)
+      .filter((e) => e && typeof e.summary === 'string')
+      .map((e) => ({ turn: num(e.turn, 0), summary: e.summary, mood: str(e.mood) })),
+    agenda: arr<any>(raw.agenda)
+      .filter((t) => t && typeof t.text === 'string')
+      .map((t) => ({
+        id: typeof t.id === 'string' ? t.id : uid('task'),
+        text: t.text,
+        done: !!t.done,
+        source: t.source === 'manual' ? 'manual' : 'auto',
+      })),
   };
 }
 
