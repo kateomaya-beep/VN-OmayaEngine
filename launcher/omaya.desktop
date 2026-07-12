@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Novel Forge
+Comment=Конструктор и плеер ИИ-визуальных новелл
+Icon=/opt/omaya/icons/icon-512.png
+Exec=/opt/omaya/launcher/start-omaya.sh
+Terminal=true
+Categories=Game;Utility;
