@@ -19,6 +19,10 @@ export default defineConfig({
   // vectorWorker.ts dynamically imports @huggingface/transformers, which needs
   // code-splitting inside the worker — only the ES module worker format supports that.
   worker: { format: 'es' },
+  // Крупный чанк — библиотека векторизации (transformers/wasm), это ожидаемо.
+  // Поднимаем порог, чтобы жёлтое предупреждение «chunks larger than 500 kB» не
+  // пугало (это НЕ ошибка — сборка проходит успешно).
+  build: { chunkSizeWarningLimit: 2000 },
   // Keep the dep-optimizer cache OUT of the project tree (OneDrive/antivirus on
   // Windows can lock or half-write files under node_modules/.vite, producing a
   // corrupted React runtime: "hasValidRef ... reading 'get'"). The OS temp dir
