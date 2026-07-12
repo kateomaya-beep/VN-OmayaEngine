@@ -119,9 +119,12 @@ export function LibraryPage() {
         accept=".zip,application/zip,application/x-zip-compressed,application/octet-stream"
         hidden
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onImport(f);
-          e.target.value = '';
+          const input = e.target;
+          const f = input.files?.[0];
+          // ВАЖНО: не сбрасываем input, пока идёт чтение — на Android сброс value
+          // может освободить ссылку на файл прямо во время чтения (NotFoundError).
+          if (f) onImport(f).finally(() => (input.value = ''));
+          else input.value = '';
         }}
       />
 

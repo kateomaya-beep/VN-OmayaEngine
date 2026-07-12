@@ -63,9 +63,27 @@ export async function importProjectZip(file: File): Promise<ImportResult> {
     );
   }
 
+  // Считываем содержимое СРАЗУ в память. На Android ссылка на файл часто
+  // «протухает» до чтения (NotFoundError: "...could not be found at the time an
+  // operation was processed") — особенно если .zip выбран из Telegram/облака/кэша.
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await file.arrayBuffer();
+  } catch (e) {
+    const err = e as Error;
+    if (err.name === 'NotFoundError' || /could not be found|not be found/i.test(err.message)) {
+      throw new Error(
+        `Файл «${file.name}» стал недоступен во время чтения. На Android так бывает, когда .zip ` +
+          'открыт прямо из Telegram/облака/кэша. Сохраните файл в «Загрузки» (Downloads) через ' +
+          'файловый менеджер и выберите его оттуда.'
+      );
+    }
+    throw new Error('Не удалось прочитать файл «' + file.name + '»: ' + err.message);
+  }
+
   let zip: JSZip;
   try {
-    zip = await JSZip.loadAsync(file);
+    zip = await JSZip.loadAsync(bytes);
   } catch (e) {
     throw new Error(
       `Не удалось открыть архив «${file.name}» (${Math.round(file.size / 1024)} КБ) — ` +
