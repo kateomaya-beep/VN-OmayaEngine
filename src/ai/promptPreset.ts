@@ -202,6 +202,10 @@ must begin evolving from their very first meaningful beat. Give a short "reason"
       `POV: second person for the hero, in the project's genre tone. An emotional interactive romance —
 drama, flirtation, intrigue. Prose is alive and sensory. Medium turn length (~250–450 words), adaptive pacing.`
     ),
+    // Пустые слоты под усмотрение пользователя (джейлбрейк / NSFW). Пусто = ничего
+    // не отправляется; юзер вписывает свой текст или отключает тумблер.
+    b('jailbreak', '🔓 Jailbreak (свой)', ''),
+    b('nsfw', '🔞 NSFW (свой)', ''),
     // Dynamic blocks — content is assembled by the engine; the user can only toggle and reorder them.
     b('world', '↳ World & Rules', '', { dynamic: 'world' }),
     b('plot_arc', '↳ Plot Arc', '', { dynamic: 'plot' }),
@@ -248,8 +252,29 @@ export function parsePresetJson(raw: unknown): PromptPreset | null {
   return { id: typeof r.id === 'string' ? r.id : uid('preset'), name: typeof r.name === 'string' ? r.name : 'Imported preset', blocks };
 }
 
+// Гарантируем наличие пустых слотов-плейсхолдеров (jailbreak/nsfw) в любом пресете —
+// чтобы место под них было даже в старых пресетах без полного сброса. Пусто =
+// ничего не отправляется; юзер сам решает, вписывать ли текст.
+const PLACEHOLDER_KEYS: { key: string; name: string }[] = [
+  { key: 'jailbreak', name: '🔓 Jailbreak (свой)' },
+  { key: 'nsfw', name: '🔞 NSFW (свой)' },
+];
+function ensurePlaceholders(preset: PromptPreset): PromptPreset {
+  const have = new Set(preset.blocks.map((b) => b.builtinKey).filter(Boolean));
+  const missing = PLACEHOLDER_KEYS.filter((p) => !have.has(p.key));
+  if (!missing.length) return preset;
+  const added: PromptBlock[] = missing.map((p) => ({
+    id: uid('blk'),
+    name: p.name,
+    enabled: true,
+    content: '',
+    builtinKey: p.key,
+  }));
+  return { ...preset, blocks: [...preset.blocks, ...added] };
+}
+
 // Нормализация пресета из сохранённого проекта (миграция/страховка).
 export function normalizePreset(raw: any): PromptPreset {
   const parsed = raw && Array.isArray(raw.blocks) ? parsePresetJson(raw) : null;
-  return parsed || defaultPreset();
+  return ensurePlaceholders(parsed || defaultPreset());
 }

@@ -226,6 +226,22 @@ export function PresetPanel({
         ))}
       </div>
 
+      {/* Префилл — отдельным блоком, чтобы был на виду */}
+      <div className="card !bg-panel2 mt-4">
+        <h4 className="font-semibold mb-1">Префилл ответа (prefill)</h4>
+        <p className="text-xs text-gray-500 mb-2">
+          Текст, которым НАЧИНАЕТСЯ ответ ассистента (добавляется как assistant-сообщение
+          в конец). Стабилизирует формат — напр. <code>{'{"scene":'}</code> — и часто
+          используется как «затравка» для джейлбрейка. Пусто — не используется.
+        </p>
+        <textarea
+          className="input h-20 font-mono text-sm"
+          value={cfg.prefill || ''}
+          placeholder={'{"scene":'}
+          onChange={(e) => patch({ prefill: e.target.value || undefined })}
+        />
+      </div>
+
       {/* Параметры генерации */}
       <div className="card !bg-panel2 mt-4">
         <h4 className="font-semibold mb-3">Параметры генерации</h4>
@@ -261,14 +277,6 @@ export function PresetPanel({
               className="w-full"
               value={cfg.contextBudget}
               onChange={(e) => patch({ contextBudget: Number(e.target.value) })}
-            />
-          </Field>
-          <Field label="Префилл ответа (опц.)" hint='Начало JSON, напр. {"scene":'>
-            <input
-              className="input"
-              value={cfg.prefill || ''}
-              placeholder='{"scene":'
-              onChange={(e) => patch({ prefill: e.target.value || undefined })}
             />
           </Field>
         </div>
