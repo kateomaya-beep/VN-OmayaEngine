@@ -248,6 +248,7 @@ export function PresetPanel({
         <h4 className="font-semibold mb-3">Параметры генерации</h4>
         <div className="grid sm:grid-cols-2 gap-3">
           <TurnLengthField cfg={cfg} patch={patch} />
+          <ChoiceFrequencyField cfg={cfg} patch={patch} />
           <Field label={`Температура: ${cfg.temperature.toFixed(2)}`}>
             <input
               type="range"
@@ -334,6 +335,53 @@ export function PresetPanel({
         ))}
       </div>
     </Modal>
+  );
+}
+
+// Частота выборов: минимальный интервал в ходах между показами выбора. 0 = без
+// ограничения (решает ИИ). Движок глушит лишние выборы, значение уходит и в промпт.
+function ChoiceFrequencyField({
+  cfg,
+  patch,
+}: {
+  cfg: AiConfig;
+  patch: (p: Partial<AiConfig>) => void;
+}) {
+  const gap = cfg.choiceMinGap ?? 0;
+  const plural = (n: number) =>
+    n % 10 === 1 && n % 100 !== 11 ? 'ход' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'хода' : 'ходов';
+  const label = gap === 0 ? 'как решит ИИ (без ограничения)' : `не чаще раза в ${gap} ${plural(gap)}`;
+  const set = (n: number) => {
+    const v = Math.max(0, Math.min(20, Math.round(Number.isFinite(n) ? n : 0)));
+    patch({ choiceMinGap: v || undefined });
+  };
+  return (
+    <div className="sm:col-span-2">
+      <label className="label">Частота выборов: {label}</label>
+      <div className="flex items-center gap-2">
+        <input
+          type="range"
+          min={0}
+          max={10}
+          step={1}
+          className="flex-1"
+          value={Math.min(gap, 10)}
+          onChange={(e) => set(Number(e.target.value))}
+        />
+        <input
+          type="number"
+          min={0}
+          max={20}
+          className="input !py-1 w-20"
+          value={gap}
+          onChange={(e) => set(Number(e.target.value))}
+        />
+      </div>
+      <p className="text-xs text-gray-500 mt-1">
+        0 — выборы появляются, когда ИИ сочтёт момент важным. N — не чаще одного раза в N ходов
+        (лишние выборы движок убирает сам).
+      </p>
+    </div>
   );
 }
 

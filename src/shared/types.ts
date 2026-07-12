@@ -200,6 +200,9 @@ export interface AiConfig {
   // Длина хода в СЛОВАХ: авторитетный диапазон min..max, задаётся ползунком/вводом
   // в пресете. Переопределяет числа в тексте блока «Стиль». undefined = дефолт.
   turnLength?: { min: number; max: number };
+  // Частота выборов: минимум ходов между показами выбора. 0/undefined = без
+  // ограничения (как решит ИИ). Движок глушит choices, если прошло меньше N ходов.
+  choiceMinGap?: number;
   advancedBlocks?: AdvancedPromptBlock[];
   // Генерация изображений (BYO key, ключ в localStorage под ролью 'image')
   imageBaseUrl?: string;
@@ -467,6 +470,9 @@ export interface RuntimeState {
   gm: GameMasterState; // динамическое состояние мира (Game Master)
   lastTurn: AiTurn | null;
   turnCount: number;
+  // Номер хода, когда игроку в последний раз показали выборы — для троттлинга
+  // частоты выборов (aiConfig.choiceMinGap). -1e9 = ещё ни разу.
+  lastChoiceTurn: number;
   // Заметка для ИИ (Author's Note, см. CR v2 §M) — инжектится перед ходом игрока
   // (глубина 0), живёт в сейве истории до ручного изменения/удаления. Пусто —
   // ничего не инжектится.

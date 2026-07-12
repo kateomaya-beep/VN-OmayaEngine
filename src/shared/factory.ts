@@ -264,6 +264,8 @@ export function normalizeProject(raw: any): Project {
       jailbreakPrompt: typeof ai.jailbreakPrompt === 'string' ? ai.jailbreakPrompt : undefined,
       prefill: typeof ai.prefill === 'string' ? ai.prefill : undefined,
       turnLength: ai.turnLength ? normalizeTurnLength(ai.turnLength) : undefined,
+      choiceMinGap:
+        typeof ai.choiceMinGap === 'number' ? clamp(Math.round(ai.choiceMinGap), 0, 20) : undefined,
       advancedBlocks: arr<any>(ai.advancedBlocks)
         .filter((b) => b && typeof b.content === 'string')
         .map((b) => ({ content: b.content, depth: num(b.depth, 0) })),
@@ -319,6 +321,7 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     gm: initialGameMaster(project),
     lastTurn: null,
     turnCount: 0,
+    lastChoiceTurn: -1e9,
     authorNote: '',
   };
 }
@@ -400,6 +403,7 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
     gm: normalizeGameMaster(raw.gm, fresh.gm, str, num, arr),
     lastTurn: raw.lastTurn && typeof raw.lastTurn === 'object' ? raw.lastTurn : null,
     turnCount: num(raw.turnCount, 0),
+    lastChoiceTurn: num(raw.lastChoiceTurn, -1e9),
     authorNote: str(raw.authorNote),
   };
 }

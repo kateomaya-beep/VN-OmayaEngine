@@ -49,6 +49,17 @@ export async function applyTurn(
 ): Promise<RuntimeState> {
   const nextTurnNumber = state.turnCount + 1;
 
+  // Частота выборов: если задан минимальный интервал (choiceMinGap) и с прошлого
+  // показа выбора прошло меньше N ходов — глушим choices этого хода. Модель считать
+  // ходы не умеет, поэтому решает движок (детерминированно). turn.choices мутируем,
+  // чтобы и немедленный рендер, и сохранённый lastTurn отражали троттлинг.
+  const choiceGap = project.aiConfig.choiceMinGap ?? 0;
+  let lastChoiceTurn = state.lastChoiceTurn ?? -1e9;
+  if (choiceGap > 0 && turn.choices.length > 0 && nextTurnNumber - lastChoiceTurn < choiceGap) {
+    turn.choices = [];
+  }
+  if (turn.choices.length > 0) lastChoiceTurn = nextTurnNumber;
+
   // Apply stat changes (clamped) and collect canonical facts (turn-indexed, not chapter-indexed).
   const { values, effective } = applyStatChanges(project, state.statValues, turn.statChanges);
   const rel = applyRelationshipChanges(project, state.relationship, turn.statChanges);
@@ -141,6 +152,7 @@ export async function applyTurn(
     gm,
     lastTurn: turn,
     turnCount: nextTurnNumber,
+    lastChoiceTurn,
     memory: {
       ...state.memory,
       facts,

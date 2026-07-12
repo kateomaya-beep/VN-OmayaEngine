@@ -274,6 +274,12 @@ export async function buildRequest(
   systemParts.push(
     `TURN LENGTH (authoritative — overrides any other length guidance above): write roughly ${tl.min}–${tl.max} words of story across the beats this turn.`
   );
+  const gap = project.aiConfig.choiceMinGap ?? 0;
+  if (gap > 0) {
+    systemParts.push(
+      `CHOICE FREQUENCY (authoritative): offer a choices block at most about once every ${gap} turns. On all other turns return choices: [] and let the player type. Only surface choices at a real decision point.`
+    );
+  }
   const system = systemParts.join('\n\n');
 
   // Live window of verbatim history.
