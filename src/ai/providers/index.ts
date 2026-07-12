@@ -92,7 +92,7 @@ const anthropic: Provider = {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model, max_tokens: 2048, temperature: req.temperature, system: req.system, messages }),
+      body: JSON.stringify({ model, max_tokens: 4096, temperature: req.temperature, system: req.system, messages }),
     });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
     const data = await res.json();

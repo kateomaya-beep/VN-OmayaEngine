@@ -119,6 +119,7 @@ export function normalizeProject(raw: any): Project {
     affection: clampRel(v?.affection),
     passion_stat: clampRel(v?.passion_stat),
     friendship: clampRel(v?.friendship),
+    respect: clampRel(v?.respect),
   });
 
   let protagonistSeen = false;
@@ -377,6 +378,7 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
         affection: clamp(num(v?.affection, 0), -100, 100),
         passion_stat: clamp(num(v?.passion_stat, 0), -100, 100),
         friendship: clamp(num(v?.friendship, 0), -100, 100),
+        respect: clamp(num(v?.respect, 0), -100, 100),
       };
     }
   }

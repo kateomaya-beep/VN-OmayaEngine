@@ -95,14 +95,15 @@ export interface CharacterCard {
   greetings?: string[]; // first_mes + alternate_greetings
 }
 
-// Три связанных стата отношений у КАЖДОГО персонажа (см. CR v2 §C), -100..100.
+// Связанные статы отношений у КАЖДОГО персонажа (см. CR v2 §C), -100..100.
 export interface RelationshipStats {
   affection: number; // ❤️ симпатия
   passion_stat: number; // 🔥 страсть
   friendship: number; // 🍀 дружба
+  respect: number; // 🎖 уважение
 }
 
-export const RELATIONSHIP_FIELDS = ['affection', 'passion_stat', 'friendship'] as const;
+export const RELATIONSHIP_FIELDS = ['affection', 'passion_stat', 'friendship', 'respect'] as const;
 export type RelationshipField = (typeof RELATIONSHIP_FIELDS)[number];
 
 export const RELATIONSHIP_META: Record<
@@ -112,10 +113,11 @@ export const RELATIONSHIP_META: Record<
   affection: { icon: '❤️', ru: 'Симпатия', en: 'Affection' },
   passion_stat: { icon: '🔥', ru: 'Страсть', en: 'Passion' },
   friendship: { icon: '🍀', ru: 'Дружба', en: 'Friendship' },
+  respect: { icon: '🎖', ru: 'Уважение', en: 'Respect' },
 };
 
 export function emptyRelationship(): RelationshipStats {
-  return { affection: 0, passion_stat: 0, friendship: 0 };
+  return { affection: 0, passion_stat: 0, friendship: 0, respect: 0 };
 }
 
 export interface Character {

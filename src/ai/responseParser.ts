@@ -199,7 +199,7 @@ export function applyRelationshipChanges(
   for (const ch of changes) {
     const rel = parseRelStatId(ch.statId);
     if (!rel || !charIds.has(rel.charId)) continue;
-    if (!next[rel.charId]) next[rel.charId] = { affection: 0, passion_stat: 0, friendship: 0 };
+    if (!next[rel.charId]) next[rel.charId] = { affection: 0, passion_stat: 0, friendship: 0, respect: 0 };
     const before = next[rel.charId][rel.field] ?? 0;
     const after = clamp(before + ch.delta, -100, 100);
     if (after !== before) {

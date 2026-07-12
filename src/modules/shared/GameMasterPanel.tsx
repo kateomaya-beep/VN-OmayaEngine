@@ -8,9 +8,9 @@ import { formatClock } from '../../ai/gameMaster';
 import { scanCharacter, scanEvents, scanAgenda } from '../../ai/gmScan';
 import { pushToast, updateToast } from '../../shared/toast';
 import { uid } from '../../shared/utils';
-import { DEFAULT_MONTHS } from '../../shared/types';
+import { DEFAULT_MONTHS, RELATIONSHIP_FIELDS, RELATIONSHIP_META } from '../../shared/types';
 import type {
-  Project, MemoryConfig, VectorizationMode, GmCharacter, GameMasterState,
+  Project, MemoryConfig, VectorizationMode, GmCharacter, GameMasterState, RelationshipStats,
 } from '../../shared/types';
 
 // Game Master (вдохновлено Horae): динамическое состояние мира — персонажи с
@@ -68,7 +68,7 @@ export function GameMasterPanel({
         ))}
       </div>
 
-      {tab === 'characters' && (gm ? <CharactersTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
+      {tab === 'characters' && (gm ? <CharactersTab gm={gm} patchGm={s.patchGm} L={L} project={project} relationship={s.state?.relationship ?? {}} /> : noGame)}
       {tab === 'events' && (gm ? <EventsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'relations' && (gm ? <RelationsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'calendar' && (gm ? <CalendarTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
@@ -104,10 +104,62 @@ function WandButton({ busy, onClick, title }: { busy: boolean; onClick: () => vo
   );
 }
 
-function CharactersTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) {
+// Живые статы отношений персонажа к герою (❤️🔥🍀🎖), диверджентные полоски -100..100.
+// Обновляются каждый ход (значения берутся из runtime-состояния), поэтому за динамикой
+// можно следить прямо в анкете.
+function RelationshipBars({ rel, L }: { rel?: RelationshipStats; L: Lf }) {
+  if (!rel) return null;
+  return (
+    <div className="mt-2 pt-2 border-t border-white/10">
+      <p className="text-[11px] text-gray-500 mb-1">{L('Отношение к герою (динамически)', 'Toward the hero (live)')}</p>
+      <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1">
+        {RELATIONSHIP_FIELDS.map((f) => {
+          const meta = RELATIONSHIP_META[f];
+          const v = rel[f] ?? 0;
+          const pct = Math.min(50, Math.abs(v) / 2); // 0..50% от центра
+          return (
+            <div key={f} className="flex items-center gap-1.5 text-xs" title={L(meta.ru, meta.en)}>
+              <span className="w-4 text-center">{meta.icon}</span>
+              <div className="relative flex-1 h-1.5 rounded bg-black/40 overflow-hidden">
+                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-white/25" />
+                <div
+                  className={`absolute top-0 bottom-0 ${v >= 0 ? 'bg-emerald-400/80' : 'bg-rose-400/80'}`}
+                  style={v >= 0 ? { left: '50%', width: `${pct}%` } : { right: '50%', width: `${pct}%` }}
+                />
+              </div>
+              <span
+                className={`w-8 text-right tabular-nums ${
+                  v > 0 ? 'text-emerald-300' : v < 0 ? 'text-rose-300' : 'text-gray-600'
+                }`}
+              >
+                {v > 0 ? `+${v}` : v}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CharactersTab({
+  gm, patchGm, L, project, relationship,
+}: {
+  gm: GM; patchGm: PatchGm; L: Lf;
+  project?: Project | null;
+  relationship: Record<string, RelationshipStats>;
+}) {
   const [busy, setBusy] = useState<number | null>(null);
   const setChar = (i: number, patch: Partial<GmCharacter>) =>
     patchGm((g) => { g.characters[i] = { ...g.characters[i], ...patch }; });
+
+  // Резолвим id проектного персонажа (для живых статов отношений): по charId, иначе по имени.
+  const byName = new Map((project?.characters ?? []).map((c) => [c.name.trim().toLowerCase(), c.id]));
+  const idSet = new Set((project?.characters ?? []).map((c) => c.id));
+  const resolveRel = (c: GmCharacter): RelationshipStats | undefined => {
+    const id = c.charId && idSet.has(c.charId) ? c.charId : byName.get((c.name || '').trim().toLowerCase());
+    return id ? relationship[id] : undefined;
+  };
 
   const wand = async (i: number, name: string) => {
     const st = usePlayerStore.getState().state;
@@ -182,6 +234,7 @@ function CharactersTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) 
             {field(L('Теги (через запятую)', 'Tags (comma-separated)'), c.tags.join(', '),
               (v) => setChar(i, { tags: v.split(',').map((t) => t.trim()).filter(Boolean) }))}
           </div>
+          <RelationshipBars rel={resolveRel(c)} L={L} />
         </div>
       ))}
     </div>

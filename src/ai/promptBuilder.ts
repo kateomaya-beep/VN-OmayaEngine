@@ -50,7 +50,7 @@ function characterBlocks(
   const relLine = (c: (typeof project.characters)[number]) => {
     if (c.role === 'protagonist') return '';
     const r = rels[c.id] || c.relationship;
-    return `\nRelationship toward the hero (ids for statChanges): ❤️ rel:${c.id}:affection=${r.affection}, 🔥 rel:${c.id}:passion_stat=${r.passion_stat}, 🍀 rel:${c.id}:friendship=${r.friendship} (range -100..100)`;
+    return `\nRelationship toward the hero (ids for statChanges): ❤️ rel:${c.id}:affection=${r.affection}, 🔥 rel:${c.id}:passion_stat=${r.passion_stat}, 🍀 rel:${c.id}:friendship=${r.friendship}, 🎖 rel:${c.id}:respect=${r.respect} (range -100..100)`;
   };
   const desc = (c: (typeof project.characters)[number]) => {
     const emotions = Object.keys(c.sprites);

@@ -57,13 +57,14 @@ RESPONSE SCHEMA:
 Literary prose lives INSIDE the beats text fields. Markdown is allowed in text
 (*italics* for actions/description, **bold** for emphasis). Inner thoughts go in a "thought" beat.
 
-worldState is the GAME MASTER update — keep it accurate EVERY turn (it is how you remember characters and the world; write it in English regardless of the story language):
-- clock: advance the in-game day/month/year/time and set the current location to match what happened this turn. Keep the calendar consistent so chronology never drifts.
-- characters: for anyone present or affected, give/refresh a compact dossier — who they are, appearance, personality, roleToHero (who they are to the hero), current outfit, mood, status, location, and tags. Send only changed/new characters.
-- relations: character-to-character ties (label the relationship), send edges that changed.
-- event: one-line analysis of what happened this scene; eventChars: who was involved; mood: the scene's overall mood. Emit an event whenever something noteworthy occurs (this is the persistent event log / memorybook).
-- agendaAdd: new goals/tasks the plot introduced; agendaDone: tasks now completed.
-If nothing changed for a field, omit it.`;
+worldState is the GAME MASTER memory. It is OPTIONAL and DELTA-ONLY — send it lightly, never re-dump the whole world. Story beats are the priority; worldState is a thin side-channel written in English regardless of the story language:
+- OMIT worldState entirely (or send {}) on turns where nothing structural changed. Do NOT restate data that is already known.
+- clock: include ONLY when in-game time or location actually moved; then send just the changed fields and keep chronology consistent.
+- characters: include a character ONLY when newly introduced OR when a lasting fact changed (outfit, status, location, a new tag). Send just that character with just the changed fields — never re-send a full dossier that is already established.
+- relations: only edges that changed.
+- event / eventChars / mood: include ONLY on a genuinely noteworthy beat (this is the persistent event log) — not every turn.
+- agendaAdd / agendaDone: only real new or completed goals.
+Spending output on redundant worldState makes turns slow — always prefer more story, less bookkeeping.`;
 
 // Дефолтные блоки Omaya-пресета. Каждый — редактируемый; порядок можно менять.
 function makeDefaults(): PromptBlock[] {
@@ -162,17 +163,19 @@ For a line, pick an emotion from the vocabulary AND from the character's "availa
     b(
       'relationships',
       '⚙ Relationship Dynamics (two-way)',
-      `Every character carries three stats toward the hero: ❤️ affection, 🔥 passion_stat, 🍀 friendship (-100..100).
+      `Every character carries FOUR stats toward the hero: ❤️ affection, 🔥 passion_stat, 🍀 friendship, 🎖 respect (-100..100).
 These are the PRIMARY driver of how each character — and, through them, the world — treats the hero. Read them BEFORE
 writing a character: high affection warms their tone and choices, low or negative turns them cold, guarded, or hostile;
-passion colours physical/romantic pull; friendship governs trust and loyalty. Behaviour must visibly follow the numbers.
+passion colours physical/romantic pull; friendship governs trust, loyalty and openness; respect governs how seriously they
+take the hero — deference and admiration vs dismissal or contempt. Behaviour must visibly follow the numbers.
 
-UPDATE THEM OFTEN, both ways. Every turn with a meaningful interaction, emit statChanges with id "rel:<characterId>:<field>":
-- Warmth, help, shared vulnerability, flirting that lands → raise the fitting stat (+1..+5).
-- Insults, betrayal, ignored boundaries, rejection → lower it (−1..−5), even into negatives.
+UPDATE THEM both ways whenever a scene genuinely moves a bond — emit statChanges with id "rel:<characterId>:<field>":
+- Warmth, help, shared vulnerability, flirting that lands, competence or courage shown → raise the fitting stat (+1..+5).
+- Insults, betrayal, ignored boundaries, rejection, cowardice or dishonour → lower it (−1..−5), even into negatives.
 - Bigger swings (±6..±15) only for genuine turning points.
-Do NOT leave stats frozen when the scene clearly moved a relationship. Newly introduced characters start neutral and
-must begin evolving from their very first meaningful beat. Give a short "reason" for each change.`
+Do NOT invent a tiny change every single turn just to fill the field — move a stat only when the fiction earns it, but never
+leave it frozen when the scene clearly shifted the relationship. Newly introduced characters start neutral and begin evolving
+from their first meaningful beat. Give a short "reason" for each change.`
     ),
     b(
       'protagonist_voicing',
@@ -188,10 +191,10 @@ must begin evolving from their very first meaningful beat. Give a short "reason"
     b(
       'rules',
       '⚙ Core Rules',
-      `1. 3–8 beats per turn, alternating narration and dialogue; spoken lines short and alive.
+      `1. Write a SUBSTANTIAL turn: 6–12 beats, alternating narration and dialogue, so the player reads a real stretch of story before acting. Let the scene develop — several exchanges, action and reaction, a moment breathing — instead of stopping after a line or two. Never end a turn after a single beat.
 2. scene.backgroundId — from the manifest, by tags matching location/mood.
-3. Change statChanges whenever an action earns it (relationships especially — see Relationship Dynamics).
-4. choices AS THE SITUATION DEMANDS: 2–4 options at key moments, otherwise choices: []. Occasionally a "premium" choice with a cost. Each choice text is plain player-facing wording (actions in *italics*) — NEVER prefix it with move tags like [CHOICE] or [VERBATIM].
+3. Change statChanges (project stats and relationship stats) only when an action earns it — see Relationship Dynamics.
+4. choices ARE RARE. Most turns MUST return choices: [] and let the player type their own move — they can always answer between lines, so you never need choices to keep things moving. Offer 2–4 choices ONLY at a real DECISION POINT: a genuine story fork, a beat that will shift a relationship stat, or a choice that changes a project stat. Never add choices just to break up a scene or for trivial back-and-forth. When you do offer them, each is plain player-facing wording (actions in *italics*), meaningfully different, with real consequences — never prefixed with move tags like [CHOICE] or [VERBATIM]. Occasionally a "premium" choice with a cost.
 5. Never speak or decide for the player beyond their move (except expanding [CHOICE]). Honour the lorebook, facts, and history; avoid stalling.
 6. Major milestone → chapterEvent ("chapter_end" | "cg_moment").`
     ),
@@ -200,7 +203,8 @@ must begin evolving from their very first meaningful beat. Give a short "reason"
       'style',
       '✎ Style / Tone',
       `POV: second person for the hero, in the project's genre tone. An emotional interactive romance —
-drama, flirtation, intrigue. Prose is alive and sensory. Medium turn length (~250–450 words), adaptive pacing.`
+drama, flirtation, intrigue. Prose is alive and sensory. Long, immersive turns (~500–900 words of story across
+the beats) so the player gets a rich stretch of narrative each turn before the next decision; adaptive pacing.`
     ),
     // Пустые слоты под усмотрение пользователя (джейлбрейк / NSFW). Пусто = ничего
     // не отправляется; юзер вписывает свой текст или отключает тумблер.
@@ -273,8 +277,36 @@ function ensurePlaceholders(preset: PromptPreset): PromptPreset {
   return { ...preset, blocks: [...preset.blocks, ...added] };
 }
 
+// Сигнатуры УСТАРЕВШИХ дефолтов встроенных блоков. Если блок всё ещё содержит
+// старый дефолтный текст (значит, пользователь его не редактировал), обновляем на
+// актуальный. Так правки движка (длинный ход, редкие выборы, лёгкий worldState,
+// стат «уважение») доезжают и до проектов, где пресет уже был заморожен в старой
+// версии. Если пользователь блок правил — сигнатуры там нет, его текст не трогаем.
+const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
+  { key: 'rules', signature: 'spoken lines short and alive' },
+  { key: 'style', signature: 'Medium turn length' },
+  { key: 'relationships', signature: 'carries three stats toward the hero' },
+  { key: 'json_contract', signature: 'keep it accurate EVERY turn' },
+];
+function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
+  let changed = false;
+  const blocks = preset.blocks.map((b) => {
+    if (!b.builtinKey || b.dynamic) return b;
+    const sig = OUTDATED_SIGNATURES.find((s) => s.key === b.builtinKey);
+    if (sig && b.content.includes(sig.signature)) {
+      const fresh = defaultBlockContent(b.builtinKey);
+      if (fresh !== null && fresh !== b.content) {
+        changed = true;
+        return { ...b, content: fresh };
+      }
+    }
+    return b;
+  });
+  return changed ? { ...preset, blocks } : preset;
+}
+
 // Нормализация пресета из сохранённого проекта (миграция/страховка).
 export function normalizePreset(raw: any): PromptPreset {
   const parsed = raw && Array.isArray(raw.blocks) ? parsePresetJson(raw) : null;
-  return ensurePlaceholders(parsed || defaultPreset());
+  return refreshOutdatedBuiltins(ensurePlaceholders(parsed || defaultPreset()));
 }

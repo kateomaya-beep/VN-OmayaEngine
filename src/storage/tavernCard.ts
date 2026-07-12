@@ -112,7 +112,7 @@ export async function importTavernCard(file: File): Promise<ImportedCharacter> {
       greetings: greetings.length ? greetings : undefined,
     },
     sprites,
-    relationship: { affection: 0, passion_stat: 0, friendship: 0 },
+    relationship: { affection: 0, passion_stat: 0, friendship: 0, respect: 0 },
     importedFrom: spec,
     sourceSystemPrompt,
   };
