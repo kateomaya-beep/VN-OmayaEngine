@@ -1,11 +1,17 @@
 import JSZip from 'jszip';
-import type { Project } from '../shared/types';
-import { getAssetBlob, putAsset, saveProject } from './db';
+import type { Project, SaveSlot } from '../shared/types';
+import { getAssetBlob, putAsset, saveProject, listSaves, putSave } from './db';
 import { uid } from '../shared/utils';
 import { normalizeProject } from '../shared/factory';
 
-// Export project as a single .zip: project.json + assets/<blobKey>
-export async function exportProjectZip(project: Project): Promise<Blob> {
+// Export project as a single .zip: project.json + assets/<blobKey>.
+// includeProgress=true также кладёт saves.json — все сохранения (автосейв + слоты):
+// история, статусы, отношения, память, Game Master, календарь/события. Это ПОЛНЫЙ
+// бэкап прохождения. Без прогресса — чистый проект «для новых игроков» / для шаринга.
+export async function exportProjectZip(
+  project: Project,
+  opts: { includeProgress?: boolean } = {}
+): Promise<Blob> {
   const zip = new JSZip();
   zip.file('project.json', JSON.stringify(project, null, 2));
   const assetsFolder = zip.folder('assets')!;
@@ -13,7 +19,16 @@ export async function exportProjectZip(project: Project): Promise<Blob> {
     const blob = await getAssetBlob(asset.blobKey);
     if (blob) assetsFolder.file(asset.blobKey, blob);
   }
+  if (opts.includeProgress) {
+    const saves = await listSaves(project.id);
+    if (saves.length) zip.file('saves.json', JSON.stringify(saves, null, 2));
+  }
   return zip.generateAsync({ type: 'blob' });
+}
+
+// Сколько сохранений у проекта (для подписи в окне экспорта).
+export async function countSaves(projectId: string): Promise<number> {
+  return (await listSaves(projectId)).length;
 }
 
 export function downloadBlob(blob: Blob, filename: string): void {
@@ -78,5 +93,33 @@ export async function importProjectZip(file: File): Promise<ImportResult> {
   project.createdAt = Date.now();
   project.updatedAt = Date.now();
   await saveProject(project);
+
+  // Прогресс (если в архиве есть saves.json). Внутренние ссылки RuntimeState — на
+  // asset.id / character.id, которые при импорте НЕ перекеиваются, поэтому сейвы
+  // остаются валидными; перекеиваем только projectId и ключ сейва.
+  const savesFile = zip.file('saves.json');
+  if (savesFile) {
+    try {
+      const rawSaves = JSON.parse(await savesFile.async('string'));
+      if (Array.isArray(rawSaves)) {
+        let imported = 0;
+        for (const s of rawSaves as SaveSlot[]) {
+          if (!s || typeof s.slot !== 'number' || !s.state) continue;
+          await putSave({
+            slot: s.slot,
+            projectId: newProjectId,
+            savedAt: typeof s.savedAt === 'number' ? s.savedAt : Date.now(),
+            title: typeof s.title === 'string' ? s.title : `Импорт · слот ${s.slot}`,
+            state: s.state,
+          });
+          imported++;
+        }
+        if (imported) warnings.push(`Импортирован прогресс: сохранений — ${imported}.`);
+      }
+    } catch {
+      warnings.push('Не удалось прочитать сохранения из архива — импортирован только проект.');
+    }
+  }
+
   return { project, warnings };
 }

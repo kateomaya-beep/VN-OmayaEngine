@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Project } from '../../shared/types';
 import { listProjects, saveProject, deleteProject } from '../../storage/db';
 import { createEmptyProject } from '../../shared/factory';
-import { exportProjectZip, downloadBlob, importProjectZip } from '../../storage/zip';
+import { exportProjectZip, downloadBlob, importProjectZip, countSaves } from '../../storage/zip';
 import { AssetImage, Modal } from '../../shared/ui';
 import { formatDate } from '../../shared/utils';
 import { useT } from '../../shared/i18n';
@@ -33,6 +33,26 @@ export function LibraryPage() {
   }
 
   const [shareTarget, setShareTarget] = useState<Project | null>(null);
+  const [withProgress, setWithProgress] = useState(true);
+  const [saveCount, setSaveCount] = useState<number | null>(null);
+
+  // При открытии окна экспорта узнаём, есть ли сохранения (сколько), чтобы подписать
+  // варианты и по умолчанию предложить «с прогрессом», если прохождение есть.
+  useEffect(() => {
+    if (!shareTarget) {
+      setSaveCount(null);
+      return;
+    }
+    let alive = true;
+    countSaves(shareTarget.id).then((n) => {
+      if (!alive) return;
+      setSaveCount(n);
+      setWithProgress(n > 0);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [shareTarget]);
 
   async function onImport(file: File) {
     setBusy('Импорт...');
@@ -47,11 +67,12 @@ export function LibraryPage() {
     }
   }
 
-  async function onShareDownload(p: Project) {
+  async function onShareDownload(p: Project, includeProgress: boolean) {
     setBusy('Экспорт...');
     try {
-      const blob = await exportProjectZip(p);
-      downloadBlob(blob, `${p.meta.title || 'project'}.zip`);
+      const blob = await exportProjectZip(p, { includeProgress });
+      const suffix = includeProgress ? '-с-прогрессом' : '';
+      downloadBlob(blob, `${p.meta.title || 'project'}${suffix}.zip`);
       setShareTarget(null);
     } finally {
       setBusy(null);
@@ -173,6 +194,50 @@ export function LibraryPage() {
                 {shareTarget.lore.worldDescription.slice(0, 200)}
               </p>
             )}
+            {/* Выбор: с прогрессом (бэкап) или чистый проект (для новых игроков) */}
+            <div className="space-y-2 mb-4">
+              <label
+                className={`flex gap-3 items-start rounded-lg border p-3 cursor-pointer ${
+                  withProgress ? 'border-accent2 bg-accent2/10' : 'border-white/10 bg-panel2'
+                }`}
+              >
+                <input
+                  type="radio"
+                  className="mt-1"
+                  checked={withProgress}
+                  onChange={() => setWithProgress(true)}
+                />
+                <div>
+                  <div className="text-sm font-medium">С прогрессом (мой бэкап)</div>
+                  <div className="text-xs text-gray-400">
+                    Проект + всё прохождение: история, статусы, отношения, память, Game Master,
+                    календарь/события.
+                    {saveCount !== null && (
+                      <> Сохранений: {saveCount === 0 ? 'нет — прогресса ещё нет' : saveCount}.</>
+                    )}
+                  </div>
+                </div>
+              </label>
+              <label
+                className={`flex gap-3 items-start rounded-lg border p-3 cursor-pointer ${
+                  !withProgress ? 'border-accent2 bg-accent2/10' : 'border-white/10 bg-panel2'
+                }`}
+              >
+                <input
+                  type="radio"
+                  className="mt-1"
+                  checked={!withProgress}
+                  onChange={() => setWithProgress(false)}
+                />
+                <div>
+                  <div className="text-sm font-medium">Без прогресса (для новых игроков)</div>
+                  <div className="text-xs text-gray-400">
+                    Только чистый проект — тот, кто импортирует, начнёт игру с начала. Для шаринга.
+                  </div>
+                </div>
+              </label>
+            </div>
+
             <div className="bg-amber-500/10 border border-amber-400/30 rounded-lg p-3 text-xs text-amber-200 mb-4">
               ⚠️ Вы делитесь файлами, которые могут быть защищены авторским правом или условиями
               стороннего сервиса (сток, AI-генератор и т.д.) — убедитесь, что имеете право их
@@ -182,7 +247,7 @@ export function LibraryPage() {
               <button className="btn-ghost" onClick={() => setShareTarget(null)}>
                 Отмена
               </button>
-              <button className="btn-primary" onClick={() => onShareDownload(shareTarget)}>
+              <button className="btn-primary" onClick={() => onShareDownload(shareTarget, withProgress)}>
                 Скачать .zip
               </button>
             </div>
