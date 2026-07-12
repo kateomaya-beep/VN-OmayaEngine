@@ -14,7 +14,7 @@ export function StatsHUD({
   const visible = project.stats.filter((s) => s.visible);
   if (visible.length === 0) return null;
   return (
-    <div className="absolute top-3 left-3 flex flex-col gap-1.5 z-10">
+    <div className="absolute top-16 left-3 flex flex-col gap-1.5 z-10">
       {visible.map((s) => {
         const val = state.statValues[s.id] ?? s.initial;
         const f = flash.find((x) => x.statId === s.id);

@@ -15,7 +15,7 @@ import { EditPanel } from './components/EditPanel';
 import { RelationshipsPanel } from './components/RelationshipsPanel';
 import { HistoryLog, SaveLoadPanel, MemoryPanel } from './components/Panels';
 import { useT } from '../../shared/i18n';
-import { ApiPanel } from '../shared/ApiPanel';
+import { TopBar } from '../../app/TopBar';
 
 type Setup = 'checking' | 'resume' | 'play';
 
@@ -24,9 +24,7 @@ export function PlayerPage() {
   const nav = useNavigate();
   const t = useT();
   const s = usePlayerStore();
-  const [panel, setPanel] = useState<null | 'history' | 'saves' | 'memory' | 'edit' | 'rel' | 'api'>(
-    null
-  );
+  const [panel, setPanel] = useState<null | 'history' | 'saves' | 'memory' | 'edit' | 'rel'>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -101,36 +99,46 @@ export function PlayerPage() {
     <div className="fixed inset-0 bg-black text-white overflow-hidden">
       <Stage project={s.project} backgroundId={s.state.currentBackgroundId} active={active} cg={s.cg} />
 
+      {/* Постоянная верхняя панель (общая с главным экраном) + игровое бургер-меню.
+          В самом поле сцены игровых иконок больше нет (см. Batch 3 §3). */}
+      <TopBar
+        variant="player"
+        project={s.project}
+        onPatchProject={s.patchProject}
+        menuSlot={
+          <div className="relative">
+            <button
+              className="bg-black/40 hover:bg-black/60 rounded-lg px-3 py-1.5 text-sm"
+              title="Меню игры"
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              ☰
+            </button>
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+                <div
+                  className="absolute right-0 mt-1 z-40 w-48 rounded-lg bg-panel border border-white/10 shadow-xl py-1 text-sm"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <MenuItem icon="♥" label={t('player.relationships')} onClick={() => setPanel('rel')} />
+                  <MenuItem icon="📜" label={t('player.history')} onClick={() => setPanel('history')} />
+                  <MenuItem icon="🧠" label={t('player.memory')} onClick={() => setPanel('memory')} />
+                  <MenuItem icon="💾" label={t('player.saves')} onClick={() => setPanel('saves')} />
+                  <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
+                  <MenuItem icon="🎨" label="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
+                  <MenuItem icon="✎" label="Правка в игре" onClick={() => setPanel('edit')} />
+                  <MenuItem icon="↻" label={t('player.regen')} onClick={() => s.regenerate()} />
+                </div>
+              </>
+            )}
+          </div>
+        }
+      />
+
       <StatsHUD project={s.project} state={s.state} flash={s.statFlash} />
       <div className="absolute bottom-2 left-2 z-10">
         <TokenCounter project={s.project} state={s.state} />
-      </div>
-
-      {/* Игровые опции: иконки без подписей; на мобилке — бургер-меню (см. CR v2 §H.2) */}
-      <div className="absolute top-3 right-3 z-20">
-        <button
-          className="sm:hidden bg-black/60 hover:bg-black/80 backdrop-blur rounded-lg px-3 py-1.5 text-sm"
-          onClick={() => setMenuOpen((v) => !v)}
-        >
-          ☰
-        </button>
-        <div
-          className={`${
-            menuOpen ? 'flex' : 'hidden'
-          } sm:flex flex-col sm:flex-row gap-1 mt-1 sm:mt-0 items-end sm:items-center flex-wrap justify-end max-w-[80vw] sm:max-w-[70%]`}
-          onClickCapture={() => setMenuOpen(false)}
-        >
-          <CtrlBtn label="♥" title={t('player.relationships')} onClick={() => setPanel('rel')} />
-          <CtrlBtn label="📜" title={t('player.history')} onClick={() => setPanel('history')} />
-          <CtrlBtn label="🧠" title={t('player.memory')} onClick={() => setPanel('memory')} />
-          <CtrlBtn label="💾" title={t('player.saves')} onClick={() => setPanel('saves')} />
-          <CtrlBtn label="🔊" title={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
-          <CtrlBtn label="🎨" title="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
-          <CtrlBtn label="✎" title="Правка в игре" onClick={() => setPanel('edit')} />
-          <CtrlBtn label="🔌" title="API-подключения" onClick={() => setPanel('api')} />
-          <CtrlBtn label="↻" title={t('player.regen')} onClick={() => s.regenerate()} />
-          <CtrlBtn label="✕" onClick={() => nav('/library')} />
-        </div>
       </div>
 
       <Mixer open={mixerOpen} onClose={() => setMixerOpen(false)} />
@@ -218,12 +226,6 @@ export function PlayerPage() {
 
       <RelationshipsPanel open={panel === 'rel'} onClose={() => setPanel(null)} />
       <EditPanel open={panel === 'edit'} onClose={() => setPanel(null)} />
-      <ApiPanel
-        open={panel === 'api'}
-        onClose={() => setPanel(null)}
-        project={s.project}
-        onPatch={s.patchProject}
-      />
 
       <HistoryLog
         open={panel === 'history'}
@@ -268,22 +270,22 @@ export function PlayerPage() {
   );
 }
 
-function CtrlBtn({
+function MenuItem({
+  icon,
   label,
   onClick,
-  title,
 }: {
+  icon: string;
   label: string;
   onClick: () => void;
-  title?: string;
 }) {
   return (
     <button
-      title={title}
       onClick={onClick}
-      className="bg-black/60 hover:bg-black/80 backdrop-blur rounded-lg px-3 py-1.5 text-xs"
+      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 text-left"
     >
-      {label}
+      <span className="w-5 text-center">{icon}</span>
+      <span>{label}</span>
     </button>
   );
 }

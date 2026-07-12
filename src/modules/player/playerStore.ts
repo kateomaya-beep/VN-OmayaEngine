@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Project, RuntimeState, Beat, Choice, SaveSlot } from '../../shared/types';
 import { initialRuntimeState } from '../../shared/factory';
-import { runTurn } from '../../ai/gameEngine';
+import { runTurn, streamTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, getSave, saveProject } from '../../storage/db';
 import { playMusic, playSfx, toggleMute } from './audio';
@@ -233,9 +233,37 @@ async function runAndApply(
   baseState: RuntimeState,
   playerMove: string
 ) {
-  set({ thinking: true, error: null, choices: [], statFlash: [] });
+  set({ thinking: true, error: null, choices: [], statFlash: [], queue: [], visibleBeats: [] });
   try {
-    const { turn, state } = await runTurn(project, baseState, playerMove);
+    // Потоковый ход (Batch 3 §7): сцена приходит первой — сразу подхватываем
+    // фон/музыку; beats появляются по мере готовности («печатание»), финальный
+    // state собирает полноценный парсер внутри streamTurn.
+    let streamedMood: string | null = baseState.currentMusicMood;
+    const { turn, state } = await streamTurn(project, baseState, playerMove, {
+      onScene(scene) {
+        // Фон и музыка — рано, пока стримится диалог.
+        if (scene.backgroundId) {
+          set({ state: { ...baseState, currentBackgroundId: scene.backgroundId } });
+        }
+        const mood = scene.musicMood ?? baseState.currentMusicMood;
+        if (mood !== streamedMood) {
+          streamedMood = mood;
+          const track = pickTrackForMood(project, mood, baseState.currentMusicAssetId);
+          void playMusic(trackBlobKey(project, track));
+        }
+        if (scene.sfxId) void playSfx(trackBlobKey(project, scene.sfxId));
+        if (scene.cutsceneCgId) set({ cg: scene.cutsceneCgId });
+      },
+      onBeat(beat) {
+        const cur = get();
+        // Первый beat — сразу виден; остальные копятся в очереди (игрок листает).
+        if (cur.visibleBeats.length === 0 && cur.queue.length === 0) {
+          set({ visibleBeats: [beat], phase: 'beats' });
+        } else {
+          set({ queue: [...cur.queue, beat] });
+        }
+      },
+    });
 
     // Compute stat flashes vs. the pre-turn values.
     const flash: { statId: string; delta: number }[] = [];
@@ -245,17 +273,19 @@ async function runAndApply(
       if (after !== before) flash.push({ statId: s.id, delta: after - before });
     }
 
-    // Scene fx: воспроизводим трек, подобранный движком под настроение.
+    // Scene fx: воспроизводим финальный трек (может отличаться от раннего превью).
     void playMusic(trackBlobKey(project, state.currentMusicAssetId));
     if (turn.scene.sfxId) void playSfx(trackBlobKey(project, turn.scene.sfxId));
 
-    const [first, ...rest] = turn.beats;
-    // Choices are stored now but the UI reveals them only once the beat queue empties.
+    // Реконсиляция с авторитетными beats: сохраняем, сколько игрок уже пролистал.
+    const shownCount = Math.max(1, get().visibleBeats.length);
+    const visible = turn.beats.slice(0, shownCount);
+    const rest = turn.beats.slice(shownCount);
     set({
       state,
       queue: rest,
-      visibleBeats: first ? [first] : [],
-      phase: turn.beats.length ? 'beats' : 'choices',
+      visibleBeats: visible,
+      phase: turn.beats.length && rest.length ? 'beats' : 'choices',
       choices: turn.choices,
       thinking: false,
       cg: turn.scene.cutsceneCgId,

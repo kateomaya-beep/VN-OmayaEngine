@@ -10,8 +10,6 @@ import { StatsEditor } from './editors/StatsEditor';
 import { AssetManager } from './editors/AssetManager';
 import { LorebookEditor } from './editors/LorebookEditor';
 import { PromptTuner } from './editors/PromptTuner';
-import { MemoryEditor } from './editors/MemoryEditor';
-import { ApiPanel } from '../shared/ApiPanel';
 
 const TABS = [
   { id: 'settings', label: 'tab.settings', el: ProjectSettings },
@@ -21,16 +19,14 @@ const TABS = [
   { id: 'assets', label: 'tab.assets', el: AssetManager },
   { id: 'lorebook', label: 'tab.lorebook', el: LorebookEditor },
   { id: 'ai', label: 'tab.ai', el: PromptTuner },
-  { id: 'memory', label: 'tab.memory', el: MemoryEditor },
 ] as const;
 
 export function ConstructorPage() {
   const { projectId } = useParams();
   const nav = useNavigate();
   const tr = useT();
-  const { project, load, persist, dirty, loading, update } = useProjectStore();
+  const { project, load, persist, dirty, loading } = useProjectStore();
   const [tab, setTab] = useState<string>('settings');
-  const [apiOpen, setApiOpen] = useState(false);
 
   useEffect(() => {
     if (projectId) load(projectId);
@@ -61,9 +57,6 @@ export function ConstructorPage() {
         <span className="text-xs text-gray-500">
           {dirty ? tr('constructor.saving') : tr('constructor.saved')}
         </span>
-        <button className="btn-ghost !px-3 !py-1.5" title="API-подключения" onClick={() => setApiOpen(true)}>
-          🔌
-        </button>
         <button
           className="btn-primary"
           disabled={errors.length > 0}
@@ -104,8 +97,6 @@ export function ConstructorPage() {
       </div>
 
       <Active />
-
-      <ApiPanel open={apiOpen} onClose={() => setApiOpen(false)} project={project} onPatch={update} />
     </div>
   );
 }

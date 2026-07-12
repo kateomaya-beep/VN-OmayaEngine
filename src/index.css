@@ -81,6 +81,58 @@ body {
   }
 }
 
+/* Безопасный markdown в тексте новеллы (см. Batch 3 §7-bis). */
+.md-content p {
+  margin: 0 0 0.6em;
+}
+.md-content p:last-child {
+  margin-bottom: 0;
+}
+.md-content strong {
+  font-weight: 700;
+}
+.md-content em {
+  font-style: italic;
+}
+.md-content code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.05em 0.3em;
+  border-radius: 0.25em;
+}
+.md-content h1,
+.md-content h2,
+.md-content h3 {
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 0.4em 0 0.3em;
+}
+.md-content h1 {
+  font-size: 1.35em;
+}
+.md-content h2 {
+  font-size: 1.2em;
+}
+.md-content h3 {
+  font-size: 1.08em;
+}
+.md-content ul {
+  list-style: disc;
+  padding-left: 1.4em;
+  margin: 0.3em 0;
+}
+.md-content li {
+  margin: 0.15em 0;
+}
+.md-content blockquote {
+  border-left: 3px solid rgba(255, 255, 255, 0.25);
+  padding-left: 0.8em;
+  margin: 0.4em 0;
+  opacity: 0.85;
+  font-style: italic;
+}
+
 .scrollbar-thin::-webkit-scrollbar {
   width: 8px;
   height: 8px;

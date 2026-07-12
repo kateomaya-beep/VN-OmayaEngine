@@ -1,29 +1,26 @@
 import { useRef, useState, useEffect } from 'react';
 import { useProjectStore } from '../projectStore';
 import { Field } from '../../../shared/ui';
-import {
-  CORE_PROMPT,
-  STYLE_PRESETS,
-  PROSE_STYLE_LABELS,
-} from '../../../ai/directorPrompt';
 import { getApiKey, setApiKey } from '../../../ai/keys';
-import { ApiConnectionField } from './ApiConnectionField';
-import { OMAYA_DEFAULT_PRESET, exportPreset, applyPreset, parsePresetJson } from '../../../ai/presets';
+import {
+  normalizePreset,
+  defaultPreset,
+  defaultBlockContent,
+  parsePresetJson,
+  type PromptPreset,
+  type PromptBlock,
+} from '../../../ai/promptPreset';
+import { uid } from '../../../shared/utils';
 import { downloadBlob } from '../../../storage/zip';
-import type {
-  AiConfig,
-  AdvancedPromptBlock,
-  PromptLength,
-  PromptPacing,
-  PromptTone,
-  ProseStyleId,
-} from '../../../shared/types';
+import type { AiConfig, AdvancedPromptBlock } from '../../../shared/types';
 
+// Полностью редактируемый пресет промпта в стиле SillyTavern (Batch 3 §8): блоки
+// можно включать/выключать, редактировать текст, переставлять drag&drop, добавлять
+// свои и удалять. Динамические блоки наполняет движок — у них только вкл/выкл и порядок.
 export function PromptTuner() {
   const { project, update } = useProjectStore();
-  const [advanced, setAdvanced] = useState(false);
-  const [showCore, setShowCore] = useState(false);
   const [imageKey, setImageKey] = useState('');
+  const [dragId, setDragId] = useState<string | null>(null);
   const presetFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -32,396 +29,332 @@ export function PromptTuner() {
 
   if (!project) return null;
   const cfg = project.aiConfig;
+  const preset = normalizePreset(cfg.promptPreset);
 
   function patch(patch: Partial<AiConfig>) {
     update((p) => Object.assign(p.aiConfig, patch));
   }
-  function patchBlocks(blocks: AdvancedPromptBlock[]) {
-    update((p) => (p.aiConfig.advancedBlocks = blocks));
+  function savePreset(next: PromptPreset) {
+    update((p) => (p.aiConfig.promptPreset = next));
+  }
+  function patchBlock(id: string, patch: Partial<PromptBlock>) {
+    savePreset({ ...preset, blocks: preset.blocks.map((b) => (b.id === id ? { ...b, ...patch } : b)) });
+  }
+  function removeBlock(id: string) {
+    savePreset({ ...preset, blocks: preset.blocks.filter((b) => b.id !== id) });
+  }
+  function addBlock() {
+    const block: PromptBlock = { id: uid('blk'), name: 'Новый блок', enabled: true, content: '' };
+    savePreset({ ...preset, blocks: [...preset.blocks, block] });
+  }
+  function resetBlock(b: PromptBlock) {
+    if (!b.builtinKey) return;
+    const content = defaultBlockContent(b.builtinKey);
+    if (content !== null) patchBlock(b.id, { content, enabled: true });
+  }
+  function resetPreset() {
+    if (confirm('Вернуть весь пресет к OmayaEngine по умолчанию? Ваши правки блоков будут потеряны.')) {
+      savePreset(defaultPreset());
+    }
+  }
+  function reorder(fromId: string, toId: string) {
+    if (fromId === toId) return;
+    const blocks = [...preset.blocks];
+    const from = blocks.findIndex((b) => b.id === fromId);
+    const to = blocks.findIndex((b) => b.id === toId);
+    if (from === -1 || to === -1) return;
+    const [moved] = blocks.splice(from, 1);
+    blocks.splice(to, 0, moved);
+    savePreset({ ...preset, blocks });
   }
 
-  const mature = project.meta.contentRating === 'mature';
-
-  function exportCurrentPreset() {
-    const preset = exportPreset(cfg, `${project!.meta.title} — пресет`);
+  function exportPreset() {
     downloadBlob(
       new Blob([JSON.stringify(preset, null, 2)], { type: 'application/json' }),
-      `${preset.name}.json`
+      `${preset.name || 'preset'}.json`
     );
   }
-
   async function importPresetFile(file: File) {
     try {
-      const preset = parsePresetJson(JSON.parse(await file.text()));
-      if (!preset) throw new Error('Невалидный файл пресета');
-      update((p) => (p.aiConfig = applyPreset(p.aiConfig, preset)));
+      const parsed = parsePresetJson(JSON.parse(await file.text()));
+      if (!parsed) throw new Error('Невалидный файл пресета (нет массива blocks)');
+      savePreset(parsed);
     } catch (e) {
       alert('Не удалось импортировать пресет: ' + (e as Error).message);
     }
   }
 
+  function patchAdvBlocks(blocks: AdvancedPromptBlock[]) {
+    update((p) => (p.aiConfig.advancedBlocks = blocks));
+  }
+
   return (
     <div className="max-w-5xl space-y-4">
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-gray-400">Режим:</span>
-        <div className="inline-flex rounded-lg overflow-hidden border border-white/10">
-          <button
-            className={`px-3 py-1.5 text-sm ${!advanced ? 'bg-accent text-white' : 'bg-panel2'}`}
-            onClick={() => setAdvanced(false)}
-          >
-            Простой
-          </button>
-          <button
-            className={`px-3 py-1.5 text-sm ${advanced ? 'bg-accent text-white' : 'bg-panel2'}`}
-            onClick={() => setAdvanced(true)}
-          >
-            Продвинутый
-          </button>
-        </div>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-4">
-        {/* Провайдер (всегда) */}
-        <div className="card">
-          <h4 className="font-semibold mb-3">Провайдер LLM</h4>
-          <ApiConnectionField
-            conn={{ provider: cfg.provider, baseUrl: cfg.baseUrl, model: cfg.model }}
-            keyRole={cfg.provider}
-            onChange={(conn) =>
-              patch({ provider: conn.provider, baseUrl: conn.baseUrl, model: conn.model || cfg.model })
-            }
-          />
-        </div>
-
-        {/* Стиль/тон (Слой 2) */}
-        <div className="card">
-          <h4 className="font-semibold mb-3">Стиль и тон</h4>
-          <Field label="Язык повествования" hint="Независим от языка интерфейса.">
-            <select
-              className="input"
-              value={cfg.narrativeLanguage}
-              onChange={(e) => patch({ narrativeLanguage: e.target.value as 'ru' | 'en' })}
-            >
-              <option value="ru">Русский</option>
-              <option value="en">English</option>
-            </select>
-          </Field>
-          <Field label="Стиль-пресет">
-            <select
-              className="input"
-              value={cfg.stylePreset}
-              onChange={(e) => patch({ stylePreset: e.target.value })}
-            >
-              {STYLE_PRESETS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-              <option value="custom">Свой стиль (текст ниже)</option>
-            </select>
-          </Field>
-          <label className="flex items-center gap-2 text-sm mb-2">
+      {/* Пресет промпта — редактор блоков */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <div>
+            <h4 className="font-semibold">Пресет промпта</h4>
             <input
-              type="checkbox"
-              checked={mature}
-              onChange={(e) =>
-                update((p) => {
-                  p.meta.contentRating = e.target.checked ? 'mature' : 'sfw';
-                  p.aiConfig.jailbreakEnabled = e.target.checked;
-                })
-              }
+              className="input mt-1 !py-1 text-sm"
+              value={preset.name}
+              onChange={(e) => savePreset({ ...preset, name: e.target.value })}
             />
-            Зрелый контент (18+) — включает разрешения
-          </label>
-          {(advanced || cfg.stylePreset === 'custom') && (
-            <Field
-              label="Свои штрихи к стилю"
-              hint="Добавляется к пресету (или заменяет его при «Свой стиль»)."
-            >
-              <textarea
-                className="input h-24"
-                value={cfg.customStyle || ''}
-                onChange={(e) => patch({ customStyle: e.target.value || undefined })}
-              />
-            </Field>
-          )}
-          {advanced && (
-            <div className="grid grid-cols-2 gap-3 mt-2">
-              <Field label="Длина хода">
-                <select
-                  className="input"
-                  value={cfg.length}
-                  onChange={(e) => patch({ length: e.target.value as PromptLength })}
-                >
-                  <option value="short">Короткая (150–250)</option>
-                  <option value="medium">Средняя (250–450)</option>
-                  <option value="long">Длинная (450–800)</option>
-                </select>
-              </Field>
-              <Field label="Темп">
-                <select
-                  className="input"
-                  value={cfg.pacing}
-                  onChange={(e) => patch({ pacing: e.target.value as PromptPacing })}
-                >
-                  <option value="slow_burn">Slow burn</option>
-                  <option value="fast">Быстрый</option>
-                  <option value="adaptive">Адаптивный</option>
-                </select>
-              </Field>
-              <Field label="Тональность">
-                <select
-                  className="input"
-                  value={cfg.tone}
-                  onChange={(e) => patch({ tone: e.target.value as PromptTone })}
-                >
-                  <option value="neutral">Нейтральная</option>
-                  <option value="anti_negative">Без лишнего пессимизма</option>
-                  <option value="anti_saccharine">Без приторности</option>
-                </select>
-              </Field>
-              <Field label="Стиль прозы">
-                <select
-                  className="input"
-                  value={cfg.proseStyle}
-                  onChange={(e) => patch({ proseStyle: e.target.value as ProseStyleId })}
-                >
-                  {(Object.keys(PROSE_STYLE_LABELS) as ProseStyleId[]).map((id) => (
-                    <option key={id} value={id}>
-                      {PROSE_STYLE_LABELS[id]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {advanced && (
-        <>
-          <div className="card">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="font-semibold">Пресеты промпта</h4>
-              <div className="flex gap-2">
-                <button
-                  className="btn-ghost !px-3 !py-1 text-xs"
-                  onClick={() => update((p) => (p.aiConfig = applyPreset(p.aiConfig, OMAYA_DEFAULT_PRESET)))}
-                >
-                  Omaya (дефолт)
-                </button>
-                <button className="btn-ghost !px-3 !py-1 text-xs" onClick={exportCurrentPreset}>
-                  Экспорт
-                </button>
-                <button
-                  className="btn-ghost !px-3 !py-1 text-xs"
-                  onClick={() => presetFileRef.current?.click()}
-                >
-                  Импорт
-                </button>
-                <input
-                  ref={presetFileRef}
-                  type="file"
-                  accept=".json"
-                  hidden
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) importPresetFile(f);
-                    e.target.value = '';
-                  }}
-                />
-              </div>
-            </div>
-            <p className="text-xs text-gray-500">
-              Пресет — снимок тумблеров Слоя 2/3 (язык, стиль, длина, темп, тон, проза,
-              джейлбрейк, префилл) в JSON-файл — для обмена в комьюнити. Ядро (Слой 1) в пресет
-              не входит и не редактируется.
-            </p>
           </div>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="card">
-              <h4 className="font-semibold mb-3">Параметры генерации</h4>
-              <Field label={`Температура: ${cfg.temperature.toFixed(2)}`}>
-                <input
-                  type="range"
-                  min={0}
-                  max={1.5}
-                  step={0.05}
-                  className="w-full"
-                  value={cfg.temperature}
-                  onChange={(e) => patch({ temperature: Number(e.target.value) })}
-                />
-              </Field>
-              <Field label={`Живое окно (K ходов): ${cfg.liveWindow}`}>
-                <input
-                  type="range"
-                  min={4}
-                  max={30}
-                  step={1}
-                  className="w-full"
-                  value={cfg.liveWindow}
-                  onChange={(e) => patch({ liveWindow: Number(e.target.value) })}
-                />
-              </Field>
-              <Field label={`Бюджет контекста (токены): ${cfg.contextBudget}`}>
-                <input
-                  type="range"
-                  min={2000}
-                  max={32000}
-                  step={500}
-                  className="w-full"
-                  value={cfg.contextBudget}
-                  onChange={(e) => patch({ contextBudget: Number(e.target.value) })}
-                />
-              </Field>
-              <Field label="Модель саммарайзера (опц.)" hint="Дешёвая модель для сжатия памяти.">
-                <input
-                  className="input"
-                  value={cfg.summarizerModel || ''}
-                  placeholder="как основная"
-                  onChange={(e) => patch({ summarizerModel: e.target.value || undefined })}
-                />
-              </Field>
-            </div>
+          <div className="flex gap-2 flex-wrap">
+            <button className="btn-ghost !px-3 !py-1 text-xs" onClick={addBlock}>
+              + Блок
+            </button>
+            <button className="btn-ghost !px-3 !py-1 text-xs" onClick={exportPreset}>
+              Экспорт
+            </button>
+            <button className="btn-ghost !px-3 !py-1 text-xs" onClick={() => presetFileRef.current?.click()}>
+              Импорт
+            </button>
+            <button className="btn-ghost !px-3 !py-1 text-xs" onClick={resetPreset}>
+              Вернуть по умолчанию
+            </button>
+            <input
+              ref={presetFileRef}
+              type="file"
+              accept=".json"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importPresetFile(f);
+                e.target.value = '';
+              }}
+            />
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          Порядок блоков = порядок в системном промпте. Перетаскивайте за ⠿, включайте/выключайте
+          галочкой, редактируйте текст. <span className="text-amber-400">↳ блоки</span> наполняет
+          движок (мир, персонажи, память) — у них только порядок и вкл/выкл.
+        </p>
 
-            <div className="card">
-              <h4 className="font-semibold mb-3">Джейлбрейк и префилл</h4>
-              <label className="flex items-center gap-2 text-sm mb-2">
+        <div className="space-y-2">
+          {preset.blocks.map((b) => (
+            <div
+              key={b.id}
+              draggable
+              onDragStart={() => setDragId(b.id)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => {
+                if (dragId) reorder(dragId, b.id);
+                setDragId(null);
+              }}
+              className={`rounded-lg border p-3 bg-panel2 ${
+                b.flagged ? 'border-amber-500/40' : 'border-white/10'
+              } ${dragId === b.id ? 'opacity-50' : ''}`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="cursor-grab select-none text-gray-500" title="Перетащить">
+                  ⠿
+                </span>
                 <input
                   type="checkbox"
-                  checked={cfg.jailbreakEnabled}
-                  onChange={(e) => patch({ jailbreakEnabled: e.target.checked })}
+                  checked={b.enabled}
+                  onChange={(e) => patchBlock(b.id, { enabled: e.target.checked })}
+                  title="Включить/выключить блок"
                 />
-                Слой разрешений (jailbreak) включён
-              </label>
-              {cfg.jailbreakEnabled && (
-                <Field label="Текст разрешений" hint="Пусто — используется дефолтный.">
-                  <textarea
-                    className="input h-24"
-                    value={cfg.jailbreakPrompt || ''}
-                    onChange={(e) => patch({ jailbreakPrompt: e.target.value || undefined })}
-                  />
-                </Field>
-              )}
-              <Field
-                label="Префилл ответа (опц.)"
-                hint='Начало JSON для стабилизации, напр. {"scene":'
-              >
                 <input
-                  className="input"
-                  value={cfg.prefill || ''}
-                  placeholder='{"scene":'
-                  onChange={(e) => patch({ prefill: e.target.value || undefined })}
+                  className="input !py-1 text-sm flex-1"
+                  value={b.name}
+                  onChange={(e) => patchBlock(b.id, { name: e.target.value })}
                 />
-              </Field>
-            </div>
-          </div>
+                {b.builtinKey && !b.dynamic && (
+                  <button
+                    className="btn-ghost !px-2 !py-1 text-xs"
+                    title="Вернуть текст блока к дефолту"
+                    onClick={() => resetBlock(b)}
+                  >
+                    ↺
+                  </button>
+                )}
+                {!b.builtinKey && !b.dynamic && (
+                  <button
+                    className="btn-danger !px-2 !py-1 text-xs"
+                    title="Удалить блок"
+                    onClick={() => removeBlock(b.id)}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
 
-          <div className="card">
-            <h4 className="font-semibold mb-3">Генерация изображений (image-API)</h4>
-            <p className="text-xs text-gray-500 mb-3">
-              OpenAI-совместимый эндпоинт /images/generations. Ключ хранится только в этом
-              браузере. Используется кнопками «Создать фон/CG» в плеере.
-            </p>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <Field label="Image Base URL" hint="Пусто — берётся Base URL основного провайдера.">
-                <input
-                  className="input"
-                  value={cfg.imageBaseUrl || ''}
-                  placeholder="https://api.openai.com/v1"
-                  onChange={(e) => patch({ imageBaseUrl: e.target.value || undefined })}
-                />
-              </Field>
-              <Field label="Image модель">
-                <input
-                  className="input"
-                  value={cfg.imageModel || ''}
-                  placeholder="gpt-image-1"
-                  onChange={(e) => patch({ imageModel: e.target.value || undefined })}
-                />
-              </Field>
+              {b.flagged && (
+                <p className="text-xs text-amber-400 mt-2">
+                  ⚠ Этот блок обеспечивает работу движка (JSON-контракт). Менять можно, но при
+                  поломке формата парсер откатится на безопасный разбор — не удаляйте без нужды.
+                </p>
+              )}
+
+              {b.dynamic ? (
+                <p className="text-xs text-gray-500 mt-2">
+                  Контент этого блока собирает движок автоматически из данных проекта
+                  (источник: <code className="text-gray-400">{b.dynamic}</code>). Редактируется только
+                  порядок и вкл/выкл.
+                </p>
+              ) : (
+                b.enabled && (
+                  <textarea
+                    className="input h-28 mt-2 text-sm font-mono"
+                    value={b.content}
+                    onChange={(e) => patchBlock(b.id, { content: e.target.value })}
+                  />
+                )
+              )}
             </div>
-            <Field label="Image API-ключ" hint="localStorage, уходит только к image-провайдеру.">
+          ))}
+        </div>
+      </div>
+
+      {/* Параметры генерации (не часть пресета) */}
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="card">
+          <h4 className="font-semibold mb-3">Параметры генерации</h4>
+          <Field label={`Температура: ${cfg.temperature.toFixed(2)}`}>
+            <input
+              type="range"
+              min={0}
+              max={1.5}
+              step={0.05}
+              className="w-full"
+              value={cfg.temperature}
+              onChange={(e) => patch({ temperature: Number(e.target.value) })}
+            />
+          </Field>
+          <Field label={`Живое окно (K ходов): ${cfg.liveWindow}`}>
+            <input
+              type="range"
+              min={4}
+              max={30}
+              step={1}
+              className="w-full"
+              value={cfg.liveWindow}
+              onChange={(e) => patch({ liveWindow: Number(e.target.value) })}
+            />
+          </Field>
+          <Field label={`Бюджет контекста (токены): ${cfg.contextBudget}`}>
+            <input
+              type="range"
+              min={2000}
+              max={32000}
+              step={500}
+              className="w-full"
+              value={cfg.contextBudget}
+              onChange={(e) => patch({ contextBudget: Number(e.target.value) })}
+            />
+          </Field>
+          <Field
+            label="Префилл ответа (опц.)"
+            hint='Начало JSON для стабилизации, напр. {"scene":. При стриминге форсируется автоматически.'
+          >
+            <input
+              className="input"
+              value={cfg.prefill || ''}
+              placeholder='{"scene":'
+              onChange={(e) => patch({ prefill: e.target.value || undefined })}
+            />
+          </Field>
+          <Field label="Модель саммарайзера (опц.)" hint="Дешёвая модель для сжатия памяти.">
+            <input
+              className="input"
+              value={cfg.summarizerModel || ''}
+              placeholder="как основная"
+              onChange={(e) => patch({ summarizerModel: e.target.value || undefined })}
+            />
+          </Field>
+        </div>
+
+        <div className="card">
+          <h4 className="font-semibold mb-3">Генерация изображений (image-API)</h4>
+          <p className="text-xs text-gray-500 mb-3">
+            OpenAI-совместимый эндпоинт /images/generations. Ключ хранится только в этом браузере.
+            Используется кнопками «Создать фон/CG» в плеере.
+          </p>
+          <Field label="Image Base URL" hint="Пусто — берётся Base URL основного подключения.">
+            <input
+              className="input"
+              value={cfg.imageBaseUrl || ''}
+              placeholder="https://api.openai.com/v1"
+              onChange={(e) => patch({ imageBaseUrl: e.target.value || undefined })}
+            />
+          </Field>
+          <Field label="Image модель">
+            <input
+              className="input"
+              value={cfg.imageModel || ''}
+              placeholder="gpt-image-1"
+              onChange={(e) => patch({ imageModel: e.target.value || undefined })}
+            />
+          </Field>
+          <Field label="Image API-ключ" hint="localStorage, уходит только к image-провайдеру.">
+            <input
+              className="input"
+              type="password"
+              value={imageKey}
+              placeholder="sk-..."
+              onChange={(e) => {
+                setImageKey(e.target.value);
+                setApiKey('image', e.target.value);
+              }}
+            />
+          </Field>
+        </div>
+      </div>
+
+      {/* Кастомные вставки на глубине (author's note style) */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="font-semibold">Кастомные вставки (по глубине)</h4>
+          <button
+            className="btn-ghost !px-3 !py-1 text-xs"
+            onClick={() => patchAdvBlocks([...(cfg.advancedBlocks || []), { content: '', depth: 1 }])}
+          >
+            + Вставка
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 mb-2">
+          В отличие от блоков пресета (system), эти вставляются в историю сообщений. Глубина =
+          сколько сообщений от конца. 0 — в самый конец, 1 — перед последним ходом.
+        </p>
+        {(cfg.advancedBlocks || []).map((b, i) => (
+          <div key={i} className="flex gap-2 mb-2">
+            <textarea
+              className="input h-16 flex-1"
+              value={b.content}
+              placeholder="Текст вставки (поддерживает макросы)"
+              onChange={(e) => {
+                const next = [...(cfg.advancedBlocks || [])];
+                next[i] = { ...next[i], content: e.target.value };
+                patchAdvBlocks(next);
+              }}
+            />
+            <div className="w-20">
+              <label className="label">Глубина</label>
               <input
+                type="number"
+                min={0}
                 className="input"
-                type="password"
-                value={imageKey}
-                placeholder="sk-..."
+                value={b.depth}
                 onChange={(e) => {
-                  setImageKey(e.target.value);
-                  setApiKey('image', e.target.value);
+                  const next = [...(cfg.advancedBlocks || [])];
+                  next[i] = { ...next[i], depth: Number(e.target.value) };
+                  patchAdvBlocks(next);
                 }}
               />
-            </Field>
-          </div>
-
-          <div className="card">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="font-semibold">Кастомные вставки (author's note)</h4>
               <button
-                className="btn-ghost !px-3 !py-1 text-xs"
-                onClick={() => patchBlocks([...(cfg.advancedBlocks || []), { content: '', depth: 1 }])}
+                className="btn-danger !px-2 !py-1 text-xs mt-1 w-full"
+                onClick={() => patchAdvBlocks((cfg.advancedBlocks || []).filter((_, j) => j !== i))}
               >
-                + Блок
+                Удалить
               </button>
             </div>
-            <p className="text-xs text-gray-500 mb-2">
-              Глубина = сколько сообщений от конца истории. 0 — в самый конец, 1 — перед последним ходом.
-            </p>
-            {(cfg.advancedBlocks || []).map((b, i) => (
-              <div key={i} className="flex gap-2 mb-2">
-                <textarea
-                  className="input h-16 flex-1"
-                  value={b.content}
-                  placeholder="Текст вставки (поддерживает макросы)"
-                  onChange={(e) => {
-                    const next = [...(cfg.advancedBlocks || [])];
-                    next[i] = { ...next[i], content: e.target.value };
-                    patchBlocks(next);
-                  }}
-                />
-                <div className="w-20">
-                  <label className="label">Глубина</label>
-                  <input
-                    type="number"
-                    min={0}
-                    className="input"
-                    value={b.depth}
-                    onChange={(e) => {
-                      const next = [...(cfg.advancedBlocks || [])];
-                      next[i] = { ...next[i], depth: Number(e.target.value) };
-                      patchBlocks(next);
-                    }}
-                  />
-                  <button
-                    className="btn-danger !px-2 !py-1 text-xs mt-1 w-full"
-                    onClick={() => patchBlocks((cfg.advancedBlocks || []).filter((_, j) => j !== i))}
-                  >
-                    Удалить
-                  </button>
-                </div>
-              </div>
-            ))}
           </div>
-
-          <div className="card">
-            <div className="flex items-center justify-between mb-2">
-              <h4 className="font-semibold">Ядро-режиссёр (Слой 1)</h4>
-              <button className="btn-ghost !px-3 !py-1 text-xs" onClick={() => setShowCore((v) => !v)}>
-                {showCore ? 'Скрыть' : 'Показать (только чтение)'}
-              </button>
-            </div>
-            <p className="text-xs text-gray-500">
-              Вшитая «подкорка»: JSON-контракт, роли, словари эмоций и настроений, fallback. Не редактируется.
-            </p>
-            {showCore && (
-              <pre className="text-xs bg-ink rounded-lg p-3 mt-3 whitespace-pre-wrap max-h-72 overflow-y-auto scrollbar-thin text-gray-400">
-                {CORE_PROMPT}
-              </pre>
-            )}
-          </div>
-        </>
-      )}
+        ))}
+      </div>
     </div>
   );
 }

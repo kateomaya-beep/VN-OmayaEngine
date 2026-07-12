@@ -200,8 +200,11 @@ export interface AiConfig {
   imageBaseUrl?: string;
   imageModel?: string;
   // Отдельное подключение для саммари (см. CR v2 §E2.3/§G). undefined = использовать
-  // основное игровое подключение (provider/baseUrl/model выше).
+  // основное игровое подключение (глобальное).
   summaryConnection?: ApiConnection;
+  // Полностью редактируемый пресет промпта (Batch 3 §8). any — чтобы не тянуть
+  // ai-слой в shared/types; реальная форма — PromptPreset из ai/promptPreset.ts.
+  promptPreset?: unknown;
 }
 
 // Настройки памяти проекта (см. CR v2 §E).

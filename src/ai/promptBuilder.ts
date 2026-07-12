@@ -1,11 +1,7 @@
 import type { Project, RuntimeState, LlmMessage } from '../shared/types';
 import { AUDIO_MOODS } from '../shared/types';
-import {
-  CORE_PROMPT,
-  buildStyleLayer,
-  DEFAULT_JAILBREAK,
-  FORMAT_REMINDER,
-} from './directorPrompt';
+import { FORMAT_REMINDER } from './directorPrompt';
+import { normalizePreset, type DynamicSource } from './promptPreset';
 import { matchLorebook } from './lorebookEngine';
 import { expandMacros, type MacroContext } from './macros';
 import { retrieveRelevant } from './vectorEngine';
@@ -183,32 +179,42 @@ export async function buildRequest(
     ? `Имя героя игрока: ${state.protagonistName}.`
     : '';
 
-  const dynamic = [
-    `== МИР ==\n${expandMacros(project.lore.worldDescription, ctx)}\n\nПРАВИЛА ПОВЕСТВОВАНИЯ:\n${expandMacros(
-      project.lore.narrativeRules,
-      ctx
-    )}${protagonistLine ? `\n${protagonistLine}` : ''}`,
-    project.lore.plotOutline ? `== АРКА СЮЖЕТА ==\n${expandMacros(project.lore.plotOutline, ctx)}` : '',
-    `== АКТИВНЫЕ ЗАПИСИ ЛОРБУКА ==\n${lorebookText}`,
-    `== ПЕРСОНАЖИ ==\n${characterBlocks(project, onScreenIds, ctx)}`,
-    `== МАНИФЕСТ АССЕТОВ ==\n${assetManifest(project)}`,
-    `== ТЕКУЩЕЕ СОСТОЯНИЕ ==\nСтаты:\n${statsState(project, state.statValues)}\nТекущий фон: ${currentBg} (${
-      state.currentBackgroundId ?? 'null'
-    })\nНастроение музыки: ${state.currentMusicMood ?? 'нет'}\nНа сцене: ${
-      onScreenIds.length ? onScreenIds.join(', ') : 'никого'
-    }`,
-    `== ПАМЯТЬ ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+  // Генераторы контента для динамических блоков пресета.
+  const dynamicContent: Record<DynamicSource, () => Promise<string> | string> = {
+    world: () =>
+      `== МИР ==\n${expandMacros(project.lore.worldDescription, ctx)}\n\nПРАВИЛА ПОВЕСТВОВАНИЯ:\n${expandMacros(
+        project.lore.narrativeRules,
+        ctx
+      )}${protagonistLine ? `\n${protagonistLine}` : ''}`,
+    plot: () =>
+      project.lore.plotOutline ? `== АРКА СЮЖЕТА ==\n${expandMacros(project.lore.plotOutline, ctx)}` : '',
+    lorebook: () => `== АКТИВНЫЕ ЗАПИСИ ЛОРБУКА ==\n${lorebookText}`,
+    characters: () => `== ПЕРСОНАЖИ ==\n${characterBlocks(project, onScreenIds, ctx)}`,
+    manifest: () => `== МАНИФЕСТ АССЕТОВ ==\n${assetManifest(project)}`,
+    state: () =>
+      `== ТЕКУЩЕЕ СОСТОЯНИЕ ==\nСтаты:\n${statsState(project, state.statValues)}\nТекущий фон: ${currentBg} (${
+        state.currentBackgroundId ?? 'null'
+      })\nНастроение музыки: ${state.currentMusicMood ?? 'нет'}\nНа сцене: ${
+        onScreenIds.length ? onScreenIds.join(', ') : 'никого'
+      }`,
+    memory: async () => `== ПАМЯТЬ ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
+  };
 
-  // Слой 1 (ядро) + Слой 2 (стиль) + Слой 3 (jailbreak, опц.) + динамика.
-  const layers = [CORE_PROMPT, buildStyleLayer(cfg)];
-  if (cfg.jailbreakEnabled) {
-    layers.push(`РАЗРЕШЕНИЯ:\n${cfg.jailbreakPrompt?.trim() || DEFAULT_JAILBREAK}`);
+  // Собираем system из редактируемого пресета (Batch 3 §8): по порядку, только
+  // включённые блоки; статичные — их текст (с макросами), динамические — от движка.
+  const preset = normalizePreset(cfg.promptPreset);
+  const parts: string[] = [];
+  for (const block of preset.blocks) {
+    if (!block.enabled) continue;
+    if (block.dynamic) {
+      const gen = dynamicContent[block.dynamic];
+      const text = gen ? await gen() : '';
+      if (text.trim()) parts.push(text);
+    } else if (block.content.trim()) {
+      parts.push(expandMacros(block.content, ctx));
+    }
   }
-  layers.push(dynamic);
-  const system = layers.join('\n\n');
+  const system = parts.join('\n\n');
 
   // Live window of verbatim history.
   const K = Math.max(2, cfg.liveWindow);

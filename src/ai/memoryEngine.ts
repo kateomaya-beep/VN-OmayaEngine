@@ -12,10 +12,10 @@ export function historyTokens(history: LlmMessage[]): number {
 
 async function summarize(project: Project, prompt: string, transcript: string): Promise<string> {
   return (
-    await runCompletionWith(project.aiConfig, project.aiConfig.summaryConnection, 'summary', {
+    await runCompletionWith(project.aiConfig.summaryConnection, 'summary', {
       system: prompt,
       messages: [{ role: 'user', content: transcript }],
-      model: project.aiConfig.summarizerModel || project.aiConfig.model,
+      model: project.aiConfig.summarizerModel || undefined,
       temperature: 0.3,
     })
   ).trim();

@@ -47,16 +47,6 @@ export function LibraryPage() {
     }
   }
 
-  async function onExport(p: Project) {
-    setBusy('Экспорт...');
-    try {
-      const blob = await exportProjectZip(p);
-      downloadBlob(blob, `${p.meta.title || 'project'}.zip`);
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function onShareDownload(p: Project) {
     setBusy('Экспорт...');
     try {
@@ -136,11 +126,8 @@ export function LibraryPage() {
                 >
                   {t('library.editor')}
                 </button>
-                <button className="btn-ghost !px-3 !py-1.5 text-xs" onClick={() => onExport(p)}>
-                  {t('library.export')}
-                </button>
                 <button className="btn-ghost !px-3 !py-1.5 text-xs" onClick={() => setShareTarget(p)}>
-                  🔗 Поделиться
+                  {t('library.export')}
                 </button>
                 <button className="btn-danger !px-3 !py-1.5 text-xs" onClick={() => onDelete(p)}>
                   {t('library.delete')}

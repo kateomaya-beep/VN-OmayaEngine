@@ -1,8 +1,15 @@
 import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry } from '../shared/types';
 import { RELATIONSHIP_META } from '../shared/types';
 import { buildRequest } from './promptBuilder';
-import { runCompletion } from './providers';
-import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
+import { runCompletion, runCompletionStream } from './providers';
+import {
+  parseAiResponse,
+  applyStatChanges,
+  applyRelationshipChanges,
+  repairScene,
+  repairBeat,
+} from './responseParser';
+import { TurnStreamParser } from './streamParser';
 import { maybeCompress } from './memoryEngine';
 import { uid } from '../shared/utils';
 
@@ -36,41 +43,16 @@ export function pickTrackForMood(
   return pickFrom[Math.floor(Math.random() * pickFrom.length)].id;
 }
 
-// Run one player turn: build context -> call LLM -> parse/repair -> apply to state.
-export async function runTurn(
+// Применяет разобранный ход к state: статы, отношения, канон-факты, меморибук,
+// спрайты на сцене, музыку, историю, память. Общая часть для обычного и
+// потокового пути (см. Batch 3 §7). `raw` — сырой ответ ИИ для истории.
+export async function applyTurn(
   project: Project,
   state: RuntimeState,
-  playerMove: string
-): Promise<TurnResult> {
-  const req = await buildRequest(project, state, playerMove);
-
-  let raw = await runCompletion(project.aiConfig, {
-    system: req.system,
-    messages: req.messages,
-    prefill: req.prefill,
-    model: project.aiConfig.model,
-    temperature: project.aiConfig.temperature,
-  });
-
-  let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
-
-  // One automatic retry on invalid JSON.
-  if (!parsed.ok) {
-    raw = await runCompletion(project.aiConfig, {
-      system: req.system,
-      messages: [...req.messages, { role: 'user', content: RETRY_HINT }],
-      prefill: req.prefill,
-      model: project.aiConfig.model,
-      temperature: Math.min(project.aiConfig.temperature, 0.5),
-    });
-    parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
-  }
-
-  if (!parsed.ok || !parsed.turn) {
-    throw new Error(parsed.error || 'Не удалось разобрать ответ ИИ');
-  }
-
-  const turn = parsed.turn;
+  playerMove: string,
+  turn: AiTurn,
+  raw: string
+): Promise<RuntimeState> {
   const nextTurnNumber = state.turnCount + 1;
 
   // Apply stat changes (clamped) and collect canonical facts (turn-indexed, not chapter-indexed).
@@ -166,5 +148,116 @@ export async function runTurn(
   // повод подытожить историю — см. CR v2 §E).
   nextState = await maybeCompress(project, nextState, turn.chapterEvent === 'chapter_end');
 
+  return nextState;
+}
+
+// Run one player turn: build context -> call LLM -> parse/repair -> apply to state.
+export async function runTurn(
+  project: Project,
+  state: RuntimeState,
+  playerMove: string
+): Promise<TurnResult> {
+  const req = await buildRequest(project, state, playerMove);
+
+  let raw = await runCompletion({
+    system: req.system,
+    messages: req.messages,
+    prefill: req.prefill,
+    temperature: project.aiConfig.temperature,
+  });
+
+  let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
+
+  // One automatic retry on invalid JSON.
+  if (!parsed.ok) {
+    raw = await runCompletion({
+      system: req.system,
+      messages: [...req.messages, { role: 'user', content: RETRY_HINT }],
+      prefill: req.prefill,
+      temperature: Math.min(project.aiConfig.temperature, 0.5),
+    });
+    parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
+  }
+
+  if (!parsed.ok || !parsed.turn) {
+    throw new Error(parsed.error || 'Не удалось разобрать ответ ИИ');
+  }
+
+  const turn = parsed.turn;
+  const nextState = await applyTurn(project, state, playerMove, turn, raw);
+  return { turn, state: nextState };
+}
+
+// Колбэки потокового хода: инкрементально сообщают о сцене (рано — чтобы фон/музыка
+// грузились) и о каждом завершённом beat (эффект «печатания»).
+export interface StreamCallbacks {
+  onScene?: (scene: AiTurn['scene']) => void;
+  onBeat?: (beat: AiTurn['beats'][number], index: number) => void;
+}
+
+// Потоковый ход (Batch 3 §7): стримит ответ провайдера, парсит инкрементально,
+// отдаёт сцену и beats по мере готовности через колбэки; финальный state собирает
+// полноценным парсером (источник правды). Фолбэк на обычный ход при сбое стрима.
+export async function streamTurn(
+  project: Project,
+  state: RuntimeState,
+  playerMove: string,
+  callbacks: StreamCallbacks
+): Promise<TurnResult> {
+  const req = await buildRequest(project, state, playerMove);
+  // Форсируем префилл '{"scene":' — чтобы объект scene пришёл первым и фон/музыка
+  // подхватились раньше диалога (если пользователь не задал свой префилл).
+  const prefill = req.prefill && req.prefill.includes('scene') ? req.prefill : '{"scene":';
+
+  const parser = new TurnStreamParser();
+  let sceneSent = false;
+  let beatsSent = 0;
+
+  try {
+    for await (const chunk of runCompletionStream({
+      system: req.system,
+      messages: req.messages,
+      prefill,
+      temperature: project.aiConfig.temperature,
+    })) {
+      const ev = parser.push(chunk);
+      if (!sceneSent && ev.scene && callbacks.onScene) {
+        callbacks.onScene(repairScene(project, ev.scene, state.currentBackgroundId, state.currentMusicMood));
+        sceneSent = true;
+      }
+      for (const b of ev.beats) {
+        if (callbacks.onBeat) callbacks.onBeat(repairBeat(project, b), beatsSent);
+        beatsSent++;
+      }
+    }
+  } catch {
+    // Стрим сорвался — тихо падаем на обычный (нестриминговый) ход.
+    return runTurn(project, state, playerMove);
+  }
+
+  const raw = parser.raw;
+  let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
+
+  // Если потоковый сбор дал невалидный JSON — один обычный ретрай.
+  if (!parsed.ok) {
+    const retryRaw = await runCompletion({
+      system: req.system,
+      messages: [...req.messages, { role: 'user', content: RETRY_HINT }],
+      prefill: req.prefill,
+      temperature: Math.min(project.aiConfig.temperature, 0.5),
+    });
+    parsed = parseAiResponse(retryRaw, project, state.currentBackgroundId, state.currentMusicMood);
+    if (parsed.ok && parsed.turn) {
+      const nextState = await applyTurn(project, state, playerMove, parsed.turn, retryRaw);
+      return { turn: parsed.turn, state: nextState };
+    }
+  }
+
+  if (!parsed.ok || !parsed.turn) {
+    throw new Error(parsed.error || 'Не удалось разобрать ответ ИИ');
+  }
+
+  const turn = parsed.turn;
+  const nextState = await applyTurn(project, state, playerMove, turn, raw);
   return { turn, state: nextState };
 }

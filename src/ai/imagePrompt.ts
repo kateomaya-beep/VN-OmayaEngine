@@ -29,10 +29,10 @@ Include location, time of day, lighting, mood and art style (polished anime/visu
 Настроение музыки: ${state.currentMusicMood ?? 'нет'}
 Последние события:\n${recent}`;
 
-  const raw = await runCompletion(project.aiConfig, {
+  const raw = await runCompletion({
     system,
     messages: [{ role: 'user', content: user }],
-    model: project.aiConfig.summarizerModel || project.aiConfig.model,
+    model: project.aiConfig.summarizerModel || undefined,
     temperature: 0.7,
   });
   // На случай, если модель всё же обернула в кавычки/markdown.

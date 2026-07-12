@@ -55,6 +55,51 @@ function extractJson(raw: string): string | null {
 
 const EMOTION_SET = new Set<string>(EMOTIONS);
 
+// Чинит один beat против манифеста (используется и потоковым, и обычным путём).
+export function repairBeat(project: Project, b: any): Beat {
+  const charById = new Map(project.characters.map((c) => [c.id, c]));
+  if (!b || b.type !== 'dialogue') {
+    if (b?.type === 'thought') return { type: 'thought', text: String(b.text ?? '') };
+    return { type: 'narration', text: String(b?.text ?? '') };
+  }
+  const position = ['left', 'center', 'right'].includes(b.position) ? b.position : 'center';
+  const cid = b.characterId || undefined;
+  const ch = cid ? charById.get(cid) : undefined;
+  if (ch) {
+    const available = Object.keys(ch.sprites);
+    let emotion = b.emotion;
+    if (!EMOTION_SET.has(emotion)) emotion = 'neutral';
+    if (available.length && !available.includes(emotion)) {
+      emotion = available.includes('neutral') ? 'neutral' : available[0];
+    }
+    return { type: 'dialogue', characterId: ch.id, emotion, position, text: String(b.text ?? '') };
+  }
+  const name = (b.name || '').trim();
+  if (name) {
+    const emotion = EMOTION_SET.has(b.emotion) ? b.emotion : 'neutral';
+    return { type: 'dialogue', name, emotion, position, text: String(b.text ?? '') };
+  }
+  return { type: 'narration', text: String(b.text ?? '') };
+}
+
+// Чинит объект scene против манифеста.
+export function repairScene(
+  project: Project,
+  scene: any,
+  currentBg: string | null,
+  currentMood: string | null
+): AiTurn['scene'] {
+  const assetIds = new Set(project.assets.map((a) => a.id));
+  const moodSet = new Set<string>([...AUDIO_MOODS, ...project.audioMoods]);
+  const s = scene || {};
+  return {
+    backgroundId: s.backgroundId && assetIds.has(s.backgroundId) ? s.backgroundId : currentBg,
+    musicMood: s.musicMood && moodSet.has(s.musicMood) ? s.musicMood : currentMood,
+    sfxId: s.sfxId && assetIds.has(s.sfxId) ? s.sfxId : null,
+    cutsceneCgId: s.cutsceneCgId && assetIds.has(s.cutsceneCgId) ? s.cutsceneCgId : null,
+  };
+}
+
 // Repair ids against the project manifest so hallucinations never crash render.
 function repair(
   project: Project,
@@ -62,63 +107,11 @@ function repair(
   currentBg: string | null,
   currentMood: string | null
 ): AiTurn {
-  const assetIds = new Set(project.assets.map((a) => a.id));
   const charById = new Map(project.characters.map((c) => [c.id, c]));
   const statIds = new Set(project.stats.map((s) => s.id));
-  // Настроения: базовые + кастомные проекта (см. CR v2 §N.2) — единый fallback для всех.
-  const moodSet = new Set<string>([...AUDIO_MOODS, ...project.audioMoods]);
 
-  const scene = {
-    backgroundId:
-      parsed.scene.backgroundId && assetIds.has(parsed.scene.backgroundId)
-        ? parsed.scene.backgroundId
-        : currentBg,
-    musicMood:
-      parsed.scene.musicMood && moodSet.has(parsed.scene.musicMood)
-        ? parsed.scene.musicMood
-        : currentMood,
-    sfxId: parsed.scene.sfxId && assetIds.has(parsed.scene.sfxId) ? parsed.scene.sfxId : null,
-    cutsceneCgId:
-      parsed.scene.cutsceneCgId && assetIds.has(parsed.scene.cutsceneCgId)
-        ? parsed.scene.cutsceneCgId
-        : null,
-  };
-
-  // Beats: единое правило.
-  // - dialogue с валидным characterId → нормализуем эмоцию по доступным этому персонажу.
-  // - dialogue без characterId, но с name → эпизодический NPC (рендер имя+текст).
-  // - dialogue без characterId и без name → деградируем в narration.
-  const beats: Beat[] = parsed.beats.map((b): Beat => {
-    if (b.type !== 'dialogue') return b;
-
-    const position = ['left', 'center', 'right'].includes(b.position as string)
-      ? (b.position as 'left' | 'center' | 'right')
-      : 'center';
-
-    const cid = b.characterId || undefined;
-    const ch = cid ? charById.get(cid) : undefined;
-
-    if (ch) {
-      // Эмоция: из закрытого словаря И из доступных спрайтов; иначе neutral.
-      // (Если спрайта нет вовсе — движок отрисует имя+текст, эмоция роли не играет,
-      // но всё равно держим её валидной для консистентности.)
-      const available = Object.keys(ch.sprites);
-      let emotion = b.emotion;
-      if (!EMOTION_SET.has(emotion)) emotion = 'neutral';
-      if (available.length && !available.includes(emotion)) {
-        emotion = available.includes('neutral') ? 'neutral' : available[0];
-      }
-      return { type: 'dialogue', characterId: ch.id, emotion, position, text: b.text };
-    }
-
-    const name = (b.name || '').trim();
-    if (name) {
-      const emotion = EMOTION_SET.has(b.emotion) ? b.emotion : 'neutral';
-      return { type: 'dialogue', name, emotion, position, text: b.text };
-    }
-
-    return { type: 'narration', text: b.text };
-  });
+  const scene = repairScene(project, parsed.scene, currentBg, currentMood);
+  const beats: Beat[] = parsed.beats.map((b) => repairBeat(project, b));
 
   // Оставляем изменения либо для проектных статов, либо для валидных rel-статов.
   const statChanges = parsed.statChanges.filter((s) => {

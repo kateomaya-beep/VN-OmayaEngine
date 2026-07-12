@@ -267,6 +267,7 @@ export function normalizeProject(raw: any): Project {
       imageBaseUrl: typeof ai.imageBaseUrl === 'string' ? ai.imageBaseUrl : undefined,
       imageModel: typeof ai.imageModel === 'string' ? ai.imageModel : undefined,
       summaryConnection: normConnection(ai.summaryConnection),
+      promptPreset: ai.promptPreset && typeof ai.promptPreset === 'object' ? ai.promptPreset : undefined,
     },
     memoryConfig: {
       summaryEveryN: num(mem.summaryEveryN, 30),

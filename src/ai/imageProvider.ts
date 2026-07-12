@@ -1,5 +1,6 @@
 import type { AiConfig } from '../shared/types';
 import { getApiKey } from './keys';
+import { getConnection } from './connection';
 
 // Image generation via an OpenAI-compatible /images/generations endpoint
 // (Nano Banana / Gemini Flash Image / OpenAI images / др.). BYO key — хранится
@@ -22,7 +23,7 @@ export async function generateImage(
   opts: ImageGenOptions = {}
 ): Promise<Blob> {
   const key = getApiKey('image');
-  const base = (cfg.imageBaseUrl || cfg.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+  const base = (cfg.imageBaseUrl || getConnection().baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
   const model = cfg.imageModel || 'gpt-image-1';
 
   const res = await fetch(`${base}/images/generations`, {

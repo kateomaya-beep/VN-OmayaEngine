@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Project, Beat } from '../../../shared/types';
+import { Markdown } from '../../../shared/markdown';
 
 // Тайпрайтер-панель текущего beat. Клик — доиграть тайпрайтер или перейти дальше.
 // Рендерится как блок (консоль ввода живёт отдельным баром ниже).
@@ -70,10 +71,17 @@ export function DialogueBox({
           </div>
         )}
         <div className="bg-black/80 backdrop-blur rounded-xl rounded-tl-none p-5 min-h-[6rem] border border-white/10">
-          <p className={`text-lg leading-relaxed ${isThought ? 'italic text-gray-300' : ''}`}>
-            {shown}
-            {!done && <span className="typewriter-cursor" />}
-          </p>
+          <div className={`text-lg leading-relaxed md-content ${isThought ? 'italic text-gray-300' : ''}`}>
+            {/* Во время тайпрайтера — обычный текст; по завершении — безопасный markdown. */}
+            {done ? (
+              <Markdown text={fullText} />
+            ) : (
+              <span className="whitespace-pre-wrap">
+                {shown}
+                <span className="typewriter-cursor" />
+              </span>
+            )}
+          </div>
           {done && hasMore && (
             <div className="text-right text-accent2 text-sm mt-2 animate-pulse">▼ далее</div>
           )}
