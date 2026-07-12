@@ -41,9 +41,13 @@ export async function maybeCompress(
   const K = Math.max(2, project.aiConfig.liveWindow);
   const keep = K * 2; // user+assistant per turn
   const everyN = Math.max(4, project.memoryConfig.summaryEveryN) * 2;
-  const overBudget = historyTokens(state.history) > project.aiConfig.contextBudget;
+  // Триггер ТОЛЬКО по счётчику ходов (summaryEveryN) или принудительно. Раньше был
+  // ещё overBudget по «сырой» истории (полный JSON каждого хода) — он превышал бюджет
+  // почти всегда и запускал саммари КАЖДЫЙ ход, при этом не мог опустить контекст
+  // (живое окно само крупнее бюджета). В контекст ИИ история теперь идёт сжатой
+  // прозой, так что этот замер был некорректен. Оставляем чистый счётчик.
   const dueByCount = state.memory.messagesSinceSummary >= everyN;
-  if ((!force && !overBudget && !dueByCount) || state.history.length <= keep) return state;
+  if ((!force && !dueByCount) || state.history.length <= keep) return state;
 
   const stale = state.history.slice(0, state.history.length - keep);
   if (!stale.length) return state;
