@@ -272,7 +272,7 @@ export async function buildRequest(
   // в тексте блоков. Ставим последней в системном промпте, чтобы имела приоритет.
   const tl = project.aiConfig.turnLength || DEFAULT_TURN_LENGTH;
   systemParts.push(
-    `TURN LENGTH (authoritative — overrides any other length guidance above): write a LONG turn, roughly ${tl.min}–${tl.max} words of story. Make the PROSE long — several substantial narration beats, each a full paragraph of 3–6 sentences with sensory detail and interiority, interleaved with dialogue. Do NOT reach the length by stacking many one-line beats. If your draft turn is under ${tl.min} words, keep developing the scene until it lands in range before you close the turn.`
+    `TURN LENGTH & BEAT SIZE (authoritative — overrides any other length/beat guidance above): write a rich turn of roughly ${tl.min}–${tl.max} words TOTAL, split into MANY MEDIUM beats. Each beat is a readable chunk of 1–3 sentences (a short paragraph) — never a wall of text, never a bare one-liner. Reach the word target through the NUMBER of medium beats, not by inflating any single beat into a long block. Keep a real mix of dialogue and narration: characters who are present must actually SPEAK — emit "dialogue" beats with that character's characterId (a dialogue beat with a valid characterId is what puts the character's sprite on screen), interleaved with narration/thought. If your draft is under ${tl.min} words, add MORE medium beats — more exchanges, more scene — before closing the turn.`
   );
   const gap = project.aiConfig.choiceMinGap ?? 0;
   if (gap > 0) {
@@ -307,7 +307,7 @@ export async function buildRequest(
   // весят последнее сообщение, поэтому длину дублируем здесь.
   withMove.push({
     role: 'user',
-    content: `${FORMAT_REMINDER}\nWrite a long, immersive turn (~${tl.min}–${tl.max} words of story, full narration paragraphs) — do not cut it short.`,
+    content: `${FORMAT_REMINDER}\nWrite a rich turn (~${tl.min}–${tl.max} words) split into MANY MEDIUM beats of 1–3 sentences each — mix dialogue (with the speaking character's characterId, so their sprite shows) and narration. No walls of text, no bare one-liners.`,
   });
 
   return { system, messages: withMove, prefill: cfg.prefill?.trim() || undefined };

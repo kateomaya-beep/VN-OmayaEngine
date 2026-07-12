@@ -191,7 +191,7 @@ from their first meaningful beat. Give a short "reason" for each change.`
     b(
       'rules',
       '⚙ Core Rules',
-      `1. Write a SUBSTANTIAL turn: 6–12 beats, alternating narration and dialogue, so the player reads a real stretch of story before acting. Let the scene develop — several exchanges, action and reaction, a moment breathing — instead of stopping after a line or two. Never end a turn after a single beat.
+      `1. Write a SUBSTANTIAL turn made of MANY MEDIUM beats (typically 10–20+), each a readable 1–3 sentence chunk, alternating narration and dialogue, so the player taps through a real stretch of story. Never a wall of text in one beat, and never a single-beat turn; grow the turn by adding MORE medium beats and MORE character dialogue, not by inflating one beat.
 2. scene.backgroundId — from the manifest, by tags matching location/mood.
 3. Change statChanges (project stats and relationship stats) only when an action earns it — see Relationship Dynamics.
 4. choices ARE RARE. Most turns MUST return choices: [] and let the player type their own move — they can always answer between lines, so you never need choices to keep things moving. Offer 2–4 choices ONLY at a real DECISION POINT: a genuine story fork, a beat that will shift a relationship stat, or a choice that changes a project stat. Never add choices just to break up a scene or for trivial back-and-forth. When you do offer them, each is plain player-facing wording (actions in *italics*), meaningfully different, with real consequences — never prefixed with move tags like [CHOICE] or [VERBATIM]. Occasionally a "premium" choice with a cost.
@@ -283,7 +283,8 @@ function ensurePlaceholders(preset: PromptPreset): PromptPreset {
 // стат «уважение») доезжают и до проектов, где пресет уже был заморожен в старой
 // версии. Если пользователь блок правил — сигнатуры там нет, его текст не трогаем.
 const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
-  { key: 'rules', signature: 'spoken lines short and alive' },
+  { key: 'rules', signature: 'spoken lines short and alive' }, // v≤0.1.2
+  { key: 'rules', signature: 'a real stretch of story before acting' }, // v0.1.3 (6–12 beats)
   { key: 'style', signature: 'Medium turn length' },
   { key: 'relationships', signature: 'carries three stats toward the hero' },
   { key: 'json_contract', signature: 'keep it accurate EVERY turn' },
@@ -292,8 +293,11 @@ function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
   let changed = false;
   const blocks = preset.blocks.map((b) => {
     if (!b.builtinKey || b.dynamic) return b;
-    const sig = OUTDATED_SIGNATURES.find((s) => s.key === b.builtinKey);
-    if (sig && b.content.includes(sig.signature)) {
+    // Проверяем ВСЕ сигнатуры этого ключа (у блока может быть несколько прошлых версий).
+    const outdated = OUTDATED_SIGNATURES.some(
+      (s) => s.key === b.builtinKey && b.content.includes(s.signature)
+    );
+    if (outdated) {
       const fresh = defaultBlockContent(b.builtinKey);
       if (fresh !== null && fresh !== b.content) {
         changed = true;
