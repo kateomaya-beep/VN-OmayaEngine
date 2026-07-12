@@ -33,5 +33,9 @@
     "tailwindcss": "^3.4.13",
     "typescript": "^5.6.2",
     "vite": "^5.4.8"
+  },
+  "comment:overrides": "onnxruntime-node — нативная Node-зависимость @huggingface/transformers с os:[win32,darwin,linux], из-за чего npm install падает на Android/Termux (EBADPLATFORM). Мы используем transformers ТОЛЬКО в браузере (Web Worker → onnxruntime-web/wasm), нодовый бэкенд не грузится. Алиасим onnxruntime-node на кросс-платформенный onnxruntime-web, чтобы установка проходила везде.",
+  "overrides": {
+    "onnxruntime-node": "npm:onnxruntime-web@1.26.0-dev.20260416-b7804b056c"
   }
 }
