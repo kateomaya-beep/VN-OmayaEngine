@@ -272,7 +272,7 @@ export async function buildRequest(
   // в тексте блоков. Ставим последней в системном промпте, чтобы имела приоритет.
   const tl = project.aiConfig.turnLength || DEFAULT_TURN_LENGTH;
   systemParts.push(
-    `TURN LENGTH (authoritative — overrides any other length guidance above): write roughly ${tl.min}–${tl.max} words of story across the beats this turn.`
+    `TURN LENGTH (authoritative — overrides any other length guidance above): write a LONG turn, roughly ${tl.min}–${tl.max} words of story. Make the PROSE long — several substantial narration beats, each a full paragraph of 3–6 sentences with sensory detail and interiority, interleaved with dialogue. Do NOT reach the length by stacking many one-line beats. If your draft turn is under ${tl.min} words, keep developing the scene until it lands in range before you close the turn.`
   );
   const gap = project.aiConfig.choiceMinGap ?? 0;
   if (gap > 0) {
@@ -303,8 +303,12 @@ export async function buildRequest(
     withMove.push({ role: 'user', content: `[AUTHOR NOTE] ${expandMacros(state.authorNote, ctx)}` });
   }
 
-  // Ремайндер формата на глубине 0 (в самый конец).
-  withMove.push({ role: 'user', content: FORMAT_REMINDER });
+  // Ремайндер формата + длины на глубине 0 (в самый конец) — модели сильнее
+  // весят последнее сообщение, поэтому длину дублируем здесь.
+  withMove.push({
+    role: 'user',
+    content: `${FORMAT_REMINDER}\nWrite a long, immersive turn (~${tl.min}–${tl.max} words of story, full narration paragraphs) — do not cut it short.`,
+  });
 
   return { system, messages: withMove, prefill: cfg.prefill?.trim() || undefined };
 }

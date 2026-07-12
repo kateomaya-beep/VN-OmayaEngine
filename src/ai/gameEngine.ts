@@ -1,5 +1,5 @@
 import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry } from '../shared/types';
-import { RELATIONSHIP_META } from '../shared/types';
+import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH } from '../shared/types';
 import { buildRequest } from './promptBuilder';
 import { runCompletion } from './providers';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
@@ -177,11 +177,17 @@ export async function runTurn(
 ): Promise<TurnResult> {
   const req = await buildRequest(project, state, playerMove);
 
+  // Потолок токенов — с запасом на верхнюю границу длины хода (слова→токены ≈ ×2.5)
+  // плюс место под JSON-обвязку/worldState. Иначе низкий дефолт шлюза режет ход.
+  const tl = project.aiConfig.turnLength || DEFAULT_TURN_LENGTH;
+  const maxTokens = Math.min(8000, Math.max(1500, Math.round(tl.max * 2.5) + 1500));
+
   let raw = await runCompletion({
     system: req.system,
     messages: req.messages,
     prefill: req.prefill,
     temperature: project.aiConfig.temperature,
+    maxTokens,
   });
 
   let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
@@ -193,6 +199,7 @@ export async function runTurn(
       messages: [...req.messages, { role: 'user', content: RETRY_HINT }],
       prefill: req.prefill,
       temperature: Math.min(project.aiConfig.temperature, 0.5),
+      maxTokens,
     });
     parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
   }

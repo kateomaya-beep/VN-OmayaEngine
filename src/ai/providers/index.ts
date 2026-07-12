@@ -12,6 +12,9 @@ export interface CompletionRequest {
   // стабилизации чистого JSON. Провайдер добавляет его как хвостовой assistant-
   // message и ПРЕПЕНДИТ обратно к результату, чтобы вернуть полный текст.
   prefill?: string;
+  // Потолок токенов ответа. Без него многие шлюзы режут ответ по своему низкому
+  // дефолту (512/1024) — отсюда «всегда короткий ход». Считаем от длины хода.
+  maxTokens?: number;
 }
 
 export interface Provider {
@@ -60,7 +63,12 @@ const openAiCompatible: Provider = {
     const res = await apiFetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      body: JSON.stringify({ model, temperature: req.temperature, messages }),
+      body: JSON.stringify({
+        model,
+        temperature: req.temperature,
+        messages,
+        ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+      }),
     });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
     const data = await res.json();
@@ -92,7 +100,7 @@ const anthropic: Provider = {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model, max_tokens: 4096, temperature: req.temperature, system: req.system, messages }),
+      body: JSON.stringify({ model, max_tokens: req.maxTokens || 4096, temperature: req.temperature, system: req.system, messages }),
     });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
     const data = await res.json();
