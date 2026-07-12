@@ -108,7 +108,9 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
       <img
         src={url}
         alt=""
-        className={`object-contain object-bottom transition-all duration-300 h-[82%] sm:h-[88%] max-w-[100%] sm:max-w-[46%] ${
+        // Мобилка: крупный спрайт, сдвинут ниже (низ уходит за край/за диалог),
+        // голова остаётся ниже верхней панели. Десктоп — как было.
+        className={`object-contain object-bottom transition-all duration-300 h-[100%] -mb-[22%] max-w-[112%] sm:h-[88%] sm:mb-0 sm:max-w-[46%] ${
           visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
         }`}
       />
