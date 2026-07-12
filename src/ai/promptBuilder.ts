@@ -3,6 +3,7 @@ import { AUDIO_MOODS, DEFAULT_TURN_LENGTH } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { normalizePreset, type DynamicSource } from './promptPreset';
 import { matchLorebook } from './lorebookEngine';
+import { extractJson } from './responseParser';
 import { formatClock } from './gameMaster';
 import { expandMacros, type MacroContext } from './macros';
 import { retrieveRelevant } from './vectorEngine';
@@ -10,6 +11,40 @@ import { estimateTokens } from '../shared/utils';
 
 // Builds the full request as a system string (layered core → style → jailbreak →
 // dynamic context) plus the live-window history and the player's move.
+
+// Сжимает сырой JSON-ход ассистента до чистой прозы (что видел игрок): нарратив/
+// мысли как есть, реплики как «Имя: текст». Возвращает null при неразборе — тогда
+// вызывающий оставит сырой контент. Снимает дублирование JSON-обвязки в контексте.
+function condenseAssistantTurn(raw: string, project: Project, state: RuntimeState): string | null {
+  const js = extractJson(raw);
+  if (!js) return null;
+  let obj: any;
+  try {
+    obj = JSON.parse(js);
+  } catch {
+    return null;
+  }
+  if (!obj || !Array.isArray(obj.beats)) return null;
+  const nameOf = (b: any): string => {
+    if (b.characterId) {
+      const c = project.characters.find((x) => x.id === b.characterId);
+      if (c) return c.role === 'protagonist' ? state.protagonistName || c.name : c.name;
+    }
+    return typeof b.name === 'string' ? b.name : '';
+  };
+  const lines = obj.beats
+    .map((b: any) => {
+      const text = typeof b?.text === 'string' ? b.text : '';
+      if (!text) return '';
+      if (b.type === 'dialogue') {
+        const n = nameOf(b);
+        return n ? `${n}: ${text}` : text;
+      }
+      return text; // narration / thought
+    })
+    .filter(Boolean);
+  return lines.length ? lines.join('\n') : null;
+}
 
 function assetManifest(project: Project): string {
   const line = (a: { id: string; name: string; tags?: string[] }) =>
@@ -272,7 +307,7 @@ export async function buildRequest(
   // в тексте блоков. Ставим последней в системном промпте, чтобы имела приоритет.
   const tl = project.aiConfig.turnLength || DEFAULT_TURN_LENGTH;
   systemParts.push(
-    `TURN LENGTH & BEAT SIZE (authoritative — overrides any other length/beat guidance above): write a rich turn of roughly ${tl.min}–${tl.max} words TOTAL, split into MANY MEDIUM beats. Each beat is a readable chunk of 1–3 sentences (a short paragraph) — never a wall of text, never a bare one-liner. Reach the word target through the NUMBER of medium beats, not by inflating any single beat into a long block. Keep a real mix of dialogue and narration: characters who are present must actually SPEAK — emit "dialogue" beats with that character's characterId (a dialogue beat with a valid characterId is what puts the character's sprite on screen), interleaved with narration/thought. If your draft is under ${tl.min} words, add MORE medium beats — more exchanges, more scene — before closing the turn.`
+    `TURN LENGTH & BEAT SIZE (authoritative — overrides any other length/beat guidance above): land the turn WITHIN ${tl.min}–${tl.max} words TOTAL — that is the target, do NOT overshoot it; once you reach a natural pause inside the range, stop rather than padding. Split the turn into medium beats: each beat a readable 1–3 sentence chunk (a short paragraph) — never a wall of text, never a bare one-liner. Fill the range with the NUMBER of medium beats, not by inflating any single beat. Keep a real mix of dialogue and narration: characters who are present must actually SPEAK — emit "dialogue" beats with that character's characterId (a dialogue beat with a valid characterId is what puts the character's sprite on screen), interleaved with narration/thought.`
   );
   const gap = project.aiConfig.choiceMinGap ?? 0;
   if (gap > 0) {
@@ -282,9 +317,15 @@ export async function buildRequest(
   }
   const system = systemParts.join('\n\n');
 
-  // Live window of verbatim history.
+  // Live window of history. Прошлые ходы ассистента храним сырым JSON (для реплея),
+  // но в контекст ИИ шлём только ПРОЗУ этих ходов — так вход в разы легче (в
+  // истории иначе едет весь JSON со worldState/статами, дублируя текущие блоки).
   const K = Math.max(2, cfg.liveWindow);
-  const window = state.history.slice(-K * 2);
+  const window = state.history.slice(-K * 2).map((m) =>
+    m.role === 'assistant'
+      ? { role: 'assistant' as const, content: condenseAssistantTurn(m.content, project, state) ?? m.content }
+      : m
+  );
 
   const messages: LlmMessage[] = [...presetMessages, ...window];
 
@@ -307,7 +348,7 @@ export async function buildRequest(
   // весят последнее сообщение, поэтому длину дублируем здесь.
   withMove.push({
     role: 'user',
-    content: `${FORMAT_REMINDER}\nWrite a rich turn (~${tl.min}–${tl.max} words) split into MANY MEDIUM beats of 1–3 sentences each — mix dialogue (with the speaking character's characterId, so their sprite shows) and narration. No walls of text, no bare one-liners.`,
+    content: `${FORMAT_REMINDER}\nStay WITHIN ~${tl.min}–${tl.max} words (do not overshoot) as medium beats of 1–3 sentences each — mix dialogue (with the speaking character's characterId, so their sprite shows) and narration. No walls of text, no bare one-liners.`,
   });
 
   return { system, messages: withMove, prefill: cfg.prefill?.trim() || undefined };

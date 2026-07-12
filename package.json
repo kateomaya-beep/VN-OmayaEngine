@@ -1,7 +1,7 @@
 {
   "name": "novel-forge",
   "private": true,
-  "version": "0.1.8",
+  "version": "0.1.9",
   "type": "module",
   "description": "Конструктор ИИ-визуальных новелл (Novel Forge)",
   "scripts": {

@@ -25,7 +25,7 @@ export interface ParseResult {
 }
 
 // Strip markdown fences and locate the first balanced JSON object.
-function extractJson(raw: string): string | null {
+export function extractJson(raw: string): string | null {
   let text = raw.trim();
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) text = fence[1].trim();

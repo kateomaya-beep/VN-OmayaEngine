@@ -177,10 +177,12 @@ export async function runTurn(
 ): Promise<TurnResult> {
   const req = await buildRequest(project, state, playerMove);
 
-  // Потолок токенов — с запасом на верхнюю границу длины хода (слова→токены ≈ ×2.5)
-  // плюс место под JSON-обвязку/worldState. Иначе низкий дефолт шлюза режет ход.
+  // Потолок токенов — под верхнюю границу длины хода (слова→токены ≈ ×2.2 для
+  // кириллицы) + запас на JSON-обвязку/worldState. Держим НЕ слишком большим,
+  // иначе модель выбирает весь бюджет и уходит в «полотно» (медленно). Но и не
+  // ниже дефолта шлюза, который иначе режет ход.
   const tl = project.aiConfig.turnLength || DEFAULT_TURN_LENGTH;
-  const maxTokens = Math.min(8000, Math.max(1500, Math.round(tl.max * 2.5) + 1500));
+  const maxTokens = Math.min(6000, Math.max(1200, Math.round(tl.max * 2.2) + 700));
 
   let raw = await runCompletion({
     system: req.system,
