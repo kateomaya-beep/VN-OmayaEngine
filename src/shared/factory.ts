@@ -266,6 +266,9 @@ export function normalizeProject(raw: any): Project {
       turnLength: ai.turnLength ? normalizeTurnLength(ai.turnLength) : undefined,
       choiceMinGap:
         typeof ai.choiceMinGap === 'number' ? clamp(Math.round(ai.choiceMinGap), 0, 20) : undefined,
+      reasoningEffort: ['none', 'low', 'medium', 'high'].includes(ai.reasoningEffort)
+        ? ai.reasoningEffort
+        : undefined,
       advancedBlocks: arr<any>(ai.advancedBlocks)
         .filter((b) => b && typeof b.content === 'string')
         .map((b) => ({ content: b.content, depth: num(b.depth, 0) })),

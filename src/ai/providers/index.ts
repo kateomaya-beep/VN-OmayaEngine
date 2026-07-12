@@ -15,6 +15,8 @@ export interface CompletionRequest {
   // Потолок токенов ответа. Без него многие шлюзы режут ответ по своему низкому
   // дефолту (512/1024) — отсюда «всегда короткий ход». Считаем от длины хода.
   maxTokens?: number;
+  // Глубина размышления reasoning-моделей → reasoning_effort. Меньше = быстрее.
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
 }
 
 export interface Provider {
@@ -68,6 +70,7 @@ const openAiCompatible: Provider = {
         temperature: req.temperature,
         messages,
         ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+        ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
       }),
     });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);

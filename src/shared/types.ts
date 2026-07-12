@@ -203,6 +203,10 @@ export interface AiConfig {
   // Частота выборов: минимум ходов между показами выбора. 0/undefined = без
   // ограничения (как решит ИИ). Движок глушит choices, если прошло меньше N ходов.
   choiceMinGap?: number;
+  // «Глубина размышления» reasoning-моделей (Gemini 3 pro, o-series и т.п.):
+  // отправляется как reasoning_effort. Меньше = быстрее ответ. undefined = не
+  // отправлять (поведение провайдера по умолчанию — у thinking-моделей медленное).
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
   advancedBlocks?: AdvancedPromptBlock[];
   // Генерация изображений (BYO key, ключ в localStorage под ролью 'image')
   imageBaseUrl?: string;

@@ -249,6 +249,27 @@ export function PresetPanel({
         <div className="grid sm:grid-cols-2 gap-3">
           <TurnLengthField cfg={cfg} patch={patch} />
           <ChoiceFrequencyField cfg={cfg} patch={patch} />
+          <div className="sm:col-span-2">
+            <label className="label">Глубина размышления модели (reasoning)</label>
+            <select
+              className="input !py-1"
+              value={cfg.reasoningEffort ?? ''}
+              onChange={(e) =>
+                patch({ reasoningEffort: (e.target.value || undefined) as AiConfig['reasoningEffort'] })
+              }
+            >
+              <option value="">Авто (как у провайдера)</option>
+              <option value="none">Выкл — быстрее всего</option>
+              <option value="low">Низкая — быстро</option>
+              <option value="medium">Средняя</option>
+              <option value="high">Высокая — вдумчиво, медленно</option>
+            </select>
+            <p className="text-xs text-gray-500 mt-1">
+              Для «думающих» моделей (Gemini 3 Pro, o-серия): меньше — заметно быстрее ответ. Именно
+              скрытое «размышление» даёт задержку в десятки секунд. «Авто» = как у провайдера (у
+              thinking-моделей это медленно). Если провайдер не понимает параметр — оставьте «Авто».
+            </p>
+          </div>
           <Field label={`Температура: ${cfg.temperature.toFixed(2)}`}>
             <input
               type="range"

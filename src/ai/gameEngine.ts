@@ -188,6 +188,7 @@ export async function runTurn(
     prefill: req.prefill,
     temperature: project.aiConfig.temperature,
     maxTokens,
+    reasoningEffort: project.aiConfig.reasoningEffort,
   });
 
   let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
@@ -200,6 +201,7 @@ export async function runTurn(
       prefill: req.prefill,
       temperature: Math.min(project.aiConfig.temperature, 0.5),
       maxTokens,
+      reasoningEffort: project.aiConfig.reasoningEffort,
     });
     parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
   }
