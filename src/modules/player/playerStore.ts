@@ -6,6 +6,7 @@ import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, getSave, saveProject } from '../../storage/db';
 import { playMusic, playSfx, toggleMute } from './audio';
 import { parseSlash, SLASH_HELP } from './slashCommands';
+import { logEvent } from '../../shared/logStore';
 
 // currentMusicAssetId — это id ассета; для проигрывания нужен его blobKey.
 function trackBlobKey(project: Project, assetId: string | null): string | null {
@@ -260,6 +261,7 @@ async function runAndApply(
   playerMove: string
 ) {
   set({ thinking: true, error: null, choices: [], statFlash: [], queue: [], visibleBeats: [] });
+  logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
   try {
     // Обычная (нестриминговая) генерация — один ход целиком, затем показ.
     const { turn, state } = await runTurn(project, baseState, playerMove);
@@ -291,7 +293,9 @@ async function runAndApply(
 
     // Autosave every turn.
     await get().save(AUTOSAVE_SLOT, `Автосейв · ход ${state.turnCount}`);
+    logEvent('info', 'turn', `Ход применён (ход ${state.turnCount}, beats: ${turn.beats.length})`);
   } catch (e) {
+    logEvent('error', 'turn', 'Не удалось выполнить ход: ' + (e as Error).message, (e as Error).stack);
     set({ thinking: false, error: (e as Error).message });
   }
 }

@@ -6,7 +6,9 @@ import { ConnectionPanel } from '../modules/shared/ConnectionPanel';
 import { ExtensionsPanel } from '../modules/shared/ExtensionsPanel';
 import { PresetPanel } from '../modules/shared/PresetPanel';
 import { GameMasterPanel } from '../modules/shared/GameMasterPanel';
+import { LogsPanel } from '../modules/shared/LogsPanel';
 import { ToastHost } from '../shared/ToastHost';
+import { useLogs } from '../shared/logStore';
 import type { Project } from '../shared/types';
 
 // Единая постоянная верхняя панель (Batch 3 §1): одинаковая на главном экране и в
@@ -69,6 +71,8 @@ export function TopBarControls({
   const [extOpen, setExtOpen] = useState(false);
   const [presetOpen, setPresetOpen] = useState(false);
   const [gmOpen, setGmOpen] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const errorCount = useLogs((s) => s.logs.reduce((n, l) => n + (l.level === 'error' ? 1 : 0), 0));
 
   const btn = 'bg-black/40 hover:bg-black/60 dark:bg-panel2 rounded-lg px-2.5 py-1.5 text-sm';
 
@@ -85,6 +89,14 @@ export function TopBarControls({
       </button>
       <button className={btn} title="Управление расширениями" onClick={() => setExtOpen(true)}>
         🧩
+      </button>
+      <button className={`${btn} relative`} title="Логи (события и ошибки)" onClick={() => setLogsOpen(true)}>
+        🧾
+        {errorCount > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center">
+            {errorCount > 99 ? '99+' : errorCount}
+          </span>
+        )}
       </button>
       <button className={btn} title="Тема" onClick={toggleTheme}>
         {theme === 'dark' ? '🌙' : '☀️'}
@@ -122,6 +134,7 @@ export function TopBarControls({
         project={project}
         onPatch={onPatchProject}
       />
+      <LogsPanel open={logsOpen} onClose={() => setLogsOpen(false)} />
       <ToastHost />
     </>
   );

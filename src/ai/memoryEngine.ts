@@ -4,6 +4,7 @@ import { SUMMARIZER_PROMPT } from './directorPrompt';
 import { estimateTokens, uid } from '../shared/utils';
 import { pushToast, updateToast } from '../shared/toast';
 import { useLang } from '../shared/i18n';
+import { logEvent } from '../shared/logStore';
 
 // Двуязычные тексты тостов саммари (язык — из глобального переключателя UI).
 function tt(ru: string, en: string): string {
@@ -52,10 +53,12 @@ export async function maybeCompress(
     .join('\n\n');
 
   const toastId = pushToast('info', tt('Сжимаю память…', 'Summarizing memory…'));
+  logEvent('info', 'memory', `Саммаризация: сворачиваю ${stale.length} сообщений`);
   try {
     const prompt = project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(12);
     const text = await summarize(project, prompt, transcript);
     updateToast(toastId, 'success', tt('Память обновлена', 'Memory updated'));
+    logEvent('info', 'memory', 'Саммаризация выполнена');
     // Новая запись Хроники с диапазоном свёрнутых сообщений (для списка саммари).
     const fromMsg = state.memory.foldedMsgCount + 1;
     const toMsg = state.memory.foldedMsgCount + stale.length;
@@ -86,6 +89,7 @@ export async function maybeCompress(
       'error',
       tt('Ошибка автосаммари: ', 'Auto-summary error: ') + (e as Error).message
     );
+    logEvent('error', 'memory', 'Саммаризация не удалась: ' + (e as Error).message);
     return state; // graceful: keep verbatim history, retry next turn
   }
 }

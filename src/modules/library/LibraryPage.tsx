@@ -7,6 +7,7 @@ import { exportProjectZip, downloadBlob, importProjectZip, countSaves } from '..
 import { AssetImage, Modal } from '../../shared/ui';
 import { formatDate } from '../../shared/utils';
 import { useT } from '../../shared/i18n';
+import { logEvent } from '../../shared/logStore';
 
 export function LibraryPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -66,8 +67,8 @@ export function LibraryPage() {
       }
     } catch (e) {
       const err = e as Error;
-      // Полную ошибку — в консоль (для диагностики), пользователю — читаемый текст.
-      console.error('[NovelForge] Ошибка импорта:', err);
+      // Полную ошибку — в лог (для диагностики), пользователю — читаемый текст.
+      logEvent('error', 'import', err.message, err.stack);
       alert('Не удалось импортировать бэкап.\n\n' + err.message);
     } finally {
       setBusy(null);

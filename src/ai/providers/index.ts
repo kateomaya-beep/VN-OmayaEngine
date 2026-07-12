@@ -1,6 +1,7 @@
 import type { LlmMessage, ApiConnection } from '../../shared/types';
 import { getApiKey } from '../keys';
 import { getConnection } from '../connection';
+import { logEvent } from '../../shared/logStore';
 
 export interface CompletionRequest {
   system: string;
@@ -116,7 +117,17 @@ export function getProvider(name: ApiConnection['provider']): Provider {
 // Основная игровая генерация — через ГЛОБАЛЬНОЕ подключение (Batch 3 §2).
 export async function runCompletion(req: CompletionRequest): Promise<string> {
   const conn = getConnection();
-  return getProvider(conn.provider).complete(conn, getApiKey(conn.provider), req);
+  const model = req.model || conn.model || '(модель не выбрана)';
+  logEvent('info', 'llm', `Запрос → ${conn.provider} · ${model}`);
+  const started = Date.now();
+  try {
+    const out = await getProvider(conn.provider).complete(conn, getApiKey(conn.provider), req);
+    logEvent('info', 'llm', `Ответ получен за ${Date.now() - started} мс (${out.length} симв.)`);
+    return out;
+  } catch (e) {
+    logEvent('error', 'llm', (e as Error).message, (e as Error).stack);
+    throw e;
+  }
 }
 
 // Явное подключение (саммари/эмбеддинги); нет — берём глобальное основное.
@@ -127,7 +138,15 @@ export async function runCompletionWith(
 ): Promise<string> {
   const effective = conn || getConnection();
   const apiKey = conn ? getApiKey(keyRole) : getApiKey(effective.provider);
-  return getProvider(effective.provider).complete(effective, apiKey, { ...req, model: req.model || effective.model });
+  try {
+    return await getProvider(effective.provider).complete(effective, apiKey, {
+      ...req,
+      model: req.model || effective.model,
+    });
+  } catch (e) {
+    logEvent('error', 'llm', 'Доп. запрос (' + keyRole + '): ' + (e as Error).message);
+    throw e;
+  }
 }
 
 export async function listModels(conn: ApiConnection, apiKey: string): Promise<string[]> {

@@ -2,10 +2,22 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 import { router } from './app/router';
+import { logEvent } from './shared/logStore';
 import './index.css';
 
 // Build stamp — makes it unambiguous which code is actually running in the tab.
 console.info(`[NovelForge] v${__APP_VERSION__}`);
+logEvent('info', 'app', `Novel Forge v${__APP_VERSION__} запущен`);
+
+// Ловим необработанные ошибки и промисы — чтобы «молчаливые» сбои и вечная
+// загрузка были видны в панели логов (см. запрос про логи как в Таверне).
+window.addEventListener('error', (e) => {
+  logEvent('error', 'window', e.message || 'Ошибка страницы', (e.error as Error)?.stack);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const r: any = e.reason;
+  logEvent('error', 'promise', r?.message || String(r) || 'Необработанное отклонение промиса', r?.stack);
+});
 
 // Просим у браузера ПОСТОЯННОЕ хранилище — чтобы IndexedDB (проекты/сейвы/ассеты)
 // не вытеснялась при нехватке места или по эвристикам браузера. У установленного
