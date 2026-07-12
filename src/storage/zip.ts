@@ -55,9 +55,33 @@ function looksLikeProjectJson(raw: unknown): boolean {
 
 // Import: reads zip, re-keys ids to avoid collisions, stores blobs + project.
 export async function importProjectZip(file: File): Promise<ImportResult> {
-  const zip = await JSZip.loadAsync(file);
+  // Ранняя диагностика частых проблем переноса (пустой/битый файл, не .zip).
+  if (!file || file.size === 0) {
+    throw new Error(
+      `Файл пустой (0 байт)${file?.name ? ` — «${file.name}»` : ''}. ` +
+        'Похоже, при переносе бэкап не докачался. Скачайте .zip заново и повторите.'
+    );
+  }
+
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(file);
+  } catch (e) {
+    throw new Error(
+      `Не удалось открыть архив «${file.name}» (${Math.round(file.size / 1024)} КБ) — ` +
+        'файл повреждён или это не .zip (мессенджеры/облако иногда портят файл). ' +
+        'Скачайте бэкап заново и импортируйте. [' + (e as Error).message + ']'
+    );
+  }
+
   const projFile = zip.file('project.json');
-  if (!projFile) throw new Error('project.json не найден в архиве — это не экспорт Novel Forge?');
+  if (!projFile) {
+    const names = Object.keys(zip.files).slice(0, 8).join(', ') || 'пусто';
+    throw new Error(
+      'В архиве нет project.json — это не экспорт Novel Forge. ' +
+        `Внутри: ${names}. Экспортируйте проект через «Экспорт» и импортируйте именно этот .zip.`
+    );
+  }
   const raw = await projFile.async('string');
 
   let parsed: unknown;
@@ -80,9 +104,18 @@ export async function importProjectZip(file: File): Promise<ImportResult> {
     const newKey = uid('blob');
     const entry = zip.file(`assets/${oldKey}`);
     if (entry) {
-      const blob = await entry.async('blob');
-      const typed = asset.mime ? new Blob([blob], { type: asset.mime }) : blob;
-      await putAsset(newKey, typed);
+      try {
+        const blob = await entry.async('blob');
+        const typed = asset.mime ? new Blob([blob], { type: asset.mime }) : blob;
+        await putAsset(newKey, typed);
+      } catch (e) {
+        // Обычно — переполнение хранилища браузера на новом устройстве. Не роняем
+        // весь импорт: проект встанет, а недостающие ассеты можно догрузить.
+        const msg = (e as Error).name === 'QuotaExceededError' || /quota/i.test((e as Error).message)
+          ? 'не хватило места в браузере'
+          : (e as Error).message;
+        warnings.push(`Ассет «${asset.name}» не сохранён (${msg}).`);
+      }
     } else {
       warnings.push(`Ассет «${asset.name}» — файл в архиве не найден, ссылка будет пустой.`);
     }

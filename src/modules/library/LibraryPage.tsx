@@ -57,11 +57,18 @@ export function LibraryPage() {
   async function onImport(file: File) {
     setBusy('Импорт...');
     try {
-      const { warnings } = await importProjectZip(file);
+      const { project, warnings } = await importProjectZip(file);
       await refresh();
-      if (warnings.length) alert('Проект импортирован с замечаниями:\n' + warnings.join('\n'));
+      if (warnings.length) {
+        alert(`Проект «${project.meta.title}» импортирован, но с замечаниями:\n\n` + warnings.join('\n'));
+      } else {
+        alert(`Проект «${project.meta.title}» импортирован. Нажмите «Играть», чтобы продолжить.`);
+      }
     } catch (e) {
-      alert('Ошибка импорта: ' + (e as Error).message);
+      const err = e as Error;
+      // Полную ошибку — в консоль (для диагностики), пользователю — читаемый текст.
+      console.error('[NovelForge] Ошибка импорта:', err);
+      alert('Не удалось импортировать бэкап.\n\n' + err.message);
     } finally {
       setBusy(null);
     }
