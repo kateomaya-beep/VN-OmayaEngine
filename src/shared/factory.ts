@@ -269,6 +269,8 @@ export function normalizeProject(raw: any): Project {
       reasoningEffort: ['none', 'low', 'medium', 'high'].includes(ai.reasoningEffort)
         ? ai.reasoningEffort
         : undefined,
+      guidedThinking: bool(ai.guidedThinking, false) || undefined,
+      thinkingPlan: typeof ai.thinkingPlan === 'string' ? ai.thinkingPlan : undefined,
       advancedBlocks: arr<any>(ai.advancedBlocks)
         .filter((b) => b && typeof b.content === 'string')
         .map((b) => ({ content: b.content, depth: num(b.depth, 0) })),

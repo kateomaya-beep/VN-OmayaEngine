@@ -207,6 +207,11 @@ export interface AiConfig {
   // отправляется как reasoning_effort. Меньше = быстрее ответ. undefined = не
   // отправлять (поведение провайдера по умолчанию — у thinking-моделей медленное).
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+  // Управляемое размышление: вместо медленной родной «думалки» модель пишет
+  // короткий план в <thinking> (через префилл) — быстрее. thinkingPlan — шаблон
+  // плана (редактируемый). При включении родной reasoning форсится в none.
+  guidedThinking?: boolean;
+  thinkingPlan?: string;
   advancedBlocks?: AdvancedPromptBlock[];
   // Генерация изображений (BYO key, ключ в localStorage под ролью 'image')
   imageBaseUrl?: string;
@@ -237,6 +242,13 @@ export function defaultMemoryConfig(): MemoryConfig {
 // длинными ходами по умолчанию.
 export const TURN_LENGTH_BOUNDS = { min: 100, max: 2500 } as const;
 export const DEFAULT_TURN_LENGTH = { min: 500, max: 900 };
+// Короткий шаблон плана для управляемого размышления (по умолчанию). Специально
+// компактный — длинный план = медленно, теряется весь смысл.
+export const DEFAULT_THINKING_PLAN = `- Focus: what shifts this turn (1 line)
+- Present & what each wants (1 line)
+- Any stat/relationship change? (1 line, or "none")
+- Offer a choice? (only at a real fork, else "no")`;
+
 export function normalizeTurnLength(v: any): { min: number; max: number } {
   const clampW = (n: number) =>
     Math.min(Math.max(Math.round(n), TURN_LENGTH_BOUNDS.min), TURN_LENGTH_BOUNDS.max);

@@ -27,6 +27,10 @@ export interface ParseResult {
 // Strip markdown fences and locate the first balanced JSON object.
 export function extractJson(raw: string): string | null {
   let text = raw.trim();
+  // Управляемое размышление: модель пишет план в <thinking>/<think> перед JSON —
+  // вырезаем эти блоки, чтобы они не мешали разбору. Если тег не закрыт, но дальше
+  // есть JSON — балансный поиск ниже всё равно найдёт первый '{'.
+  text = text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) text = fence[1].trim();
 

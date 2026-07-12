@@ -11,7 +11,7 @@ import {
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
 import type { Project, AiConfig, AdvancedPromptBlock, LlmRole } from '../../shared/types';
-import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS } from '../../shared/types';
+import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, DEFAULT_THINKING_PLAN } from '../../shared/types';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
 // отделён от настроек API. Каждый блок: порядок (drag&drop), роль system/user/assistant
@@ -270,6 +270,7 @@ export function PresetPanel({
               thinking-моделей это медленно). Если провайдер не понимает параметр — оставьте «Авто».
             </p>
           </div>
+          <GuidedThinkingField cfg={cfg} patch={patch} />
           <Field label={`Температура: ${cfg.temperature.toFixed(2)}`}>
             <input
               type="range"
@@ -356,6 +357,43 @@ export function PresetPanel({
         ))}
       </div>
     </Modal>
+  );
+}
+
+// Управляемое размышление: заменяет медленную родную «думалку» модели коротким
+// планом в <thinking> через префилл. Родной reasoning при этом форсится в none.
+function GuidedThinkingField({
+  cfg,
+  patch,
+}: {
+  cfg: AiConfig;
+  patch: (p: Partial<AiConfig>) => void;
+}) {
+  const on = !!cfg.guidedThinking;
+  return (
+    <div className="sm:col-span-2 rounded-lg border border-white/10 p-3">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => patch({ guidedThinking: e.target.checked || undefined })}
+        />
+        <span className="font-medium text-sm">Управляемое размышление (свой короткий план)</span>
+      </label>
+      <p className="text-xs text-gray-500 mt-1">
+        Вместо медленной родной «думалки» модель пишет короткий план в тегах{' '}
+        <code>&lt;thinking&gt;</code> (через префилл), затем сразу ответ. Обычно это заметно быстрее
+        «думающих» моделей. Родной reasoning при этом принудительно выключается. План держите{' '}
+        <b>коротким</b> — длинный сведёт весь выигрыш на нет.
+      </p>
+      {on && (
+        <textarea
+          className="input h-28 mt-2 text-sm font-mono"
+          value={cfg.thinkingPlan ?? DEFAULT_THINKING_PLAN}
+          onChange={(e) => patch({ thinkingPlan: e.target.value })}
+        />
+      )}
+    </div>
   );
 }
 

@@ -183,6 +183,11 @@ export async function runTurn(
   // ниже дефолта шлюза, который иначе режет ход.
   const tl = project.aiConfig.turnLength || DEFAULT_TURN_LENGTH;
   const maxTokens = Math.min(6000, Math.max(1200, Math.round(tl.max * 2.2) + 700));
+  // При управляемом размышлении родную «думалку» глушим (none) — иначе она сложится
+  // с нашим планом и станет только медленнее.
+  const reasoningEffort = project.aiConfig.guidedThinking
+    ? 'none'
+    : project.aiConfig.reasoningEffort;
 
   let raw = await runCompletion({
     system: req.system,
@@ -190,7 +195,7 @@ export async function runTurn(
     prefill: req.prefill,
     temperature: project.aiConfig.temperature,
     maxTokens,
-    reasoningEffort: project.aiConfig.reasoningEffort,
+    reasoningEffort,
   });
 
   let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
@@ -203,7 +208,7 @@ export async function runTurn(
       prefill: req.prefill,
       temperature: Math.min(project.aiConfig.temperature, 0.5),
       maxTokens,
-      reasoningEffort: project.aiConfig.reasoningEffort,
+      reasoningEffort,
     });
     parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
   }

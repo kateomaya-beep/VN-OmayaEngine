@@ -1,5 +1,5 @@
 import type { Project, RuntimeState, LlmMessage } from '../shared/types';
-import { AUDIO_MOODS, DEFAULT_TURN_LENGTH } from '../shared/types';
+import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { normalizePreset, type DynamicSource } from './promptPreset';
 import { matchLorebook } from './lorebookEngine';
@@ -346,12 +346,24 @@ export async function buildRequest(
 
   // Ремайндер формата + длины на глубине 0 (в самый конец) — модели сильнее
   // весят последнее сообщение, поэтому длину дублируем здесь.
-  withMove.push({
-    role: 'user',
-    content: `${FORMAT_REMINDER}\nStay WITHIN ~${tl.min}–${tl.max} words (do not overshoot) as medium beats of 1–3 sentences each — mix dialogue (with the speaking character's characterId, so their sprite shows) and narration. No walls of text, no bare one-liners.`,
-  });
+  const lengthReminder = `Stay WITHIN ~${tl.min}–${tl.max} words (do not overshoot) as medium beats of 1–3 sentences each — mix dialogue (with the speaking character's characterId, so their sprite shows) and narration. No walls of text, no bare one-liners.`;
 
-  return { system, messages: withMove, prefill: cfg.prefill?.trim() || undefined };
+  // Управляемое размышление: короткий план в <thinking> вместо медленной родной
+  // «думалки». Префилл открывает тег, инструкция задаёт короткий шаблон плана,
+  // после закрытия тега — только JSON. Парсер вырезает <thinking>…</thinking>.
+  let prefill = cfg.prefill?.trim() || undefined;
+  if (cfg.guidedThinking) {
+    const plan = (cfg.thinkingPlan?.trim() || DEFAULT_THINKING_PLAN);
+    withMove.push({
+      role: 'user',
+      content: `REASONING PROTOCOL: Do ALL planning ONLY inside a single <thinking></thinking> block at the very start of your reply, and keep it SHORT — a brief bullet per line following this template, nothing more:\n${plan}\nThen immediately close </thinking> and output the ONE JSON object per the schema and nothing after it.\n${lengthReminder}\n${FORMAT_REMINDER}`,
+    });
+    prefill = '<thinking>\n';
+  } else {
+    withMove.push({ role: 'user', content: `${FORMAT_REMINDER}\n${lengthReminder}` });
+  }
+
+  return { system, messages: withMove, prefill };
 }
 
 // Живой счётчик токенов/контекста (см. CR v2 §J) — считает по РЕАЛЬНО собранному
