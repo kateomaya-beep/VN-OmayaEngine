@@ -8,7 +8,14 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 
 export default defineConfig({
   plugins: [react()],
-  server: { port: 5173 },
+  // ВАЖНО: dev, preview и лаунчер ДОЛЖНЫ работать на ОДНОМ порту. IndexedDB (проекты,
+  // сейвы, ассеты) привязана к origin = scheme+host+ПОРТ. Если порт «уплывёт»
+  // (dev 5173 → preview 4173, или strictPort=false подберёт 5174), приложение
+  // откроет ДРУГУЮ пустую базу и покажется, что данные пропали (они целы, просто
+  // под старым адресом). strictPort=true: лучше явная ошибка «порт занят», чем
+  // тихий переход на новый origin и «пустая игра».
+  server: { port: 5173, strictPort: true },
+  preview: { port: 5173, strictPort: true },
   // vectorWorker.ts dynamically imports @huggingface/transformers, which needs
   // code-splitting inside the worker — only the ES module worker format supports that.
   worker: { format: 'es' },
