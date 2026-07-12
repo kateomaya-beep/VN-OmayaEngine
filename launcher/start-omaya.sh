@@ -18,16 +18,37 @@ URL="http://localhost:${PORT}/"
 echo "▸ Novel Forge — лаунчер"
 echo "  Каталог: $ROOT"
 
-# 1) Зависимости.
+# 1) Обновление кода (если это git-репозиторий и нет локальных правок) — чтобы
+#    «запустил лаунчер» = «получил свежую версию». При наличии своих изменений
+#    НЕ трогаем, просто предупреждаем.
+if [ "$NO_PULL" != "1" ] && command -v git >/dev/null 2>&1 && [ -d .git ]; then
+  if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "▸ Обновляю код (git pull)…"
+    git pull --ff-only 2>/dev/null || echo "  (не удалось обновить — продолжаю на текущей версии)"
+  else
+    echo "  ⚠ Есть локальные изменения — пропускаю git pull."
+  fi
+fi
+
+# 2) Зависимости.
 if [ ! -d node_modules ]; then
   echo "▸ Ставлю зависимости (npm install)…"
   npm install
 fi
 
-# 2) Сборка (если нет dist или передан --build).
-if [ ! -d dist ] || [ "$1" = "--build" ] || [ "$1" = "-b" ]; then
+# 3) Сборка. ВАЖНО: пересобираем, если исходники НОВЕЕ, чем dist (иначе после
+#    обновления кода лаунчер показал бы старую сборку — «вроде ничего не изменилось»).
+NEED_BUILD=0
+if [ ! -f dist/index.html ]; then
+  NEED_BUILD=1
+elif [ -n "$(find src public index.html vite.config.ts package.json -newer dist/index.html -print -quit 2>/dev/null)" ]; then
+  NEED_BUILD=1
+fi
+if [ "$1" = "--build" ] || [ "$1" = "-b" ] || [ "$NEED_BUILD" = "1" ]; then
   echo "▸ Собираю приложение (npm run build)…"
   npm run build
+else
+  echo "▸ Сборка актуальна — пропускаю build."
 fi
 
 # 3) Открывалка URL под текущую платформу.
