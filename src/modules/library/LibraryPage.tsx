@@ -178,8 +178,8 @@ export function LibraryPage() {
         </div>
       </Modal>
 
-      {/* Экспорт для шаринга: превью-карточка + дисклеймер про права на контент (CR v2 §L) */}
-      <Modal open={!!shareTarget} onClose={() => setShareTarget(null)} title="Экспортировать для шаринга">
+      {/* Экспорт / перенос проекта: полный (с прогрессом) или чистый (без памяти) */}
+      <Modal open={!!shareTarget} onClose={() => setShareTarget(null)} title="Экспорт / перенос проекта">
         {shareTarget && (
           <>
             <div className="aspect-video rounded-lg overflow-hidden mb-3 bg-panel2">
@@ -194,7 +194,10 @@ export function LibraryPage() {
                 {shareTarget.lore.worldDescription.slice(0, 200)}
               </p>
             )}
-            {/* Выбор: с прогрессом (бэкап) или чистый проект (для новых игроков) */}
+            <p className="text-xs text-gray-400 mb-3">
+              Скачается один <b>.zip</b>. На другом устройстве: <b>Библиотека → Импорт .zip</b>.
+            </p>
+            {/* Выбор: полный перенос (с прогрессом) или чистый проект (без памяти) */}
             <div className="space-y-2 mb-4">
               <label
                 className={`flex gap-3 items-start rounded-lg border p-3 cursor-pointer ${
@@ -208,12 +211,15 @@ export function LibraryPage() {
                   onChange={() => setWithProgress(true)}
                 />
                 <div>
-                  <div className="text-sm font-medium">С прогрессом (мой бэкап)</div>
+                  <div className="text-sm font-medium">
+                    📦 Полный перенос (с прогрессом) — на другое устройство / бэкап
+                  </div>
                   <div className="text-xs text-gray-400">
-                    Проект + всё прохождение: история, статусы, отношения, память, Game Master,
-                    календарь/события.
+                    Настройки проекта + ассеты + всё прохождение: история, статусы, отношения,
+                    память и все данные Game Master (персонажи, события, отношения, календарь,
+                    адженда).
                     {saveCount !== null && (
-                      <> Сохранений: {saveCount === 0 ? 'нет — прогресса ещё нет' : saveCount}.</>
+                      <> Сохранений внутри: {saveCount === 0 ? 'нет — прогресса ещё нет' : saveCount}.</>
                     )}
                   </div>
                 </div>
@@ -230,13 +236,19 @@ export function LibraryPage() {
                   onChange={() => setWithProgress(false)}
                 />
                 <div>
-                  <div className="text-sm font-medium">Без прогресса (для новых игроков)</div>
+                  <div className="text-sm font-medium">✨ Чистый проект (без памяти)</div>
                   <div className="text-xs text-gray-400">
-                    Только чистый проект — тот, кто импортирует, начнёт игру с начала. Для шаринга.
+                    Настройки проекта + ассеты, но без прохождения — тот, кто импортирует,
+                    начнёт с начала. Для новых игроков и шаринга.
                   </div>
                 </div>
               </label>
             </div>
+
+            <p className="text-[11px] text-gray-500 mb-3">
+              🔑 API-ключи в архив не попадают (безопасность) — на новом устройстве введите их
+              заново в «Подключение к ИИ».
+            </p>
 
             <div className="bg-amber-500/10 border border-amber-400/30 rounded-lg p-3 text-xs text-amber-200 mb-4">
               ⚠️ Вы делитесь файлами, которые могут быть защищены авторским правом или условиями
