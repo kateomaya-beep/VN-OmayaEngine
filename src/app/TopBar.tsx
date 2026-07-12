@@ -4,6 +4,7 @@ import { useLang } from '../shared/i18n';
 import { useTheme } from '../shared/theme';
 import { ConnectionPanel } from '../modules/shared/ConnectionPanel';
 import { ExtensionsPanel } from '../modules/shared/ExtensionsPanel';
+import { PresetPanel } from '../modules/shared/PresetPanel';
 import type { Project } from '../shared/types';
 
 // Единая постоянная верхняя панель (Batch 3 §1): одинаковая на главном экране и в
@@ -64,6 +65,7 @@ export function TopBarControls({
   const { lang, setLang } = useLang();
   const [connOpen, setConnOpen] = useState(false);
   const [extOpen, setExtOpen] = useState(false);
+  const [presetOpen, setPresetOpen] = useState(false);
 
   const btn = 'bg-black/40 hover:bg-black/60 dark:bg-panel2 rounded-lg px-2.5 py-1.5 text-sm';
 
@@ -71,6 +73,9 @@ export function TopBarControls({
     <>
       <button className={btn} title="Подключение к ИИ" onClick={() => setConnOpen(true)}>
         🔌
+      </button>
+      <button className={btn} title="Пресет промпта" onClick={() => setPresetOpen(true)}>
+        🎚
       </button>
       <button className={btn} title="Управление расширениями" onClick={() => setExtOpen(true)}>
         🧩
@@ -93,6 +98,12 @@ export function TopBarControls({
       </div>
 
       <ConnectionPanel open={connOpen} onClose={() => setConnOpen(false)} />
+      <PresetPanel
+        open={presetOpen}
+        onClose={() => setPresetOpen(false)}
+        project={project}
+        onPatch={onPatchProject}
+      />
       <ExtensionsPanel
         open={extOpen}
         onClose={() => setExtOpen(false)}

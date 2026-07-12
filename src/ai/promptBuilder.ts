@@ -200,27 +200,34 @@ export async function buildRequest(
     memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
   };
 
-  // Собираем system из редактируемого пресета (Batch 3 §8): по порядку, только
+  // Собираем промпт из редактируемого пресета (Batch 3 §8): по порядку, только
   // включённые блоки; статичные — их текст (с макросами), динамические — от движка.
+  // Роль блока (как в Таверне): 'system' идёт в системный промпт; 'user'/'assistant'
+  // становятся отдельными сообщениями ПЕРЕД живой историей.
   const preset = normalizePreset(cfg.promptPreset);
-  const parts: string[] = [];
+  const systemParts: string[] = [];
+  const presetMessages: LlmMessage[] = [];
   for (const block of preset.blocks) {
     if (!block.enabled) continue;
+    let text: string;
     if (block.dynamic) {
       const gen = dynamicContent[block.dynamic];
-      const text = gen ? await gen() : '';
-      if (text.trim()) parts.push(text);
-    } else if (block.content.trim()) {
-      parts.push(expandMacros(block.content, ctx));
+      text = gen ? await gen() : '';
+    } else {
+      text = expandMacros(block.content, ctx);
     }
+    if (!text.trim()) continue;
+    const role = block.role || 'system';
+    if (role === 'system') systemParts.push(text);
+    else presetMessages.push({ role, content: text });
   }
-  const system = parts.join('\n\n');
+  const system = systemParts.join('\n\n');
 
   // Live window of verbatim history.
   const K = Math.max(2, cfg.liveWindow);
   const window = state.history.slice(-K * 2);
 
-  const messages: LlmMessage[] = [...window];
+  const messages: LlmMessage[] = [...presetMessages, ...window];
 
   // Продвинутые кастомные вставки на заданной глубине от конца (author's note style).
   const blocks = (cfg.advancedBlocks || []).filter((b) => b.content.trim());

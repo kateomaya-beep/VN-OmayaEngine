@@ -9,7 +9,6 @@ import { CharacterEditor } from './editors/CharacterEditor';
 import { StatsEditor } from './editors/StatsEditor';
 import { AssetManager } from './editors/AssetManager';
 import { LorebookEditor } from './editors/LorebookEditor';
-import { PromptTuner } from './editors/PromptTuner';
 
 const TABS = [
   { id: 'settings', label: 'tab.settings', el: ProjectSettings },
@@ -18,7 +17,6 @@ const TABS = [
   { id: 'stats', label: 'tab.stats', el: StatsEditor },
   { id: 'assets', label: 'tab.assets', el: AssetManager },
   { id: 'lorebook', label: 'tab.lorebook', el: LorebookEditor },
-  { id: 'ai', label: 'tab.ai', el: PromptTuner },
 ] as const;
 
 export function ConstructorPage() {

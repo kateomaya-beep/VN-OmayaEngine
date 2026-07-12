@@ -1,4 +1,4 @@
-import { EMOTIONS, AUDIO_MOODS } from '../shared/types';
+import { EMOTIONS, AUDIO_MOODS, type LlmRole } from '../shared/types';
 import { uid } from '../shared/utils';
 
 // Полностью редактируемый пресет промпта в стиле SillyTavern (см. Batch 3 §8):
@@ -19,6 +19,7 @@ export interface PromptBlock {
   name: string;
   enabled: boolean;
   content: string; // для статичных блоков (редактируемый текст)
+  role?: LlmRole; // роль блока как в Таверне: 'system' (по умолч.) | 'user' | 'assistant'
   dynamic?: DynamicSource; // если задан — контент генерирует движок (content игнорируется)
   flagged?: boolean; // визуальное предупреждение (JSON-контракт)
   builtinKey?: string; // ключ дефолтного блока для «вернуть по умолчанию»
@@ -221,6 +222,7 @@ export function parsePresetJson(raw: unknown): PromptPreset | null {
       name: b.name,
       enabled: typeof b.enabled === 'boolean' ? b.enabled : true,
       content: typeof b.content === 'string' ? b.content : '',
+      role: b.role === 'user' || b.role === 'assistant' ? b.role : undefined,
       dynamic: typeof b.dynamic === 'string' ? b.dynamic : undefined,
       flagged: !!b.flagged,
       builtinKey: typeof b.builtinKey === 'string' ? b.builtinKey : undefined,
