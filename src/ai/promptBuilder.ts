@@ -1,5 +1,5 @@
 import type { Project, RuntimeState, LlmMessage } from '../shared/types';
-import { AUDIO_MOODS } from '../shared/types';
+import { AUDIO_MOODS, DEFAULT_TURN_LENGTH } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { normalizePreset, type DynamicSource } from './promptPreset';
 import { matchLorebook } from './lorebookEngine';
@@ -267,6 +267,13 @@ export async function buildRequest(
     if (role === 'system') systemParts.push(text);
     else presetMessages.push({ role, content: text });
   }
+
+  // Авторитетная длина хода (ползунок/ввод в пресете) — переопределяет любые числа
+  // в тексте блоков. Ставим последней в системном промпте, чтобы имела приоритет.
+  const tl = project.aiConfig.turnLength || DEFAULT_TURN_LENGTH;
+  systemParts.push(
+    `TURN LENGTH (authoritative — overrides any other length guidance above): write roughly ${tl.min}–${tl.max} words of story across the beats this turn.`
+  );
   const system = systemParts.join('\n\n');
 
   // Live window of verbatim history.

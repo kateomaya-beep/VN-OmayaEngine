@@ -197,6 +197,9 @@ export interface AiConfig {
   jailbreakEnabled: boolean; // слой 3, по умолчанию ВЫКЛ
   jailbreakPrompt?: string;
   prefill?: string; // слой 4 (продвинутый)
+  // Длина хода в СЛОВАХ: авторитетный диапазон min..max, задаётся ползунком/вводом
+  // в пресете. Переопределяет числа в тексте блока «Стиль». undefined = дефолт.
+  turnLength?: { min: number; max: number };
   advancedBlocks?: AdvancedPromptBlock[];
   // Генерация изображений (BYO key, ключ в localStorage под ролью 'image')
   imageBaseUrl?: string;
@@ -221,6 +224,21 @@ export interface MemoryConfig {
 
 export function defaultMemoryConfig(): MemoryConfig {
   return { summaryEveryN: 30, vectorization: 'off' };
+}
+
+// Длина хода (слов). Ползунок/ввод ограничены этими границами; дефолт совпадает с
+// длинными ходами по умолчанию.
+export const TURN_LENGTH_BOUNDS = { min: 100, max: 2500 } as const;
+export const DEFAULT_TURN_LENGTH = { min: 500, max: 900 };
+export function normalizeTurnLength(v: any): { min: number; max: number } {
+  const clampW = (n: number) =>
+    Math.min(Math.max(Math.round(n), TURN_LENGTH_BOUNDS.min), TURN_LENGTH_BOUNDS.max);
+  const lo = Number(v?.min);
+  const hi = Number(v?.max);
+  let min = Number.isFinite(lo) ? clampW(lo) : DEFAULT_TURN_LENGTH.min;
+  let max = Number.isFinite(hi) ? clampW(hi) : DEFAULT_TURN_LENGTH.max;
+  if (min > max) [min, max] = [max, min];
+  return { min, max };
 }
 
 export interface Project {

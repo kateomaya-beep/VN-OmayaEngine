@@ -20,7 +20,7 @@ import type {
   ApiConnection,
   GameMasterState,
 } from './types';
-import { EMOTIONS, AUDIO_MOODS, defaultMemoryConfig, emptyGameMaster } from './types';
+import { EMOTIONS, AUDIO_MOODS, defaultMemoryConfig, emptyGameMaster, normalizeTurnLength } from './types';
 import { uid, clamp } from './utils';
 
 export const DEFAULT_STYLE_PRESET = 'romance_club';
@@ -263,6 +263,7 @@ export function normalizeProject(raw: any): Project {
       jailbreakEnabled: bool(ai.jailbreakEnabled, false),
       jailbreakPrompt: typeof ai.jailbreakPrompt === 'string' ? ai.jailbreakPrompt : undefined,
       prefill: typeof ai.prefill === 'string' ? ai.prefill : undefined,
+      turnLength: ai.turnLength ? normalizeTurnLength(ai.turnLength) : undefined,
       advancedBlocks: arr<any>(ai.advancedBlocks)
         .filter((b) => b && typeof b.content === 'string')
         .map((b) => ({ content: b.content, depth: num(b.depth, 0) })),

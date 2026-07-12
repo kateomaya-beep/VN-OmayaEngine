@@ -11,6 +11,7 @@ import {
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
 import type { Project, AiConfig, AdvancedPromptBlock, LlmRole } from '../../shared/types';
+import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS } from '../../shared/types';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
 // отделён от настроек API. Каждый блок: порядок (drag&drop), роль system/user/assistant
@@ -246,6 +247,7 @@ export function PresetPanel({
       <div className="card !bg-panel2 mt-4">
         <h4 className="font-semibold mb-3">Параметры генерации</h4>
         <div className="grid sm:grid-cols-2 gap-3">
+          <TurnLengthField cfg={cfg} patch={patch} />
           <Field label={`Температура: ${cfg.temperature.toFixed(2)}`}>
             <input
               type="range"
@@ -332,5 +334,73 @@ export function PresetPanel({
         ))}
       </div>
     </Modal>
+  );
+}
+
+// Длина хода: диапазон в СЛОВАХ (min..max) — двумя ползунками и вводом чисел.
+// Значение переопределяет числа в тексте блоков и уходит в промпт как авторитетное.
+function TurnLengthField({
+  cfg,
+  patch,
+}: {
+  cfg: AiConfig;
+  patch: (p: Partial<AiConfig>) => void;
+}) {
+  const tl = cfg.turnLength || DEFAULT_TURN_LENGTH;
+  const B = TURN_LENGTH_BOUNDS;
+  const clampW = (n: number) =>
+    Math.min(Math.max(Math.round(Number.isFinite(n) ? n : 0), B.min), B.max);
+  const setMin = (n: number) => patch({ turnLength: { min: Math.min(clampW(n), tl.max), max: tl.max } });
+  const setMax = (n: number) => patch({ turnLength: { min: tl.min, max: Math.max(clampW(n), tl.min) } });
+  return (
+    <div className="sm:col-span-2">
+      <label className="label">Длина хода (слов истории за ход): {tl.min}–{tl.max}</label>
+      <div className="flex items-center gap-2 mb-2">
+        <input
+          type="number"
+          className="input !py-1 w-24"
+          min={B.min}
+          max={B.max}
+          step={50}
+          value={tl.min}
+          onChange={(e) => setMin(Number(e.target.value))}
+        />
+        <span className="text-gray-500">—</span>
+        <input
+          type="number"
+          className="input !py-1 w-24"
+          min={B.min}
+          max={B.max}
+          step={50}
+          value={tl.max}
+          onChange={(e) => setMax(Number(e.target.value))}
+        />
+        <span className="text-xs text-gray-500">слов</span>
+      </div>
+      <div className="space-y-1">
+        <input
+          type="range"
+          className="w-full"
+          min={B.min}
+          max={B.max}
+          step={50}
+          value={tl.min}
+          onChange={(e) => setMin(Number(e.target.value))}
+        />
+        <input
+          type="range"
+          className="w-full"
+          min={B.min}
+          max={B.max}
+          step={50}
+          value={tl.max}
+          onChange={(e) => setMax(Number(e.target.value))}
+        />
+      </div>
+      <p className="text-xs text-gray-500 mt-1">
+        Ориентир объёма истории за один ход — нижняя и верхняя граница. Меньше — быстрее ответ; больше —
+        длиннее сцены между действиями.
+      </p>
+    </div>
   );
 }
