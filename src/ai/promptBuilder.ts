@@ -17,9 +17,9 @@ function assetManifest(project: Project): string {
   const bg = project.assets.filter((a) => a.type === 'background');
   const cg = project.assets.filter((a) => a.type === 'cg');
   const sfx = project.assets.filter((a) => a.type === 'sfx');
-  if (bg.length) sections.push(`Фоны (выбирай backgroundId по тегам):\n${bg.map(line).join('\n')}`);
-  if (cg.length) sections.push(`CG (кат-сцены):\n${cg.map(line).join('\n')}`);
-  if (sfx.length) sections.push(`Звуки (sfxId):\n${sfx.map(line).join('\n')}`);
+  if (bg.length) sections.push(`Backgrounds (pick backgroundId by tags):\n${bg.map(line).join('\n')}`);
+  if (cg.length) sections.push(`CG (cutscenes):\n${cg.map(line).join('\n')}`);
+  if (sfx.length) sections.push(`SFX (sfxId):\n${sfx.map(line).join('\n')}`);
 
   // Аудио-настроения: базовые + кастомные проекта (см. CR v2 §N.2), помечая
   // какие реально доступны (есть трек).
@@ -27,11 +27,11 @@ function assetManifest(project: Project): string {
   for (const a of project.assets) if (a.type === 'music' && a.audioMood) availableMoods.add(a.audioMood);
   const allMoods = [...AUDIO_MOODS, ...project.audioMoods];
   const moodLine = allMoods
-    .map((m) => `${m}${availableMoods.has(m) ? '' : ' (нет трека — не выбирать)'}`)
+    .map((m) => `${m}${availableMoods.has(m) ? '' : ' (no track — do not pick)'}`)
     .join(', ');
-  sections.push(`Аудио-настроения (musicMood): ${moodLine}`);
+  sections.push(`Audio moods (musicMood): ${moodLine}`);
 
-  return sections.join('\n') || '  (нет ассетов)';
+  return sections.join('\n') || '  (no assets)';
 }
 
 function characterBlocks(
@@ -40,28 +40,28 @@ function characterBlocks(
   ctx: MacroContext
 ): string {
   const roleLabel: Record<string, string> = {
-    protagonist: 'ГЕРОЙ ИГРОКА',
-    love_interest: 'любовный интерес',
-    important_character: 'важный персонаж',
-    npc: 'второстепенный',
+    protagonist: "PLAYER'S HERO",
+    love_interest: 'love interest',
+    important_character: 'important character',
+    npc: 'minor',
   };
   const rels = ctx.state?.relationship || {};
   const relLine = (c: (typeof project.characters)[number]) => {
     if (c.role === 'protagonist') return '';
     const r = rels[c.id] || c.relationship;
-    return `\nОтношения к ${c.name} (id для statChanges): ❤️ rel:${c.id}:affection=${r.affection}, 🔥 rel:${c.id}:passion_stat=${r.passion_stat}, 🍀 rel:${c.id}:friendship=${r.friendship} (диапазон -100..100)`;
+    return `\nRelationship toward the hero (ids for statChanges): ❤️ rel:${c.id}:affection=${r.affection}, 🔥 rel:${c.id}:passion_stat=${r.passion_stat}, 🍀 rel:${c.id}:friendship=${r.friendship} (range -100..100)`;
   };
   const desc = (c: (typeof project.characters)[number]) => {
     const emotions = Object.keys(c.sprites);
-    const emo = emotions.length ? emotions.join(', ') : '(спрайтов нет — рендер как имя+текст)';
-    return `### ${c.name} (id: ${c.id}, роль: ${roleLabel[c.role] || c.role})
-Внешность: ${expandMacros(c.card.appearance, ctx)}
-Характер: ${expandMacros(c.card.personality, ctx)}
-Предыстория: ${expandMacros(c.card.backstory, ctx)}
-Манера речи: ${expandMacros(c.card.speechStyle, ctx)}${
-      c.card.relationshipArc ? `\nАрка отношений: ${expandMacros(c.card.relationshipArc, ctx)}` : ''
+    const emo = emotions.length ? emotions.join(', ') : '(no sprites — render as name + text)';
+    return `### ${c.name} (id: ${c.id}, role: ${roleLabel[c.role] || c.role})
+Appearance: ${expandMacros(c.card.appearance, ctx)}
+Personality: ${expandMacros(c.card.personality, ctx)}
+Backstory: ${expandMacros(c.card.backstory, ctx)}
+Speech style: ${expandMacros(c.card.speechStyle, ctx)}${
+      c.card.relationshipArc ? `\nRelationship arc: ${expandMacros(c.card.relationshipArc, ctx)}` : ''
     }${relLine(c)}
-Доступные эмоции: ${emo}`;
+Available emotions: ${emo}`;
   };
 
   const present = project.characters.filter((c) => onScreenIds.includes(c.id));
@@ -74,25 +74,25 @@ function characterBlocks(
   );
 
   let out = '';
-  if (fullList.length) out += `Персонажи в фокусе (полные карточки):\n${fullList.map(desc).join('\n\n')}\n`;
+  if (fullList.length) out += `Characters in focus (full cards):\n${fullList.map(desc).join('\n\n')}\n`;
   if (others.length) {
-    out += `\nОстальные персонажи (кратко):\n${others
+    out += `\nOther characters (brief):\n${others
       .map((c) => `- ${c.name} (id: ${c.id}, ${c.role}): ${c.card.personality.slice(0, 80)}`)
       .join('\n')}`;
   }
   if (!fullList.length && !others.length) {
-    out = '(заранее заданных персонажей нет — вводи NPC через name)';
+    out = '(no predefined characters — introduce NPCs via name)';
   }
   return out;
 }
 
 function statsState(project: Project, values: Record<string, number>): string {
-  if (!project.stats.length) return '(статов нет)';
+  if (!project.stats.length) return '(no stats)';
   return project.stats
     .map((s) => {
       const v = values[s.id] ?? s.initial;
       return `- ${s.id} "${s.name}" = ${v} (${s.min}..${s.max})${
-        s.visible ? '' : ' [скрытый]'
+        s.visible ? '' : ' [hidden]'
       }: ${s.description}`;
     })
     .join('\n');
@@ -107,17 +107,17 @@ async function memoryBlock(
   const m = state.memory;
   const parts: string[] = [];
   if (m.chronicle.length) {
-    parts.push(`ХРОНИКА (свёрнутые прошлые события):\n${m.chronicle.map((c, i) => `[${i + 1}] ${c}`).join('\n')}`);
+    parts.push(`CHRONICLE (compressed past events):\n${m.chronicle.map((c, i) => `[${i + 1}] ${c}`).join('\n')}`);
   }
   if (m.liveSummary.trim()) {
-    parts.push(`ЗАМЕТКА О ТЕКУЩЕЙ АРКЕ (от автора):\n${m.liveSummary}`);
+    parts.push(`CURRENT ARC NOTE (from the author):\n${m.liveSummary}`);
   }
   if (m.facts.length) {
     const facts = m.facts
       .slice(-40)
-      .map((f) => `[ход ${f.turn}] ${f.text}`)
+      .map((f) => `[turn ${f.turn}] ${f.text}`)
       .join('; ');
-    parts.push(`КЛЮЧЕВЫЕ РЕШЕНИЯ И ФАКТЫ (канон, не искажать):\n${facts}`);
+    parts.push(`KEY DECISIONS AND FACTS (canon — do not distort):\n${facts}`);
   }
 
   // Меморибук: закреплённые записи всегда, остальные — последние по времени.
@@ -125,7 +125,7 @@ async function memoryBlock(
   const recent = m.memorybook.filter((e) => !e.pinned).slice(-10);
   const mb = [...pinned, ...recent];
   if (mb.length) {
-    parts.push(`МЕМОРИБУК (важные события по ходу игры):\n${mb.map((e) => `- ${e.text}`).join('\n')}`);
+    parts.push(`MEMORYBOOK (important events so far):\n${mb.map((e) => `- ${e.text}`).join('\n')}`);
   }
 
   // Векторный подсос релевантного из свёрнутого сырого архива (см. §E3).
@@ -134,14 +134,14 @@ async function memoryBlock(
     const hits = await retrieveRelevant(project, playerMove, corpus, 3);
     if (hits.length) {
       parts.push(
-        `РЕЛЕВАНТНОЕ ИЗ ПРОШЛОГО (найдено по смыслу хода игрока):\n${hits
+        `RELEVANT FROM THE PAST (matched to the player move):\n${hits
           .map((h) => `- ${h.text.slice(0, 400)}`)
           .join('\n')}`
       );
     }
   }
 
-  return parts.join('\n\n') || '(память пуста — это начало истории)';
+  return parts.join('\n\n') || '(memory is empty — this is the start of the story)';
 }
 
 export interface BuiltRequest {
@@ -170,34 +170,34 @@ export async function buildRequest(
   const lore = matchLorebook(project.lorebook, recentText);
   const lorebookText = lore.length
     ? lore.map((e) => `[${e.title}] ${expandMacros(e.content, ctx)}`).join('\n')
-    : '(нет активных записей)';
+    : '(no active entries)';
 
   const currentBg =
-    project.assets.find((a) => a.id === state.currentBackgroundId)?.name || 'не задан';
+    project.assets.find((a) => a.id === state.currentBackgroundId)?.name || 'not set';
 
   const protagonistLine = state.protagonistName
-    ? `Имя героя игрока: ${state.protagonistName}.`
+    ? `The player's hero is named: ${state.protagonistName}.`
     : '';
 
-  // Генераторы контента для динамических блоков пресета.
+  // Content generators for the preset's dynamic blocks.
   const dynamicContent: Record<DynamicSource, () => Promise<string> | string> = {
     world: () =>
-      `== МИР ==\n${expandMacros(project.lore.worldDescription, ctx)}\n\nПРАВИЛА ПОВЕСТВОВАНИЯ:\n${expandMacros(
+      `== WORLD ==\n${expandMacros(project.lore.worldDescription, ctx)}\n\nNARRATIVE RULES:\n${expandMacros(
         project.lore.narrativeRules,
         ctx
       )}${protagonistLine ? `\n${protagonistLine}` : ''}`,
     plot: () =>
-      project.lore.plotOutline ? `== АРКА СЮЖЕТА ==\n${expandMacros(project.lore.plotOutline, ctx)}` : '',
-    lorebook: () => `== АКТИВНЫЕ ЗАПИСИ ЛОРБУКА ==\n${lorebookText}`,
-    characters: () => `== ПЕРСОНАЖИ ==\n${characterBlocks(project, onScreenIds, ctx)}`,
-    manifest: () => `== МАНИФЕСТ АССЕТОВ ==\n${assetManifest(project)}`,
+      project.lore.plotOutline ? `== PLOT ARC ==\n${expandMacros(project.lore.plotOutline, ctx)}` : '',
+    lorebook: () => `== ACTIVE LOREBOOK ENTRIES ==\n${lorebookText}`,
+    characters: () => `== CHARACTERS ==\n${characterBlocks(project, onScreenIds, ctx)}`,
+    manifest: () => `== ASSET MANIFEST ==\n${assetManifest(project)}`,
     state: () =>
-      `== ТЕКУЩЕЕ СОСТОЯНИЕ ==\nСтаты:\n${statsState(project, state.statValues)}\nТекущий фон: ${currentBg} (${
+      `== CURRENT STATE ==\nStats:\n${statsState(project, state.statValues)}\nCurrent background: ${currentBg} (${
         state.currentBackgroundId ?? 'null'
-      })\nНастроение музыки: ${state.currentMusicMood ?? 'нет'}\nНа сцене: ${
-        onScreenIds.length ? onScreenIds.join(', ') : 'никого'
+      })\nMusic mood: ${state.currentMusicMood ?? 'none'}\nOn screen: ${
+        onScreenIds.length ? onScreenIds.join(', ') : 'nobody'
       }`,
-    memory: async () => `== ПАМЯТЬ ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
+    memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
   };
 
   // Собираем system из редактируемого пресета (Batch 3 §8): по порядку, только
@@ -234,7 +234,7 @@ export async function buildRequest(
   // Заметка для ИИ (Author's Note, см. CR v2 §M) — тот же слот глубины 0, что и
   // кастомные вставки Блока F, но со своим UI. Пусто — ничего не инжектится.
   if (state.authorNote.trim()) {
-    withMove.push({ role: 'user', content: `[ЗАМЕТКА АВТОРА] ${expandMacros(state.authorNote, ctx)}` });
+    withMove.push({ role: 'user', content: `[AUTHOR NOTE] ${expandMacros(state.authorNote, ctx)}` });
   }
 
   // Ремайндер формата на глубине 0 (в самый конец).
@@ -251,7 +251,7 @@ export async function estimateContextTokens(
   playerMove: string
 ): Promise<number> {
   try {
-    const req = await buildRequest(project, state, playerMove || '(следующий ход)', {
+    const req = await buildRequest(project, state, playerMove || '(next turn)', {
       skipVector: true,
     });
     const text = req.system + req.messages.map((m) => m.content).join('\n');

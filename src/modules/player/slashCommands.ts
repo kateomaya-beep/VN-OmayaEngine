@@ -44,7 +44,7 @@ export function parseSlash(input: string, project: Project): SlashResult {
       );
       return bg
         ? { kind: 'setBackground', assetId: bg.id }
-        : { kind: 'move', text: `[OOC] Смени фон на: ${arg}` };
+        : { kind: 'move', text: `[OOC] Change the background to: ${arg}` };
     }
     default:
       // Неизвестная команда — трактуем как OOC-ремарку.

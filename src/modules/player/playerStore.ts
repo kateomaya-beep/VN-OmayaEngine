@@ -82,7 +82,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set({ project, state, loading: false, queue: [], visibleBeats: [], choices: [], cg: null });
     // Seed the opening turn (макросы в стартовой сцене раскрываются).
     const opening = expandMacros(project.lore.openingScene, { project, state });
-    await runAndApply(set, get, project, state, `[НАЧАЛО ИГРЫ] ${opening}`.trim());
+    await runAndApply(set, get, project, state, `[GAME START] ${opening}`.trim());
   },
 
   advance() {
@@ -110,14 +110,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       state.statValues[choice.cost.statId] = cur - choice.cost.amount;
     }
     // Выбор кнопкой → ИИ разворачивает его в реплику/действие героя (Блок B.1).
-    await runAndApply(set, get, project, state, `[ВЫБОР] ${choice.text}`);
+    await runAndApply(set, get, project, state, `[CHOICE] ${choice.text}`);
   },
 
   async continueStory() {
     const { state, project } = get();
     if (!state || !project) return;
     // Игрок продвигает историю без реплики (Блок I.1) — мир движется сам.
-    await runAndApply(set, get, project, state, '[ПРОДОЛЖИТЬ]');
+    await runAndApply(set, get, project, state, '[CONTINUE]');
   },
 
   async submitFreeInput(text) {
@@ -150,7 +150,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
 
     // Обычный ввод — ДОСЛОВНАЯ реплика героя (Блок B.2): ИИ не пишет за протагониста.
-    await runAndApply(set, get, project, state, `[ДОСЛОВНО] ${text.trim()}`);
+    await runAndApply(set, get, project, state, `[VERBATIM] ${text.trim()}`);
   },
 
   async regenerate() {

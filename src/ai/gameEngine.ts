@@ -23,7 +23,7 @@ export interface TurnResult {
 }
 
 const RETRY_HINT =
-  '\n\nОтвет не прошёл валидацию. Верни СТРОГО один JSON-объект по схеме, без markdown и текста вне JSON.';
+  '\n\nThe response failed validation. Reply with EXACTLY one JSON object per the schema — no markdown, no text outside the JSON.';
 
 // Подбор трека под настроение: ротация среди треков этого настроения; нет треков →
 // пробуем 'calm'; ничего нет → null (тишина). Не крашит.
@@ -58,6 +58,14 @@ export async function applyTurn(
   // Apply stat changes (clamped) and collect canonical facts (turn-indexed, not chapter-indexed).
   const { values, effective } = applyStatChanges(project, state.statValues, turn.statChanges);
   const rel = applyRelationshipChanges(project, state.relationship, turn.statChanges);
+  // Гарантируем запись отношений для КАЖДОГО персонажа проекта — чтобы персонажи,
+  // добавленные по ходу игры, сразу отслеживались, эволюционировали и сохранялись
+  // (а не оставались статичными). Протагонист статов отношений не имеет.
+  for (const c of project.characters) {
+    if (c.role !== 'protagonist' && !rel.relationship[c.id]) {
+      rel.relationship[c.id] = { ...c.relationship };
+    }
+  }
   const facts: CanonicalFact[] = [
     ...state.memory.facts,
     { turn: nextTurnNumber, kind: 'choice', text: `выбор: ${playerMove}` },
