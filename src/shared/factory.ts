@@ -283,6 +283,7 @@ export function normalizeProject(raw: any): Project {
 export function initialMemory(): MemoryState {
   return {
     chronicle: [],
+    foldedMsgCount: 0,
     liveSummary: '',
     facts: [],
     memorybook: [],
@@ -410,11 +411,17 @@ function normalizeGameMaster(
 ): GameMasterState {
   if (!raw || typeof raw !== 'object') return fresh;
   const strArr = (v: unknown): string[] => arr<any>(v).filter((x) => typeof x === 'string');
+  const months = strArr(raw?.calendar?.months);
   return {
     clock: {
-      date: str(raw?.clock?.date),
+      // Миграция старого clock.date → day, если новых полей нет.
+      day: str(raw?.clock?.day) || str(raw?.clock?.date),
+      month: str(raw?.clock?.month),
+      year: str(raw?.clock?.year),
       time: str(raw?.clock?.time),
+      location: str(raw?.clock?.location),
     },
+    calendar: { months: months.length ? months : [...fresh.calendar.months] },
     showClockInGame: typeof raw.showClockInGame === 'boolean' ? raw.showClockInGame : false,
     characters: arr<any>(raw.characters)
       .filter((c) => c && typeof c.name === 'string')
@@ -436,7 +443,15 @@ function normalizeGameMaster(
       .map((r) => ({ from: r.from, to: r.to, label: str(r.label) })),
     events: arr<any>(raw.events)
       .filter((e) => e && typeof e.summary === 'string')
-      .map((e) => ({ turn: num(e.turn, 0), summary: e.summary, mood: str(e.mood) })),
+      .map((e) => ({
+        id: typeof e.id === 'string' ? e.id : uid('evt'),
+        turn: num(e.turn, 0),
+        date: str(e.date),
+        chars: strArr(e.chars),
+        summary: e.summary,
+        mood: str(e.mood),
+        source: e.source === 'manual' ? 'manual' : 'auto',
+      })),
     agenda: arr<any>(raw.agenda)
       .filter((t) => t && typeof t.text === 'string')
       .map((t) => ({
@@ -482,8 +497,27 @@ function normalizeMemory(
     .filter((r) => r && typeof r.text === 'string')
     .map((r) => ({ turn: num(r.turn, 0), text: r.text }));
 
+  // Хроника: миграция старого формата (string[]) в записи с метаданными.
+  const chronicle = arr<any>(raw?.chronicle)
+    .map((c, i) => {
+      if (typeof c === 'string') return { id: uid('chr'), text: c, atTurn: 0, fromMsg: 0, toMsg: 0, _i: i };
+      if (c && typeof c.text === 'string')
+        return {
+          id: typeof c.id === 'string' ? c.id : uid('chr'),
+          text: c.text,
+          atTurn: num(c.atTurn, 0),
+          fromMsg: num(c.fromMsg, 0),
+          toMsg: num(c.toMsg, 0),
+          _i: i,
+        };
+      return null;
+    })
+    .filter(Boolean)
+    .map(({ _i, ...e }: any) => e);
+
   return {
-    chronicle: arr<string>(raw?.chronicle).filter((c: unknown) => typeof c === 'string'),
+    chronicle,
+    foldedMsgCount: num(raw?.foldedMsgCount, 0),
     liveSummary,
     facts,
     memorybook,

@@ -1,7 +1,7 @@
 import type { Project, RuntimeState, LlmMessage } from '../shared/types';
 import { runCompletionWith } from './providers';
 import { SUMMARIZER_PROMPT } from './directorPrompt';
-import { estimateTokens } from '../shared/utils';
+import { estimateTokens, uid } from '../shared/utils';
 import { pushToast, updateToast } from '../shared/toast';
 import { useLang } from '../shared/i18n';
 
@@ -56,7 +56,12 @@ export async function maybeCompress(
     const prompt = project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(12);
     const text = await summarize(project, prompt, transcript);
     updateToast(toastId, 'success', tt('Память обновлена', 'Memory updated'));
-    const chronicle = text ? [...state.memory.chronicle, text] : state.memory.chronicle;
+    // Новая запись Хроники с диапазоном свёрнутых сообщений (для списка саммари).
+    const fromMsg = state.memory.foldedMsgCount + 1;
+    const toMsg = state.memory.foldedMsgCount + stale.length;
+    const chronicle = text
+      ? [...state.memory.chronicle, { id: uid('chr'), text, atTurn: state.turnCount, fromMsg, toMsg }]
+      : state.memory.chronicle;
     // Сырой кусок сохраняем отдельно — не инжектится целиком, только через
     // векторный подсос релевантного (см. vectorEngine.ts).
     const rawArchive = [
@@ -70,6 +75,7 @@ export async function maybeCompress(
       memory: await recompactChronicle(project, {
         ...state.memory,
         chronicle,
+        foldedMsgCount: toMsg,
         rawArchive,
         messagesSinceSummary: 0,
       }),
@@ -94,13 +100,21 @@ async function recompactChronicle(
   const toFold = memory.chronicle.slice(0, 10);
   const rest = memory.chronicle.slice(10);
   try {
-    const transcript = toFold.map((c, i) => `[${i + 1}] ${c}`).join('\n');
+    const transcript = toFold.map((c, i) => `[${i + 1}] ${c.text}`).join('\n');
     const text = await summarize(
       project,
       project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(15),
       transcript
     );
-    return { ...memory, chronicle: text ? [text, ...rest] : rest };
+    if (!text) return { ...memory, chronicle: rest };
+    const folded = {
+      id: uid('chr'),
+      text,
+      atTurn: toFold[toFold.length - 1].atTurn,
+      fromMsg: toFold[0].fromMsg,
+      toMsg: toFold[toFold.length - 1].toMsg,
+    };
+    return { ...memory, chronicle: [folded, ...rest] };
   } catch {
     return memory; // не критично — попробуем на следующем триггере
   }

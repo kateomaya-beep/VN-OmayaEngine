@@ -15,6 +15,7 @@ import { EditPanel } from './components/EditPanel';
 import { SaveLoadPanel } from './components/Panels';
 import { useT } from '../../shared/i18n';
 import { TopBar } from '../../app/TopBar';
+import { formatClock } from '../../ai/gameMaster';
 
 type Setup = 'checking' | 'resume' | 'play';
 
@@ -139,9 +140,9 @@ export function PlayerPage() {
       </div>
 
       {/* Внутриигровые часы/дата (вынесены галочкой в Game Master → Календарь). */}
-      {s.state.gm.showClockInGame && (s.state.gm.clock.date || s.state.gm.clock.time) && (
+      {s.state.gm.showClockInGame && formatClock(s.state.gm.clock) && (
         <div className="absolute top-16 right-3 z-10 bg-black/55 backdrop-blur rounded-lg px-3 py-1.5 text-sm text-gray-100">
-          🗓 {[s.state.gm.clock.date, s.state.gm.clock.time].filter(Boolean).join(' · ')}
+          🗓 {formatClock(s.state.gm.clock)}
         </div>
       )}
 

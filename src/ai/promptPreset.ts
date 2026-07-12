@@ -47,10 +47,10 @@ RESPONSE SCHEMA:
   "choices": [ { "id": string, "text": string, "cost": null | { "statId": string, "amount": number } } ],
   "chapterEvent": null | "chapter_end" | "cg_moment",
   "worldState": {
-    "clock": { "date": string, "time": string },
+    "clock": { "day": string, "month": string, "year": string, "time": string, "location": string },
     "characters": [ { "name": string, "charId": string|null, "dossier": string, "appearance": string, "personality": string, "roleToHero": string, "outfit": string, "mood": string, "status": string, "location": string, "tags": [string] } ],
     "relations": [ { "from": string, "to": string, "label": string } ],
-    "event": string, "mood": string,
+    "event": string, "eventChars": [string], "mood": string,
     "agendaAdd": [string], "agendaDone": [string]
   }
 }
@@ -58,10 +58,10 @@ Literary prose lives INSIDE the beats text fields. Markdown is allowed in text
 (*italics* for actions/description, **bold** for emphasis). Inner thoughts go in a "thought" beat.
 
 worldState is the GAME MASTER update — keep it accurate EVERY turn (it is how you remember characters and the world; write it in English regardless of the story language):
-- clock: advance in-game date/time to match what happened this turn.
+- clock: advance the in-game day/month/year/time and set the current location to match what happened this turn. Keep the calendar consistent so chronology never drifts.
 - characters: for anyone present or affected, give/refresh a compact dossier — who they are, appearance, personality, roleToHero (who they are to the hero), current outfit, mood, status, location, and tags. Send only changed/new characters.
 - relations: character-to-character ties (label the relationship), send edges that changed.
-- event: one-line analysis of this scene; mood: the scene's overall mood.
+- event: one-line analysis of what happened this scene; eventChars: who was involved; mood: the scene's overall mood. Emit an event whenever something noteworthy occurs (this is the persistent event log / memorybook).
 - agendaAdd: new goals/tasks the plot introduced; agendaDone: tasks now completed.
 If nothing changed for a field, omit it.`;
 

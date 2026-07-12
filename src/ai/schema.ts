@@ -42,7 +42,16 @@ export const choiceSchema = z.object({
 // Game Master delta (все поля опциональны; движок мержит в RuntimeState.gm).
 export const worldStateSchema = z
   .object({
-    clock: z.object({ date: z.string().nullish(), time: z.string().nullish() }).partial().nullish(),
+    clock: z
+      .object({
+        day: z.string().nullish(),
+        month: z.string().nullish(),
+        year: z.string().nullish(),
+        time: z.string().nullish(),
+        location: z.string().nullish(),
+      })
+      .partial()
+      .nullish(),
     characters: z
       .array(
         z.object({

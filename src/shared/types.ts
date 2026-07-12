@@ -283,10 +283,11 @@ export interface AiTurn {
 // Дельта состояния мира, которую ИИ присылает каждый ход (Game Master). Все поля
 // опциональны — движок мержит их в RuntimeState.gm.
 export interface WorldStateUpdate {
-  clock?: { date?: string; time?: string };
+  clock?: { day?: string; month?: string; year?: string; time?: string; location?: string };
   characters?: Array<Partial<Omit<GmCharacter, 'tags'>> & { name: string; tags?: string[] }>;
   relations?: GmRelationEdge[];
   event?: string; // анализ текущей сцены
+  eventChars?: string[]; // с кем произошло событие
   mood?: string; // общее настроение сцены
   agendaAdd?: string[]; // новые задачи в адженду
   agendaDone?: string[]; // задачи, отмеченные выполненными (по тексту)
@@ -311,8 +312,19 @@ export interface MemoryBookEntry {
   pinned: boolean; // «продвинута в постоянные» — всегда в контексте, не сжимается
 }
 
+// Запись Хроники (одно сжатие). Пользователь видит список свёрток с диапазоном
+// сообщений, нумерацией и текстом — редактируемым/удаляемым (см. правку по саммари).
+export interface ChronicleEntry {
+  id: string;
+  text: string;
+  atTurn: number; // ход, на котором создана свёртка
+  fromMsg: number; // порядковый номер первого свёрнутого сообщения (1-based)
+  toMsg: number; // порядковый номер последнего свёрнутого сообщения
+}
+
 export interface MemoryState {
-  chronicle: string[]; // свёрнутые сегменты истории (без привязки к «главам»)
+  chronicle: ChronicleEntry[]; // свёрнутые сегменты истории (список записей)
+  foldedMsgCount: number; // всего сообщений свёрнуто (для диапазонов записей)
   liveSummary: string; // ручная заметка о текущей арке (не авто-управляется)
   facts: CanonicalFact[]; // canonical facts store — не проходит через LLM-сжатие
   memorybook: MemoryBookEntry[];
@@ -354,10 +366,15 @@ export interface GmRelationEdge {
   label: string; // характер связи между персонажами
 }
 
+// Событие = запись «меморибука»: что произошло, когда (внутриигровая дата) и с кем.
 export interface GmEvent {
+  id: string;
   turn: number;
-  summary: string; // анализ сцены / событие
-  mood: string; // общее настроение сцены
+  date: string; // внутриигровая дата/время на момент события (для хронологии)
+  chars: string[]; // с кем произошло
+  summary: string; // что произошло
+  mood: string; // настроение сцены
+  source: 'auto' | 'manual';
 }
 
 export interface GmTask {
@@ -367,13 +384,28 @@ export interface GmTask {
   source: 'auto' | 'manual';
 }
 
+// Внутриигровые часы/календарь. День/месяц/год + время + локация. Месяцы
+// настраиваемые (для фэнтези-сеттинга; по умолчанию — земные 12).
 export interface GmClock {
-  date: string; // внутриигровая дата, напр. "Day 3"
-  time: string; // внутриигровое время, напр. "14:30" / "evening"
+  day: string; // число/день, напр. "3"
+  month: string; // название месяца (из calendar.months либо своё)
+  year: string; // год, напр. "1024"
+  time: string; // время суток, напр. "14:30" / "evening"
+  location: string; // текущая локация
 }
+
+export interface GmCalendar {
+  months: string[]; // названия месяцев по порядку (кастомизируемо)
+}
+
+export const DEFAULT_MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 export interface GameMasterState {
   clock: GmClock;
+  calendar: GmCalendar;
   showClockInGame: boolean; // выносить часы/дату отдельно в игру
   characters: GmCharacter[];
   relations: GmRelationEdge[];
@@ -382,7 +414,15 @@ export interface GameMasterState {
 }
 
 export function emptyGameMaster(): GameMasterState {
-  return { clock: { date: '', time: '' }, showClockInGame: false, characters: [], relations: [], events: [], agenda: [] };
+  return {
+    clock: { day: '', month: '', year: '', time: '', location: '' },
+    calendar: { months: [...DEFAULT_MONTHS] },
+    showClockInGame: false,
+    characters: [],
+    relations: [],
+    events: [],
+    agenda: [],
+  };
 }
 
 // ---- Save slots ----

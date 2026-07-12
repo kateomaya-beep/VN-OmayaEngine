@@ -1,5 +1,11 @@
-import type { GameMasterState, WorldStateUpdate, GmCharacter } from '../shared/types';
+import type { GameMasterState, WorldStateUpdate, GmCharacter, GmClock } from '../shared/types';
 import { uid } from '../shared/utils';
+
+// Человекочитаемая внутриигровая дата/время: "3 March 1024 · 14:30 · Plaza".
+export function formatClock(c: GmClock): string {
+  const date = [c.day, c.month, c.year].filter(Boolean).join(' ');
+  return [date, c.time, c.location].filter(Boolean).join(' · ');
+}
 
 // Мержит дельту состояния мира от ИИ (WorldStateUpdate) в GameMasterState.
 // Вызывается каждый ход — так Game Master остаётся динамическим (Horae-подобно).
@@ -11,6 +17,7 @@ export function mergeWorldState(
   if (!update) return gm;
   const next: GameMasterState = {
     clock: { ...gm.clock },
+    calendar: { months: [...gm.calendar.months] },
     showClockInGame: gm.showClockInGame,
     characters: gm.characters.map((c) => ({ ...c, tags: [...c.tags] })),
     relations: gm.relations.map((r) => ({ ...r })),
@@ -18,10 +25,13 @@ export function mergeWorldState(
     agenda: gm.agenda.map((t) => ({ ...t })),
   };
 
-  // Часы/дата.
+  // Часы/дата/локация.
   if (update.clock) {
-    if (update.clock.date) next.clock.date = update.clock.date;
+    if (update.clock.day) next.clock.day = update.clock.day;
+    if (update.clock.month) next.clock.month = update.clock.month;
+    if (update.clock.year) next.clock.year = update.clock.year;
     if (update.clock.time) next.clock.time = update.clock.time;
+    if (update.clock.location) next.clock.location = update.clock.location;
   }
 
   // Досье персонажей — upsert по charId, иначе по имени (без регистра).
@@ -73,10 +83,24 @@ export function mergeWorldState(
     else if (r.label) next.relations[idx].label = r.label;
   }
 
-  // Анализ сцены → событие.
+  // Анализ сцены → событие (штампуем внутриигровой датой + участниками, чтобы ИИ
+  // не путался в хронологии — см. правку про календарь).
   if ((update.event && update.event.trim()) || (update.mood && update.mood.trim())) {
-    next.events.push({ turn, summary: (update.event || '').trim(), mood: (update.mood || '').trim() });
-    if (next.events.length > 200) next.events = next.events.slice(-200);
+    const date = formatClock(next.clock);
+    const chars =
+      update.eventChars && update.eventChars.length
+        ? update.eventChars
+        : (update.characters || []).map((c) => c.name).filter(Boolean);
+    next.events.push({
+      id: uid('evt'),
+      turn,
+      date,
+      chars,
+      summary: (update.event || '').trim(),
+      mood: (update.mood || '').trim(),
+      source: 'auto',
+    });
+    if (next.events.length > 300) next.events = next.events.slice(-300);
   }
 
   // Адженда: новые задачи (без дублей по тексту) и отметка выполненных.

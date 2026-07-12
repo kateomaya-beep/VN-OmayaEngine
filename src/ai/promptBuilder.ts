@@ -3,6 +3,7 @@ import { AUDIO_MOODS } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { normalizePreset, type DynamicSource } from './promptPreset';
 import { matchLorebook } from './lorebookEngine';
+import { formatClock } from './gameMaster';
 import { expandMacros, type MacroContext } from './macros';
 import { retrieveRelevant } from './vectorEngine';
 import { estimateTokens } from '../shared/utils';
@@ -107,7 +108,7 @@ async function memoryBlock(
   const m = state.memory;
   const parts: string[] = [];
   if (m.chronicle.length) {
-    parts.push(`CHRONICLE (compressed past events):\n${m.chronicle.map((c, i) => `[${i + 1}] ${c}`).join('\n')}`);
+    parts.push(`CHRONICLE (compressed past events):\n${m.chronicle.map((c, i) => `[${i + 1}] ${c.text}`).join('\n')}`);
   }
   if (m.liveSummary.trim()) {
     parts.push(`CURRENT ARC NOTE (from the author):\n${m.liveSummary}`);
@@ -149,9 +150,8 @@ async function memoryBlock(
 function gameMasterBlock(state: RuntimeState): string {
   const gm = state.gm;
   const parts: string[] = [];
-  if (gm.clock.date || gm.clock.time) {
-    parts.push(`Time: ${[gm.clock.date, gm.clock.time].filter(Boolean).join(', ')}`);
-  }
+  const clockStr = formatClock(gm.clock);
+  if (clockStr) parts.push(`Now: ${clockStr}`);
   if (gm.characters.length) {
     const lines = gm.characters.map((c) => {
       const bits = [
@@ -177,8 +177,12 @@ function gameMasterBlock(state: RuntimeState): string {
     parts.push(`Open agenda:\n${openTasks.map((t) => `- ${t.text}`).join('\n')}`);
   }
   if (gm.events.length) {
-    const recent = gm.events.slice(-5);
-    parts.push(`Recent scene log:\n${recent.map((e) => `- [t${e.turn}] ${e.summary}`).join('\n')}`);
+    const recent = gm.events.slice(-6);
+    parts.push(
+      `Recent events (chronological):\n${recent
+        .map((e) => `- ${e.date ? `[${e.date}] ` : `[t${e.turn}] `}${e.summary}${e.chars.length ? ` (${e.chars.join(', ')})` : ''}`)
+        .join('\n')}`
+    );
   }
   return parts.length
     ? parts.join('\n\n')
