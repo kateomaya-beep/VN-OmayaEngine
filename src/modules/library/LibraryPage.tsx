@@ -107,7 +107,9 @@ export function LibraryPage() {
       <input
         ref={fileRef}
         type="file"
-        accept=".zip"
+        // Широкий accept — некоторые файловые пикеры Android прячут .zip, если
+        // фильтровать только по расширению (zip часто идёт как octet-stream).
+        accept=".zip,application/zip,application/x-zip-compressed,application/octet-stream"
         hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
