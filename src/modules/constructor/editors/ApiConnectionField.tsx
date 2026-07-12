@@ -29,8 +29,18 @@ export function ApiConnectionField({
     setStatus({ busy: true });
     try {
       const models = await listModels(conn, key);
-      onChange({ ...conn, availableModels: models });
-      setStatus({ busy: false, ok: true, msg: `${models.length} моделей` });
+      // Если текущая модель отсутствует у провайдера (частый кейс: остался дефолтный
+      // gpt-4o-mini, а провайдер другой) — авто-выбираем первую из списка, чтобы
+      // генерация не падала с «model not found».
+      const model = conn.model && models.includes(conn.model) ? conn.model : models[0] || conn.model;
+      onChange({ ...conn, availableModels: models, model });
+      setStatus({
+        busy: false,
+        ok: true,
+        msg:
+          `${models.length} моделей` +
+          (model && model !== conn.model ? ` · выбрана «${model}»` : ''),
+      });
     } catch (e) {
       setStatus({ busy: false, ok: false, msg: (e as Error).message });
     }

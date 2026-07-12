@@ -21,15 +21,45 @@ export interface Provider {
 const DEFAULT_OPENAI_BASE = 'https://api.openai.com/v1';
 const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com/v1';
 
+// Обёртка над fetch: превращает «глухую» сетевую ошибку/CORS (TypeError: Failed to
+// fetch) в понятное сообщение. Частый кейс: список моделей грузится (GET), а
+// генерация (POST) блокируется CORS — провайдер не разрешает прямой запрос из
+// браузера. В SillyTavern работает, потому что там запрос идёт через свой сервер.
+async function apiFetch(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    throw new Error(
+      'Не удалось связаться с провайдером напрямую из браузера (сеть или CORS). ' +
+        'Часто это CORS: провайдер не разрешает запрос из браузера — тогда модели ' +
+        'грузятся, а генерация нет. В SillyTavern работает, потому что запрос идёт ' +
+        'через сервер. Возьмите провайдера/шлюз с поддержкой CORS (например OpenRouter) ' +
+        'или прокси. [' + (e as Error).message + ']'
+    );
+  }
+}
+
+function requireModel(model: string | undefined): string {
+  if (!model || !model.trim()) {
+    throw new Error(
+      'Не выбрана модель. Откройте «Подключение к ИИ» (🔌), нажмите ⟳ рядом с полем ' +
+        '«Модель» и ВЫБЕРИТЕ модель вашего провайдера из списка (по умолчанию стоит ' +
+        'gpt-4o-mini, которой у вашего провайдера может не быть).'
+    );
+  }
+  return model;
+}
+
 const openAiCompatible: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
+    const model = requireModel(req.model || conn.model);
     const messages = [{ role: 'system', content: req.system }, ...req.messages];
     if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
-    const res = await fetch(`${base}/chat/completions`, {
+    const res = await apiFetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      body: JSON.stringify({ model: req.model || conn.model, temperature: req.temperature, messages }),
+      body: JSON.stringify({ model, temperature: req.temperature, messages }),
     });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
     const data = await res.json();
@@ -50,9 +80,10 @@ const openAiCompatible: Provider = {
 const anthropic: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
+    const model = requireModel(req.model || conn.model);
     const messages = req.messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
     if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
-    const res = await fetch(`${base}/messages`, {
+    const res = await apiFetch(`${base}/messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -60,7 +91,7 @@ const anthropic: Provider = {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model: req.model || conn.model, max_tokens: 2048, temperature: req.temperature, system: req.system, messages }),
+      body: JSON.stringify({ model, max_tokens: 2048, temperature: req.temperature, system: req.system, messages }),
     });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
     const data = await res.json();
