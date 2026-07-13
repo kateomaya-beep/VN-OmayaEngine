@@ -69,7 +69,6 @@ const openAiCompatible: Provider = {
     if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
     const res = await apiFetch(`${base}/chat/completions`, {
       method: 'POST',
-      signal: req.signal,
       headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
       body: JSON.stringify({
         model,
@@ -106,7 +105,6 @@ const anthropic: Provider = {
     if (pf) messages.push({ role: 'assistant', content: pf });
     const res = await apiFetch(`${base}/messages`, {
       method: 'POST',
-      signal: req.signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
