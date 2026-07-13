@@ -13,9 +13,9 @@ function applyTheme(t: Theme) {
 }
 
 function detectInitial(): Theme {
-  const saved = localStorage.getItem(LS_KEY);
-  if (saved === 'dark' || saved === 'light') return saved;
-  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  // Смена темы убрана — приложение всегда тёмное (неоновый дизайн). Стор оставлен
+  // для совместимости, но зафиксирован на 'dark'.
+  return 'dark';
 }
 
 interface ThemeStore {

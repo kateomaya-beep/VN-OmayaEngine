@@ -94,23 +94,30 @@ export function LibraryPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">{t('library.title')}</h1>
-          <p className="text-gray-400 text-sm">{t('library.subtitle')}</p>
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-5 pb-16">
+      {/* Hero-панель (импорт дизайна) */}
+      <div className="rounded-[22px] p-6 sm:p-7 mb-6 text-center relative bg-white/[0.045] backdrop-blur-xl border border-[rgba(180,150,255,0.18)] shadow-[0_8px_32px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.05)]">
+        <div className="font-brand font-extrabold text-[20px] sm:text-[22px] tracking-[0.5px] text-[#f7f4ff] [text-shadow:0_0_18px_rgba(170,120,255,0.35)]">
+          {t('library.title')}
         </div>
-        <div className="flex gap-2">
-          <button className="btn-ghost" onClick={() => fileRef.current?.click()}>
-            {t('library.import')}
-          </button>
-          <button className="btn-primary" onClick={() => setCreating(true)}>
+        <div className="text-[12.5px] text-[#a8a4bd] mt-2 leading-relaxed">{t('library.subtitle')}</div>
+        <div className="flex gap-3 mt-5 max-w-md mx-auto">
+          <button
+            onClick={() => setCreating(true)}
+            className="flex-1 py-3 rounded-[14px] font-brand font-bold text-[13px] tracking-[0.3px] text-[#1c1526] cursor-pointer border-none bg-[linear-gradient(155deg,#d3b8ff,#b18cff)] shadow-[0_0_22px_rgba(170,120,255,0.5),inset_0_1px_0_rgba(255,255,255,0.4)] hover:brightness-110 transition"
+          >
             {t('library.new')}
+          </button>
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="flex-1 py-3 rounded-[14px] font-brand font-bold text-[13px] tracking-[0.3px] text-[#d3b8ff] cursor-pointer bg-white/[0.04] border border-[rgba(180,150,255,0.35)] hover:bg-[rgba(160,110,255,0.14)] transition"
+          >
+            {t('library.import')}
           </button>
         </div>
       </div>
 
-      {busy && <div className="mb-4 text-sm text-accent2">{busy}</div>}
+      {busy && <div className="mb-4 text-sm text-[#d3b8ff] text-center">{busy}</div>}
 
       <input
         ref={fileRef}
@@ -130,45 +137,57 @@ export function LibraryPage() {
       />
 
       {projects.length === 0 ? (
-        <div className="card text-center py-16 text-gray-500">{t('library.empty')}</div>
+        <div className="rounded-[20px] text-center py-16 text-[#7a7690] bg-white/[0.03] border border-[rgba(180,150,255,0.12)]">
+          {t('library.empty')}
+        </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((p) => (
-            <div key={p.id} className="card flex flex-col">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          {projects.map((p) => {
+            const coverKey = p.assets.find((a) => a.id === p.meta.coverAssetId)?.blobKey;
+            return (
               <div
-                className="aspect-video rounded-lg overflow-hidden mb-3 cursor-pointer bg-panel2"
-                onClick={() => nav(`/project/${p.id}`)}
+                key={p.id}
+                className="rounded-[20px] overflow-hidden bg-white/[0.04] backdrop-blur-xl border border-[rgba(180,150,255,0.16)] shadow-[0_6px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.04)]"
               >
-                <AssetImage
-                  blobKey={p.assets.find((a) => a.id === p.meta.coverAssetId)?.blobKey}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <h3 className="font-semibold truncate">{p.meta.title}</h3>
-              <p className="text-xs text-gray-500 mb-1">
-                {p.characters.length} {t('library.charactersShort')} · {p.assets.length}{' '}
-                {t('library.assetsShort')}
-              </p>
-              <p className="text-xs text-gray-600 mb-3">{formatDate(p.updatedAt)}</p>
-              <div className="mt-auto flex flex-wrap gap-2">
-                <button className="btn-primary !px-3 !py-1.5 text-xs" onClick={() => nav(`/play/${p.id}`)}>
-                  {t('library.play')}
-                </button>
-                <button
-                  className="btn-ghost !px-3 !py-1.5 text-xs"
+                <div className="pt-3.5 text-center">
+                  <div className="font-brand font-bold text-[13px] tracking-[0.6px] text-[#eeeaf8] px-4 truncate">
+                    {p.meta.title}
+                  </div>
+                  <div className="text-[10.5px] text-[#7a7690] mt-1">
+                    {t('library.lastSave')} · {formatDate(p.updatedAt)}
+                  </div>
+                </div>
+
+                <div
+                  className="mx-4 my-3 h-[150px] rounded-[14px] overflow-hidden cursor-pointer border border-[rgba(180,150,255,0.1)] bg-white/[0.03] flex items-center justify-center"
+                  style={
+                    coverKey
+                      ? undefined
+                      : {
+                          backgroundImage:
+                            'repeating-linear-gradient(135deg, rgba(180,150,255,0.05) 0px, rgba(180,150,255,0.05) 2px, transparent 2px, transparent 12px)',
+                        }
+                  }
                   onClick={() => nav(`/project/${p.id}`)}
                 >
-                  {t('library.editor')}
-                </button>
-                <button className="btn-ghost !px-3 !py-1.5 text-xs" onClick={() => setShareTarget(p)}>
-                  {t('library.export')}
-                </button>
-                <button className="btn-danger !px-3 !py-1.5 text-xs" onClick={() => onDelete(p)}>
-                  {t('library.delete')}
-                </button>
+                  {coverKey ? (
+                    <AssetImage blobKey={coverKey} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-[10.5px] tracking-[0.5px] text-[#5c5870]">
+                      {t('library.charactersShort')}: {p.characters.length} · {p.assets.length}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-center gap-3.5 pb-5 pt-1">
+                  <CardIconBtn title={t('library.editor')} onClick={() => nav(`/project/${p.id}`)} icon="edit" />
+                  <CardIconBtn title={t('library.export')} onClick={() => setShareTarget(p)} icon="export" />
+                  <CardIconBtn title={t('library.play')} onClick={() => nav(`/play/${p.id}`)} icon="play" primary />
+                  <CardIconBtn title={t('library.delete')} onClick={() => onDelete(p)} icon="trash" />
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -280,5 +299,85 @@ export function LibraryPage() {
         )}
       </Modal>
     </div>
+  );
+}
+
+// Иконки действий карточки проекта (импорт дизайна): редактор · экспорт · играть
+// (большая неоновая) · удалить. Подсказка — через title на выбранном языке.
+const CARD_ICONS: Record<string, JSX.Element> = {
+  edit: (
+    <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M12.6 4.3 15.7 7.4M4 16l.9-3.4 8-8a1.4 1.4 0 0 1 2 0l1.4 1.4a1.4 1.4 0 0 1 0 2l-8 8L4 16Z"
+        stroke="#c8b8ee"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
+  export: (
+    <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
+      <path d="M8 12 15 5M9 5h6v6" stroke="#c8b8ee" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M13 11v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h4"
+        stroke="#c8b8ee"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
+  play: (
+    <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
+      <path d="M6.5 4.5v11l9-5.5-9-5.5Z" fill="#1c1526" />
+    </svg>
+  ),
+  trash: (
+    <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M4.5 6h11M8 6V4.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V6M8.5 9.5v5M11.5 9.5v5M5.5 6l.6 9a1 1 0 0 0 1 1h5.8a1 1 0 0 0 1-1l.6-9"
+        stroke="#e29b9b"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
+};
+
+function CardIconBtn({
+  title,
+  onClick,
+  icon,
+  primary,
+}: {
+  title: string;
+  onClick: () => void;
+  icon: 'edit' | 'export' | 'play' | 'trash';
+  primary?: boolean;
+}) {
+  const size = primary ? 46 : 34;
+  const iconSize = Math.round(size * 0.5);
+  return (
+    <button
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      className={`flex items-center justify-center shrink-0 cursor-pointer transition hover:brightness-125 ${
+        primary ? 'rounded-[23px]' : 'rounded-[11px]'
+      }`}
+      style={
+        primary
+          ? {
+              width: size,
+              height: size,
+              background: 'linear-gradient(155deg,#d3b8ff,#b18cff)',
+              boxShadow: '0 0 18px rgba(177,140,255,0.55), inset 0 1px 0 rgba(255,255,255,0.4)',
+            }
+          : { width: size, height: size, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(180,150,255,0.22)' }
+      }
+    >
+      <span style={{ width: iconSize, height: iconSize, display: 'flex' }}>{CARD_ICONS[icon]}</span>
+    </button>
   );
 }

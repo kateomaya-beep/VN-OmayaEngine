@@ -29,6 +29,11 @@ body,
   margin: 0;
 }
 
+/* Шрифт бренда/заголовков (импорт дизайна). Фолбэк на систему, если офлайн. */
+.font-brand {
+  font-family: 'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
 body {
   background: rgb(var(--nf-ink));
   color: rgb(var(--nf-text));

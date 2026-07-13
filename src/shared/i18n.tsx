@@ -34,7 +34,8 @@ const RU: Dict = {
   'nav.library': 'Библиотека',
 
   'library.title': 'Библиотека проектов',
-  'library.subtitle': 'Ваши визуальные новеллы. Всё хранится локально.',
+  'library.subtitle': 'Ваши визуальные новеллы. Всё хранится локально на устройстве.',
+  'library.lastSave': 'сохранено',
   'library.import': 'Импорт .zip',
   'library.new': '+ Новый проект',
   'library.empty': 'Пока нет проектов. Создайте новый или импортируйте .zip.',
@@ -99,7 +100,8 @@ const EN: Dict = {
   'nav.library': 'Library',
 
   'library.title': 'Project library',
-  'library.subtitle': 'Your visual novels. Everything is stored locally.',
+  'library.subtitle': 'Your visual novels. Everything is stored locally on your device.',
+  'library.lastSave': 'last save',
   'library.import': 'Import .zip',
   'library.new': '+ New project',
   'library.empty': 'No projects yet. Create one or import a .zip.',
