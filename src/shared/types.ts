@@ -325,6 +325,7 @@ export interface WorldStateUpdate {
   clock?: { day?: string; month?: string; year?: string; time?: string; location?: string };
   characters?: Array<Partial<Omit<GmCharacter, 'tags'>> & { name: string; tags?: string[] }>;
   relations?: GmRelationEdge[];
+  locations?: Array<{ name: string; description?: string; tags?: string[] }>; // новые/изменённые локации
   event?: string; // анализ текущей сцены
   eventChars?: string[]; // с кем произошло событие
   mood?: string; // общее настроение сцены
@@ -423,6 +424,16 @@ export interface GmTask {
   source: 'auto' | 'manual';
 }
 
+// Память локаций: места, которые уже встречались в истории (для непротиворечивости
+// описаний). ИИ дополняет их через worldState.locations; редактируются в GM-панели.
+export interface GmLocation {
+  id: string;
+  name: string;
+  description: string; // приметы места, атмосфера, кто там бывает
+  tags: string[];
+  source: 'auto' | 'manual';
+}
+
 // Внутриигровые часы/календарь. День/месяц/год + время + локация. Месяцы
 // настраиваемые (для фэнтези-сеттинга; по умолчанию — земные 12).
 export interface GmClock {
@@ -450,6 +461,7 @@ export interface GameMasterState {
   relations: GmRelationEdge[];
   events: GmEvent[];
   agenda: GmTask[];
+  locations: GmLocation[];
 }
 
 export function emptyGameMaster(): GameMasterState {
@@ -461,6 +473,7 @@ export function emptyGameMaster(): GameMasterState {
     relations: [],
     events: [],
     agenda: [],
+    locations: [],
   };
 }
 

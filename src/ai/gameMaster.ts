@@ -23,6 +23,7 @@ export function mergeWorldState(
     relations: gm.relations.map((r) => ({ ...r })),
     events: [...gm.events],
     agenda: gm.agenda.map((t) => ({ ...t })),
+    locations: (gm.locations || []).map((l) => ({ ...l, tags: [...l.tags] })),
   };
 
   // Часы/дата/локация.
@@ -70,6 +71,25 @@ export function mergeWorldState(
       set(c, 'location', u.location);
       if (Array.isArray(u.tags) && u.tags.length) c.tags = u.tags;
       if (u.charId && !c.charId) c.charId = u.charId;
+    }
+  }
+
+  // Память локаций — upsert по имени (без регистра): дополняем описание/теги.
+  for (const u of update.locations || []) {
+    if (!u || !u.name || !u.name.trim()) continue;
+    const idx = next.locations.findIndex((l) => l.name.toLowerCase() === u.name.toLowerCase());
+    if (idx === -1) {
+      next.locations.push({
+        id: uid('loc'),
+        name: u.name.trim(),
+        description: (u.description || '').trim(),
+        tags: Array.isArray(u.tags) ? u.tags.filter((t) => typeof t === 'string') : [],
+        source: 'auto',
+      });
+    } else {
+      const l = next.locations[idx];
+      if (u.description && u.description.trim()) l.description = u.description.trim();
+      if (Array.isArray(u.tags) && u.tags.length) l.tags = u.tags.filter((t) => typeof t === 'string');
     }
   }
 

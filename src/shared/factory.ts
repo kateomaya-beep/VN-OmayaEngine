@@ -472,6 +472,15 @@ function normalizeGameMaster(
         done: !!t.done,
         source: t.source === 'manual' ? 'manual' : 'auto',
       })),
+    locations: arr<any>(raw.locations)
+      .filter((l) => l && typeof l.name === 'string')
+      .map((l) => ({
+        id: typeof l.id === 'string' ? l.id : uid('loc'),
+        name: l.name,
+        description: str(l.description),
+        tags: strArr(l.tags),
+        source: l.source === 'manual' ? 'manual' : 'auto',
+      })),
   };
 }
 

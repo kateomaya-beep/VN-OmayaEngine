@@ -207,6 +207,13 @@ function gameMasterBlock(state: RuntimeState): string {
       `Relationship grid:\n${gm.relations.map((r) => `- ${r.from} → ${r.to}: ${r.label}`).join('\n')}`
     );
   }
+  if (gm.locations?.length) {
+    parts.push(
+      `Known locations (keep descriptions consistent):\n${gm.locations
+        .map((l) => `- ${l.name}${l.description ? `: ${l.description}` : ''}${l.tags.length ? ` [${l.tags.join(', ')}]` : ''}`)
+        .join('\n')}`
+    );
+  }
   const openTasks = gm.agenda.filter((t) => !t.done);
   if (openTasks.length) {
     parts.push(`Open agenda:\n${openTasks.map((t) => `- ${t.text}`).join('\n')}`);

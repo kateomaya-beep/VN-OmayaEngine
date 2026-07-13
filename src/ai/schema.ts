@@ -72,7 +72,17 @@ export const worldStateSchema = z
     relations: z
       .array(z.object({ from: z.string(), to: z.string(), label: z.string().default('') }))
       .nullish(),
+    locations: z
+      .array(
+        z.object({
+          name: z.string(),
+          description: z.string().nullish(),
+          tags: z.array(z.string()).nullish(),
+        })
+      )
+      .nullish(),
     event: z.string().nullish(),
+    eventChars: z.array(z.string()).nullish(),
     mood: z.string().nullish(),
     agendaAdd: z.array(z.string()).nullish(),
     agendaDone: z.array(z.string()).nullish(),

@@ -17,7 +17,7 @@ import type {
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
 // отношений, календарь (день/месяц/год/время/локация + кастомные месяцы), адженда,
 // список саммари (свёрток) и векторизация. Двуязычно (по глобальному языку UI).
-type Tab = 'characters' | 'events' | 'relations' | 'calendar' | 'agenda' | 'summary' | 'vector';
+type Tab = 'characters' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'summary' | 'vector';
 type Lf = (ru: string, en: string) => string;
 type GM = GameMasterState;
 type PatchGm = (m: (gm: GM) => void) => void;
@@ -42,6 +42,7 @@ export function GameMasterPanel({
     { id: 'characters', label: L('Персонажи', 'Characters'), icon: '👥' },
     { id: 'events', label: L('События', 'Events'), icon: '🎬' },
     { id: 'relations', label: L('Взаимоотношения', 'Relationships'), icon: '🕸' },
+    { id: 'locations', label: L('Локации', 'Locations'), icon: '📍' },
     { id: 'calendar', label: L('Календарь', 'Calendar'), icon: '🗓' },
     { id: 'agenda', label: L('Адженда', 'Agenda'), icon: '✅' },
     { id: 'summary', label: L('Саммари', 'Summary'), icon: '🧠' },
@@ -71,6 +72,7 @@ export function GameMasterPanel({
       {tab === 'characters' && (gm ? <CharactersTab gm={gm} patchGm={s.patchGm} L={L} project={project} relationship={s.state?.relationship ?? {}} /> : noGame)}
       {tab === 'events' && (gm ? <EventsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'relations' && (gm ? <RelationsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
+      {tab === 'locations' && (gm ? <LocationsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'calendar' && (gm ? <CalendarTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'agenda' && (gm ? <AgendaTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'summary' && <SummaryTab project={project} onPatch={onPatch} L={L} />}
@@ -328,6 +330,51 @@ function RelationsTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) {
           <input className="input !py-1 text-sm w-28" placeholder={L('к', 'to')} value={r.to} onChange={(e) => patchGm((g) => (g.relations[i].to = e.target.value))} />
           <input className="input !py-1 text-sm flex-1" placeholder={L('характер связи', 'relationship')} value={r.label} onChange={(e) => patchGm((g) => (g.relations[i].label = e.target.value))} />
           <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => patchGm((g) => g.relations.splice(i, 1))}>✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LocationsTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) {
+  const locs = gm.locations || [];
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-between items-center">
+        <p className="text-xs text-gray-500">
+          {L('Память мест: ИИ дополняет их по ходу, описания остаются непротиворечивыми.',
+            'Location memory: the AI fills these in as you play; descriptions stay consistent.')}
+        </p>
+        <button
+          className="btn-ghost !px-3 !py-1 text-xs"
+          onClick={() => patchGm((g) => (g.locations ||= []).push({ id: uid('loc'), name: L('Новое место', 'New place'), description: '', tags: [], source: 'manual' }))}
+        >
+          + {L('Локация', 'Location')}
+        </button>
+      </div>
+      {locs.length === 0 && <p className="text-gray-600 text-sm">—</p>}
+      {locs.map((l, i) => (
+        <div key={l.id} className="card !p-3 !bg-panel2">
+          <div className="flex items-center gap-2 mb-2">
+            <input
+              className="input !py-1 text-sm font-semibold flex-1"
+              value={l.name}
+              onChange={(e) => patchGm((g) => (g.locations[i].name = e.target.value))}
+            />
+            <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => patchGm((g) => g.locations.splice(i, 1))}>✕</button>
+          </div>
+          <textarea
+            className="input !py-1 text-sm h-16"
+            placeholder={L('описание места, атмосфера, кто там бывает', 'description, atmosphere, who is there')}
+            value={l.description}
+            onChange={(e) => patchGm((g) => (g.locations[i].description = e.target.value))}
+          />
+          <input
+            className="input !py-1 text-sm mt-2"
+            placeholder={L('теги (через запятую)', 'tags (comma-separated)')}
+            value={l.tags.join(', ')}
+            onChange={(e) => patchGm((g) => (g.locations[i].tags = e.target.value.split(',').map((t) => t.trim()).filter(Boolean)))}
+          />
         </div>
       ))}
     </div>

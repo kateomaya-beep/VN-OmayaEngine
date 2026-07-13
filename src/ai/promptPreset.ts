@@ -50,6 +50,7 @@ RESPONSE SCHEMA:
     "clock": { "day": string, "month": string, "year": string, "time": string, "location": string },
     "characters": [ { "name": string, "charId": string|null, "dossier": string, "appearance": string, "personality": string, "roleToHero": string, "outfit": string, "mood": string, "status": string, "location": string, "tags": [string] } ],
     "relations": [ { "from": string, "to": string, "label": string } ],
+    "locations": [ { "name": string, "description": string, "tags": [string] } ],
     "event": string, "eventChars": [string], "mood": string,
     "agendaAdd": [string], "agendaDone": [string]
   }
@@ -62,6 +63,7 @@ worldState is the GAME MASTER memory. It is OPTIONAL and DELTA-ONLY — send it 
 - clock: include ONLY when in-game time or location actually moved; then send just the changed fields and keep chronology consistent.
 - characters: include a character ONLY when newly introduced OR when a lasting fact changed (outfit, status, location, a new tag). Send just that character with just the changed fields — never re-send a full dossier that is already established.
 - relations: only edges that changed.
+- locations: when the scene visits a NEW place, or an established place gains a lasting detail — send its name + a short description (and tags). Keeps place descriptions consistent across the story. Skip for places already recorded and unchanged.
 - event / eventChars / mood: include ONLY on a genuinely noteworthy beat (this is the persistent event log) — not every turn.
 - agendaAdd / agendaDone: only real new or completed goals.
 Spending output on redundant worldState makes turns slow — always prefer more story, less bookkeeping.`;
