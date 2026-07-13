@@ -12,6 +12,7 @@ import { Console } from './components/Console';
 import { Mixer } from './components/Mixer';
 import { QuickActions } from './components/QuickActions';
 import { EditPanel } from './components/EditPanel';
+import { HistoryPanel } from './components/HistoryPanel';
 import { SaveLoadPanel } from './components/Panels';
 import { useT } from '../../shared/i18n';
 import { TopBar } from '../../app/TopBar';
@@ -24,7 +25,7 @@ export function PlayerPage() {
   const nav = useNavigate();
   const t = useT();
   const s = usePlayerStore();
-  const [panel, setPanel] = useState<null | 'saves' | 'edit'>(null);
+  const [panel, setPanel] = useState<null | 'saves' | 'edit' | 'history'>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -122,6 +123,7 @@ export function PlayerPage() {
                   onClick={() => setMenuOpen(false)}
                 >
                   {/* Отношения/память/история переехали в Game Master (🎮) на верхней панели. */}
+                  <MenuItem icon="📜" label="История" onClick={() => setPanel('history')} />
                   <MenuItem icon="💾" label={t('player.saves')} onClick={() => setPanel('saves')} />
                   <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
                   <MenuItem icon="🎨" label="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
@@ -239,6 +241,7 @@ export function PlayerPage() {
       )}
 
       <EditPanel open={panel === 'edit'} onClose={() => setPanel(null)} />
+      <HistoryPanel open={panel === 'history'} onClose={() => setPanel(null)} />
       <SaveLoadPanel
         open={panel === 'saves'}
         onClose={() => setPanel(null)}
