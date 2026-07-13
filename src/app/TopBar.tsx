@@ -27,10 +27,16 @@ function Svg({ children }: { children: ReactNode }) {
 
 const Icons = {
   preset: (
+    // Коробка/пакет (пресет).
     <Svg>
-      <rect x="4.5" y="3.5" width="11" height="13" rx="3" stroke={ICON_STROKE} strokeWidth="1.5" />
-      <path d="M8 7.5v3M12 7.5v3" stroke={ICON_STROKE} strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M10 13.3v2.4" stroke={ICON_STROKE} strokeWidth="1.5" strokeLinecap="round" />
+      <path
+        d="M10 2.6 16.6 6v8L10 17.4 3.4 14V6L10 2.6Z"
+        stroke={ICON_STROKE}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M3.6 6.1 10 9.6l6.4-3.5" stroke={ICON_STROKE} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 9.6V17" stroke={ICON_STROKE} strokeWidth="1.4" strokeLinecap="round" />
     </Svg>
   ),
   api: (

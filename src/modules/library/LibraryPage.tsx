@@ -6,7 +6,7 @@ import { createEmptyProject } from '../../shared/factory';
 import { exportProjectZip, downloadBlob, importProjectZip, countSaves } from '../../storage/zip';
 import { AssetImage, Modal } from '../../shared/ui';
 import { formatDate } from '../../shared/utils';
-import { useT } from '../../shared/i18n';
+import { useT, useLang } from '../../shared/i18n';
 import { logEvent } from '../../shared/logStore';
 
 export function LibraryPage() {
@@ -33,6 +33,9 @@ export function LibraryPage() {
     nav(`/project/${p.id}`);
   }
 
+  const lang = useLang((s) => s.lang);
+  const L = (ru: string, en: string) => (lang === 'en' ? en : ru);
+  const [detailsTarget, setDetailsTarget] = useState<Project | null>(null);
   const [shareTarget, setShareTarget] = useState<Project | null>(null);
   const [withProgress, setWithProgress] = useState(true);
   const [saveCount, setSaveCount] = useState<number | null>(null);
@@ -179,9 +182,14 @@ export function LibraryPage() {
                   )}
                 </div>
 
-                <div className="flex items-center justify-center gap-3.5 pb-5 pt-1">
+                <div className="flex items-center justify-center gap-3 pb-5 pt-1">
                   <CardIconBtn title={t('library.editor')} onClick={() => nav(`/project/${p.id}`)} icon="edit" />
                   <CardIconBtn title={t('library.export')} onClick={() => setShareTarget(p)} icon="export" />
+                  <CardIconBtn
+                    title={L('Ассеты и целостность', 'Assets & integrity')}
+                    onClick={() => setDetailsTarget(p)}
+                    icon="info"
+                  />
                   <CardIconBtn title={t('library.play')} onClick={() => nav(`/play/${p.id}`)} icon="play" primary />
                   <CardIconBtn title={t('library.delete')} onClick={() => onDelete(p)} icon="trash" />
                 </div>
@@ -298,6 +306,94 @@ export function LibraryPage() {
           </>
         )}
       </Modal>
+
+      {/* Ассеты и целостность проекта */}
+      <Modal
+        open={!!detailsTarget}
+        onClose={() => setDetailsTarget(null)}
+        title={L('Ассеты и целостность', 'Assets & integrity')}
+      >
+        {detailsTarget && (
+          <ProjectDetails project={detailsTarget} L={L} />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+// Разбивка ассетов по типам + базовая проверка целостности проекта.
+function ProjectDetails({ project, L }: { project: Project; L: (ru: string, en: string) => string }) {
+  const rows: { type: string; label: string; emoji: string }[] = [
+    { type: 'background', label: L('Фоны', 'Backgrounds'), emoji: '🖼' },
+    { type: 'sprite', label: L('Спрайты', 'Sprites'), emoji: '🧍' },
+    { type: 'cg', label: L('CG-сцены', 'CG scenes'), emoji: '🎞' },
+    { type: 'music', label: L('Музыка', 'Music'), emoji: '🎵' },
+    { type: 'sfx', label: L('Звуки', 'SFX'), emoji: '🔊' },
+    { type: 'icon', label: L('Иконки', 'Icons'), emoji: '⭐' },
+  ];
+  const count = (ty: string) => project.assets.filter((a) => a.type === ty).length;
+  const known = new Set(rows.map((r) => r.type));
+  const other = project.assets.filter((a) => !known.has(a.type)).length;
+  const charsWithSprite = project.characters.filter((c) => Object.keys(c.sprites).length > 0).length;
+  const charsNoSprite = project.characters.length - charsWithSprite;
+
+  const issues: string[] = [];
+  if (project.assets.length === 0) issues.push(L('В проекте нет ассетов.', 'No assets in the project.'));
+  if (project.characters.length === 0) issues.push(L('Нет персонажей.', 'No characters.'));
+  if (charsNoSprite > 0)
+    issues.push(
+      L(
+        `Персонажей без спрайтов: ${charsNoSprite} (играются как имя + текст).`,
+        `Characters without sprites: ${charsNoSprite} (render as name + text).`
+      )
+    );
+  if (!project.meta.coverAssetId) issues.push(L('Не задана обложка.', 'No cover image set.'));
+  const hasProtagonist = project.characters.some((c) => c.role === 'protagonist');
+  if (project.characters.length > 0 && !hasProtagonist)
+    issues.push(L('Нет персонажа-протагониста.', 'No protagonist character.'));
+
+  const Stat = ({ label, value }: { label: string; value: number }) => (
+    <div className="flex items-center justify-between rounded-lg bg-panel2 px-3 py-1.5">
+      <span className="text-sm text-gray-300">{label}</span>
+      <span className="text-sm font-semibold tabular-nums">{value}</span>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h3 className="font-semibold mb-1 truncate">{project.meta.title}</h3>
+        <p className="text-xs text-gray-500">
+          {L('Всего ассетов', 'Total assets')}: {project.assets.length}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {rows.map((r) => (
+          <Stat key={r.type} label={`${r.emoji} ${r.label}`} value={count(r.type)} />
+        ))}
+        {other > 0 && <Stat label={L('❔ Прочее', '❔ Other')} value={other} />}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Stat label={`👥 ${L('Персонажи', 'Characters')}`} value={project.characters.length} />
+        <Stat label={`📊 ${L('Статы', 'Stats')}`} value={project.stats.length} />
+        <Stat label={`📖 ${L('Лорбук', 'Lorebook')}`} value={project.lorebook.length} />
+        <Stat label={`🎭 ${L('Со спрайтами', 'With sprites')}`} value={charsWithSprite} />
+      </div>
+
+      {issues.length === 0 ? (
+        <div className="rounded-lg bg-emerald-500/10 border border-emerald-400/30 p-3 text-sm text-emerald-300">
+          ✓ {L('Проект выглядит целостным.', 'Project looks complete.')}
+        </div>
+      ) : (
+        <div className="rounded-lg bg-amber-500/10 border border-amber-400/30 p-3 text-xs text-amber-200 space-y-1">
+          <div className="font-semibold">{L('На что обратить внимание:', 'Things to check:')}</div>
+          {issues.map((s, i) => (
+            <div key={i}>• {s}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -332,6 +428,17 @@ const CARD_ICONS: Record<string, JSX.Element> = {
       <path d="M6.5 4.5v11l9-5.5-9-5.5Z" fill="#1c1526" />
     </svg>
   ),
+  info: (
+    <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M6 2.5h5.5L15 6v11.5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Z"
+        stroke="#c8b8ee"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M8 6.7h2M8 9.7h4M8 12.7h4" stroke="#c8b8ee" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  ),
   trash: (
     <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
       <path
@@ -353,7 +460,7 @@ function CardIconBtn({
 }: {
   title: string;
   onClick: () => void;
-  icon: 'edit' | 'export' | 'play' | 'trash';
+  icon: 'edit' | 'export' | 'play' | 'trash' | 'info';
   primary?: boolean;
 }) {
   const size = primary ? 46 : 34;
