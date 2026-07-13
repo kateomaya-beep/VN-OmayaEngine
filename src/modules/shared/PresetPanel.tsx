@@ -1,16 +1,16 @@
 import { useRef, useState } from 'react';
 import { Modal, Field } from '../../shared/ui';
 import {
-  normalizePreset,
   defaultPreset,
   defaultBlockContent,
   parsePresetJson,
   type PromptPreset,
   type PromptBlock,
 } from '../../ai/promptPreset';
+import { usePresetSettings, type PresetSettings } from '../../ai/presetSettings';
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
-import type { Project, AiConfig, AdvancedPromptBlock, LlmRole } from '../../shared/types';
+import type { AdvancedPromptBlock, LlmRole } from '../../shared/types';
 import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, DEFAULT_THINKING_PLAN } from '../../shared/types';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
@@ -22,36 +22,18 @@ const ROLES: { id: LlmRole; label: string }[] = [
   { id: 'assistant', label: 'A' },
 ];
 
-export function PresetPanel({
-  open,
-  onClose,
-  project,
-  onPatch,
-}: {
-  open: boolean;
-  onClose: () => void;
-  project?: Project | null;
-  onPatch?: (mutator: (p: Project) => void) => void;
-}) {
+export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // ГЛОБАЛЬНЫЙ пресет — один на все истории, доступен везде и всегда.
+  const cfg = usePresetSettings((s) => s.settings);
+  const patchStore = usePresetSettings((s) => s.patch);
   if (!open) return null;
 
-  if (!project || !onPatch) {
-    return (
-      <Modal open={open} onClose={onClose} title="Пресет промпта">
-        <p className="text-sm text-gray-400">
-          Откройте проект (в конструкторе или в игре), чтобы редактировать его пресет промпта.
-        </p>
-      </Modal>
-    );
-  }
+  const preset = cfg.preset;
 
-  const cfg = project.aiConfig;
-  const preset = normalizePreset(cfg.promptPreset);
-
-  const patch = (p: Partial<AiConfig>) => onPatch((proj) => Object.assign(proj.aiConfig, p));
-  const savePreset = (next: PromptPreset) => onPatch((proj) => (proj.aiConfig.promptPreset = next));
+  const patch = (p: Partial<PresetSettings>) => patchStore(p);
+  const savePreset = (next: PromptPreset) => patchStore({ preset: next });
   const patchBlock = (id: string, p: Partial<PromptBlock>) =>
     savePreset({ ...preset, blocks: preset.blocks.map((b) => (b.id === id ? { ...b, ...p } : b)) });
   const removeBlock = (id: string) =>
@@ -94,8 +76,7 @@ export function PresetPanel({
       alert('Не удалось импортировать пресет: ' + (e as Error).message);
     }
   };
-  const patchAdvBlocks = (blocks: AdvancedPromptBlock[]) =>
-    onPatch((p) => (p.aiConfig.advancedBlocks = blocks));
+  const patchAdvBlocks = (blocks: AdvancedPromptBlock[]) => patch({ advancedBlocks: blocks });
 
   return (
     <Modal open={open} onClose={onClose} title="Пресет промпта" wide>
@@ -255,7 +236,7 @@ export function PresetPanel({
               className="input !py-1"
               value={cfg.reasoningEffort ?? ''}
               onChange={(e) =>
-                patch({ reasoningEffort: (e.target.value || undefined) as AiConfig['reasoningEffort'] })
+                patch({ reasoningEffort: (e.target.value || undefined) as PresetSettings['reasoningEffort'] })
               }
             >
               <option value="">Авто (как у провайдера)</option>
@@ -366,8 +347,8 @@ function GuidedThinkingField({
   cfg,
   patch,
 }: {
-  cfg: AiConfig;
-  patch: (p: Partial<AiConfig>) => void;
+  cfg: PresetSettings;
+  patch: (p: Partial<PresetSettings>) => void;
 }) {
   const on = !!cfg.guidedThinking;
   return (
@@ -403,8 +384,8 @@ function ChoiceFrequencyField({
   cfg,
   patch,
 }: {
-  cfg: AiConfig;
-  patch: (p: Partial<AiConfig>) => void;
+  cfg: PresetSettings;
+  patch: (p: Partial<PresetSettings>) => void;
 }) {
   const gap = cfg.choiceMinGap ?? 0;
   const plural = (n: number) =>
@@ -450,8 +431,8 @@ function TurnLengthField({
   cfg,
   patch,
 }: {
-  cfg: AiConfig;
-  patch: (p: Partial<AiConfig>) => void;
+  cfg: PresetSettings;
+  patch: (p: Partial<PresetSettings>) => void;
 }) {
   const tl = cfg.turnLength || DEFAULT_TURN_LENGTH;
   const B = TURN_LENGTH_BOUNDS;

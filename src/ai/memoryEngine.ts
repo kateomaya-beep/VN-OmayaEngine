@@ -1,5 +1,6 @@
 import type { Project, RuntimeState, LlmMessage } from '../shared/types';
 import { runCompletionWith } from './providers';
+import { getPresetSettings } from './presetSettings';
 import { SUMMARIZER_PROMPT } from './directorPrompt';
 import { estimateTokens, uid } from '../shared/utils';
 import { pushToast, updateToast } from '../shared/toast';
@@ -38,7 +39,7 @@ export async function maybeCompress(
   state: RuntimeState,
   force = false
 ): Promise<RuntimeState> {
-  const K = Math.max(2, project.aiConfig.liveWindow);
+  const K = Math.max(2, getPresetSettings().liveWindow);
   const keep = K * 2; // user+assistant per turn
   const everyN = Math.max(4, project.memoryConfig.summaryEveryN) * 2;
   // Триггер ТОЛЬКО по счётчику ходов (summaryEveryN) или принудительно. Раньше был

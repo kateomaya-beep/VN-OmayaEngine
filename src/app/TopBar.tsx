@@ -116,12 +116,7 @@ export function TopBarControls({
       </div>
 
       <ConnectionPanel open={connOpen} onClose={() => setConnOpen(false)} />
-      <PresetPanel
-        open={presetOpen}
-        onClose={() => setPresetOpen(false)}
-        project={project}
-        onPatch={onPatchProject}
-      />
+      <PresetPanel open={presetOpen} onClose={() => setPresetOpen(false)} />
       <GameMasterPanel
         open={gmOpen}
         onClose={() => setGmOpen(false)}

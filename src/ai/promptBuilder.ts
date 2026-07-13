@@ -1,7 +1,8 @@
 import type { Project, RuntimeState, LlmMessage } from '../shared/types';
 import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
-import { normalizePreset, type DynamicSource } from './promptPreset';
+import { type DynamicSource } from './promptPreset';
+import { getPresetSettings } from './presetSettings';
 import { matchLorebook } from './lorebookEngine';
 import { extractJson } from './responseParser';
 import { formatClock } from './gameMaster';
@@ -244,6 +245,7 @@ export async function buildRequest(
   opts?: { skipVector?: boolean }
 ): Promise<BuiltRequest> {
   const cfg = project.aiConfig;
+  const ps = getPresetSettings(); // ГЛОБАЛЬНЫЙ пресет/настройки генерации (не на проект)
   const ctx: MacroContext = { project, state };
   const onScreenIds = state.onScreen.map((s) => s.characterId);
 
@@ -292,7 +294,7 @@ export async function buildRequest(
   // включённые блоки; статичные — их текст (с макросами), динамические — от движка.
   // Роль блока (как в Таверне): 'system' идёт в системный промпт; 'user'/'assistant'
   // становятся отдельными сообщениями ПЕРЕД живой историей.
-  const preset = normalizePreset(cfg.promptPreset);
+  const preset = ps.preset;
   const systemParts: string[] = [];
   const presetMessages: LlmMessage[] = [];
   for (const block of preset.blocks) {
@@ -312,11 +314,11 @@ export async function buildRequest(
 
   // Авторитетная длина хода (ползунок/ввод в пресете) — переопределяет любые числа
   // в тексте блоков. Ставим последней в системном промпте, чтобы имела приоритет.
-  const tl = project.aiConfig.turnLength || DEFAULT_TURN_LENGTH;
+  const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
   systemParts.push(
     `TURN LENGTH & BEAT SIZE (authoritative — overrides any other length/beat guidance above): land the turn WITHIN ${tl.min}–${tl.max} words TOTAL — that is the target, do NOT overshoot it; once you reach a natural pause inside the range, stop rather than padding. Split the turn into medium beats: each beat a readable 1–3 sentence chunk (a short paragraph) — never a wall of text, never a bare one-liner. Fill the range with the NUMBER of medium beats, not by inflating any single beat. Keep a real mix of dialogue and narration: characters who are present must actually SPEAK — emit "dialogue" beats with that character's characterId (a dialogue beat with a valid characterId is what puts the character's sprite on screen), interleaved with narration/thought.`
   );
-  const gap = project.aiConfig.choiceMinGap ?? 0;
+  const gap = ps.choiceMinGap ?? 0;
   if (gap > 0) {
     systemParts.push(
       `CHOICE FREQUENCY (authoritative): offer a choices block at most about once every ${gap} turns. On all other turns return choices: [] and let the player type. Only surface choices at a real decision point.`
@@ -327,7 +329,7 @@ export async function buildRequest(
   // Live window of history. Прошлые ходы ассистента храним сырым JSON (для реплея),
   // но в контекст ИИ шлём только ПРОЗУ этих ходов — так вход в разы легче (в
   // истории иначе едет весь JSON со worldState/статами, дублируя текущие блоки).
-  const K = Math.max(2, cfg.liveWindow);
+  const K = Math.max(2, ps.liveWindow);
   const window = state.history.slice(-K * 2).map((m) =>
     m.role === 'assistant'
       ? { role: 'assistant' as const, content: condenseAssistantTurn(m.content, project, state) ?? m.content }
@@ -337,7 +339,7 @@ export async function buildRequest(
   const messages: LlmMessage[] = [...presetMessages, ...window];
 
   // Продвинутые кастомные вставки на заданной глубине от конца (author's note style).
-  const blocks = (cfg.advancedBlocks || []).filter((b) => b.content.trim());
+  const blocks = (ps.advancedBlocks || []).filter((b) => b.content.trim());
   const withMove: LlmMessage[] = [...messages, { role: 'user', content: playerMove }];
   for (const b of blocks) {
     const depth = Math.max(0, Math.floor(b.depth));
@@ -358,9 +360,9 @@ export async function buildRequest(
   // Управляемое размышление: короткий план в <thinking> вместо медленной родной
   // «думалки». Префилл открывает тег, инструкция задаёт короткий шаблон плана,
   // после закрытия тега — только JSON. Парсер вырезает <thinking>…</thinking>.
-  let prefill = cfg.prefill?.trim() || undefined;
-  if (cfg.guidedThinking) {
-    const plan = (cfg.thinkingPlan?.trim() || DEFAULT_THINKING_PLAN);
+  let prefill = ps.prefill?.trim() || undefined;
+  if (ps.guidedThinking) {
+    const plan = (ps.thinkingPlan?.trim() || DEFAULT_THINKING_PLAN);
     withMove.push({
       role: 'user',
       content: `REASONING PROTOCOL: Do ALL planning ONLY inside a single <thinking></thinking> block at the very start of your reply, and keep it SHORT — a brief bullet per line following this template, nothing more:\n${plan}\nThen immediately close </thinking> and output the ONE JSON object per the schema and nothing after it.\n${lengthReminder}\n${FORMAT_REMINDER}`,

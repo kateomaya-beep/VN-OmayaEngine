@@ -2,6 +2,7 @@ import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBoo
 import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH } from '../shared/types';
 import { buildRequest } from './promptBuilder';
 import { runCompletion } from './providers';
+import { getPresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
 import { mergeWorldState } from './gameMaster';
 import { maybeCompress } from './memoryEngine';
@@ -53,7 +54,7 @@ export async function applyTurn(
   // показа выбора прошло меньше N ходов — глушим choices этого хода. Модель считать
   // ходы не умеет, поэтому решает движок (детерминированно). turn.choices мутируем,
   // чтобы и немедленный рендер, и сохранённый lastTurn отражали троттлинг.
-  const choiceGap = project.aiConfig.choiceMinGap ?? 0;
+  const choiceGap = getPresetSettings().choiceMinGap ?? 0;
   let lastChoiceTurn = state.lastChoiceTurn ?? -1e9;
   if (choiceGap > 0 && turn.choices.length > 0 && nextTurnNumber - lastChoiceTurn < choiceGap) {
     turn.choices = [];
@@ -193,19 +194,18 @@ export async function runTurn(
   // кириллицы) + запас на JSON-обвязку/worldState. Держим НЕ слишком большим,
   // иначе модель выбирает весь бюджет и уходит в «полотно» (медленно). Но и не
   // ниже дефолта шлюза, который иначе режет ход.
-  const tl = project.aiConfig.turnLength || DEFAULT_TURN_LENGTH;
+  const ps = getPresetSettings();
+  const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
   const maxTokens = Math.min(6000, Math.max(1200, Math.round(tl.max * 2.2) + 700));
   // При управляемом размышлении родную «думалку» глушим (none) — иначе она сложится
   // с нашим планом и станет только медленнее.
-  const reasoningEffort = project.aiConfig.guidedThinking
-    ? 'none'
-    : project.aiConfig.reasoningEffort;
+  const reasoningEffort = ps.guidedThinking ? 'none' : ps.reasoningEffort;
 
   let raw = await runCompletion({
     system: req.system,
     messages: req.messages,
     prefill: req.prefill,
-    temperature: project.aiConfig.temperature,
+    temperature: ps.temperature,
     maxTokens,
     reasoningEffort,
     signal,
@@ -219,7 +219,7 @@ export async function runTurn(
       system: req.system,
       messages: [...req.messages, { role: 'user', content: RETRY_HINT }],
       prefill: req.prefill,
-      temperature: Math.min(project.aiConfig.temperature, 0.5),
+      temperature: Math.min(ps.temperature, 0.5),
       maxTokens,
       reasoningEffort,
       signal,

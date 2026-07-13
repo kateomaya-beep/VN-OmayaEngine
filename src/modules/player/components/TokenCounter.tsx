@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Project, RuntimeState } from '../../../shared/types';
 import { estimateContextTokens } from '../../../ai/promptBuilder';
+import { getPresetSettings } from '../../../ai/presetSettings';
 
 // Живой счётчик токенов/контекста (см. CR v2 §J) — пересчитывается после каждого
 // хода (не на каждый рендер), чтобы не грузить лишний раз.
@@ -19,7 +20,7 @@ export function TokenCounter({ project, state }: { project: Project; state: Runt
   }, [state.turnCount, state.history.length]);
 
   if (tokens === null) return null;
-  const budget = project.aiConfig.contextBudget;
+  const budget = getPresetSettings().contextBudget;
   const over = tokens > budget;
 
   return (
