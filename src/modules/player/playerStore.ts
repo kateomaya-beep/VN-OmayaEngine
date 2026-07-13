@@ -60,12 +60,9 @@ interface PlayerStore {
 
 const AUTOSAVE_SLOT = 0;
 
-// Отмена генерации без прерывания самого fetch (abort-сигнал в запрос БОЛЬШЕ не
-// передаём — он подозревался в «Failed to fetch»). Логика: помечаем текущую
-// генерацию, при отмене сразу возвращаем прошлый вид, а «осиротевший» ответ,
-// когда доедет, игнорируем (по флагу aborted).
+// Контроллер текущей генерации (для «Отменить»). Модульная переменная, а не поле
+// стора — чтобы не гонять ре-рендеры и не сериализовать в сейв.
 let currentAbort: AbortController | null = null;
-let activePrevView: Partial<PlayerStore> | null = null;
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
   project: null,
@@ -87,10 +84,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   cancel() {
-    currentAbort?.abort(); // помечаем текущую генерацию отменённой
-    // Сразу возвращаем прошлый вид сцены (ответ, когда доедет, будет проигнорирован).
-    if (activePrevView) set({ thinking: false, error: null, ...activePrevView });
-    else set({ thinking: false, error: null });
+    currentAbort?.abort();
   },
 
   async loadAndStart(projectId, resume, protagonistName = '') {
@@ -322,19 +316,11 @@ async function runAndApply(
   };
   const controller = new AbortController();
   currentAbort = controller;
-  activePrevView = prevView;
   set({ thinking: true, error: null, choices: [], statFlash: [], queue: [], visibleBeats: [] });
   logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
   try {
     // Обычная (нестриминговая) генерация — один ход целиком, затем показ.
-    // Сигнал в fetch НЕ передаём (см. выше) — отмену ловим по флагу aborted ниже.
-    const { turn, state } = await runTurn(project, baseState, playerMove);
-
-    // Отменено, пока ждали ответ: вид уже восстановлен cancel(), ответ игнорируем.
-    if (controller.signal.aborted) {
-      logEvent('info', 'turn', 'Генерация отменена — ответ проигнорирован');
-      return false;
-    }
+    const { turn, state } = await runTurn(project, baseState, playerMove, controller.signal);
 
     // Compute stat flashes vs. the pre-turn values.
     const flash: { statId: string; delta: number }[] = [];
@@ -366,18 +352,18 @@ async function runAndApply(
     logEvent('info', 'turn', `Ход применён (ход ${state.turnCount}, beats: ${turn.beats.length})`);
     return true;
   } catch (e) {
-    if (controller.signal.aborted) {
-      // Отменённый запрос упал позже — молча игнорируем (вид уже восстановлен).
-      return false;
+    const aborted = (e as Error)?.name === 'AbortError';
+    if (aborted) {
+      // Отмена: возвращаем прошлый вид сцены; ошибку не показываем.
+      logEvent('info', 'turn', 'Генерация отменена — возвращён прошлый ход');
+      set({ thinking: false, error: null, ...prevView });
+    } else {
+      // Ошибка: тоже возвращаем прошлый вид (сцена не пустеет), показываем тост.
+      logEvent('error', 'turn', 'Не удалось выполнить ход: ' + (e as Error).message, (e as Error).stack);
+      set({ thinking: false, error: (e as Error).message, ...prevView });
     }
-    // Ошибка: возвращаем прошлый вид (сцена не пустеет), показываем тост.
-    logEvent('error', 'turn', 'Не удалось выполнить ход: ' + (e as Error).message, (e as Error).stack);
-    set({ thinking: false, error: (e as Error).message, ...prevView });
     return false;
   } finally {
-    if (currentAbort === controller) {
-      currentAbort = null;
-      activePrevView = null;
-    }
+    if (currentAbort === controller) currentAbort = null;
   }
 }
