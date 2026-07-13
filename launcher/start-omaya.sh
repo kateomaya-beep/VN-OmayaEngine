@@ -64,8 +64,9 @@ open_url() {
   fi
 }
 
-# 4) Поднимаем статический сервер (vite preview) и открываем адрес.
-echo "▸ Запускаю сервер на ${URL}"
+# 4) Поднимаем НАШ сервер: статика из dist + локальный прокси к провайдерам
+#    (server-side запросы, без CORS — как в SillyTavern). Открываем адрес.
+echo "▸ Запускаю сервер на ${URL} (со встроенным прокси /__proxy — без CORS)"
 echo "  (первый раз — установите как приложение: см. launcher/README.md)"
 ( sleep 2; open_url "$URL" ) &
-exec npx vite preview --host 127.0.0.1 --port "$PORT" --strictPort
+exec env PORT="$PORT" HOST=127.0.0.1 node "$ROOT/launcher/serve.mjs"

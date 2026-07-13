@@ -29,13 +29,57 @@ export interface Provider {
 const DEFAULT_OPENAI_BASE = 'https://api.openai.com/v1';
 const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com/v1';
 
+// Локальный прокси лаунчера (launcher/serve.mjs). Если приложение открыто через наш
+// сервер, гоним запросы к провайдеру через /__proxy — это server-side запрос, CORS
+// на него не действует (как в SillyTavern). Если прокси нет (чистая статика) —
+// напрямую из браузера (тогда возможен CORS). Детект один раз.
+let proxyState: 'unknown' | 'on' | 'off' = 'unknown';
+let proxyProbe: Promise<void> | null = null;
+async function ensureProxy(): Promise<void> {
+  if (proxyState !== 'unknown') return;
+  if (!proxyProbe) {
+    proxyProbe = (async () => {
+      try {
+        const r = await fetch('/__proxy/health', { method: 'GET' });
+        proxyState = r.ok && r.headers.get('x-vn-proxy') === '1' ? 'on' : 'off';
+      } catch {
+        proxyState = 'off';
+      }
+      logEvent(
+        'info',
+        'net',
+        proxyState === 'on'
+          ? 'Локальный прокси активен — запросы к ИИ идут через сервер (без CORS).'
+          : 'Локального прокси нет — прямые запросы из браузера (возможен CORS).'
+      );
+    })();
+  }
+  await proxyProbe;
+}
+
+// Универсальный fetch: через прокси, если он есть; иначе напрямую.
+async function netFetch(url: string, init: RequestInit): Promise<Response> {
+  await ensureProxy();
+  if (proxyState === 'on' && /^https?:\/\//i.test(url)) {
+    const headers = { ...((init.headers as Record<string, string>) || {}), 'x-target-url': url };
+    return fetch('/__proxy', { ...init, headers });
+  }
+  return fetch(url, init);
+}
+
+// Доступен ли прокси (для индикатора в UI). Гарантирует, что детект запущен.
+export async function isProxyActive(): Promise<boolean> {
+  await ensureProxy();
+  return proxyState === 'on';
+}
+
 // Обёртка над fetch. Браузер НЕ раскрывает точную причину «Failed to fetch»
 // (маскирует CORS/сеть/таймаут ради безопасности), поэтому не утверждаем, что это
 // именно CORS — перечисляем реальные варианты и отдаём исходную ошибку как есть.
 // Ретраев нет: решение повторить — за пользователем (кнопка «Повторить»).
 async function apiFetch(url: string, init: RequestInit): Promise<Response> {
   try {
-    return await fetch(url, init);
+    return await netFetch(url, init);
   } catch (e) {
     // Отмену пользователем пробрасываем как есть.
     if ((e as Error)?.name === 'AbortError') throw e;
@@ -87,7 +131,7 @@ const openAiCompatible: Provider = {
   },
   async listModels(conn, apiKey) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
-    const res = await fetch(`${base}/models`, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
+    const res = await netFetch(`${base}/models`, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}`);
     const data = await res.json();
     const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
@@ -123,7 +167,7 @@ const anthropic: Provider = {
   },
   async listModels(conn, apiKey) {
     const base = (conn.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
-    const res = await fetch(`${base}/models`, { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } });
+    const res = await netFetch(`${base}/models`, { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}`);
     const data = await res.json();
     const list = Array.isArray(data?.data) ? data.data : [];
