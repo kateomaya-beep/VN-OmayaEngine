@@ -327,7 +327,7 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     lastTurn: null,
     turnCount: 0,
     lastChoiceTurn: -1e9,
-    authorNote: '',
+    authorNotes: [],
   };
 }
 
@@ -409,7 +409,14 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
     lastTurn: raw.lastTurn && typeof raw.lastTurn === 'object' ? raw.lastTurn : null,
     turnCount: num(raw.turnCount, 0),
     lastChoiceTurn: num(raw.lastChoiceTurn, -1e9),
-    authorNote: str(raw.authorNote),
+    // Миграция: старое единичное authorNote (строка) → одна запись списка.
+    authorNotes: Array.isArray(raw.authorNotes)
+      ? raw.authorNotes
+          .filter((n: any) => n && typeof n.text === 'string')
+          .map((n: any) => ({ id: typeof n.id === 'string' ? n.id : uid('note'), text: n.text }))
+      : str(raw.authorNote).trim()
+        ? [{ id: uid('note'), text: str(raw.authorNote) }]
+        : [],
   };
 }
 

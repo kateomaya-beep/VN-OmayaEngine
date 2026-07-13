@@ -506,10 +506,15 @@ export interface RuntimeState {
   // Номер хода, когда игроку в последний раз показали выборы — для троттлинга
   // частоты выборов (aiConfig.choiceMinGap). -1e9 = ещё ни разу.
   lastChoiceTurn: number;
-  // Заметка для ИИ (Author's Note, см. CR v2 §M) — инжектится перед ходом игрока
-  // (глубина 0), живёт в сейве истории до ручного изменения/удаления. Пусто —
-  // ничего не инжектится.
-  authorNote: string;
+  // Заметки для ИИ (Author's Notes) — список записей, каждая инжектится перед
+  // ходом игрока (глубина 0). Менеджер заметок в игре: создать/править/подтвердить/
+  // удалить/копировать. Живут в сейве до ручного изменения.
+  authorNotes: AuthorNote[];
+}
+
+export interface AuthorNote {
+  id: string;
+  text: string;
 }
 
 export interface SaveSlot {

@@ -6,13 +6,13 @@ import { stopAllMusic } from './audio';
 import { Stage, type ActiveSprite } from './components/Stage';
 import { DialogueBox } from './components/DialogueBox';
 import { StatsHUD } from './components/StatsHUD';
-import { TokenCounter } from './components/TokenCounter';
 import { ChoiceMenu } from './components/ChoiceMenu';
 import { Console } from './components/Console';
 import { Mixer } from './components/Mixer';
 import { QuickActions } from './components/QuickActions';
 import { EditPanel } from './components/EditPanel';
 import { HistoryPanel } from './components/HistoryPanel';
+import { AuthorNotesPanel } from './components/AuthorNotesPanel';
 import { SaveLoadPanel } from './components/Panels';
 import { useT } from '../../shared/i18n';
 import { TopBar } from '../../app/TopBar';
@@ -29,6 +29,7 @@ export function PlayerPage() {
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [setup, setSetup] = useState<Setup>('checking');
 
   useEffect(() => {
@@ -139,9 +140,6 @@ export function PlayerPage() {
       />
 
       <StatsHUD project={s.project} state={s.state} flash={s.statFlash} />
-      <div className="absolute bottom-2 left-2 z-10">
-        <TokenCounter project={s.project} state={s.state} />
-      </div>
 
       {/* Внутриигровые часы/дата (вынесены галочкой в Game Master → Календарь). */}
       {s.state.gm.showClockInGame && formatClock(s.state.gm.clock) && (
@@ -232,18 +230,15 @@ export function PlayerPage() {
             canContinue={canContinue}
             onSubmit={(txt) => s.submitFreeInput(txt)}
             onContinue={() => s.continueStory()}
-            authorNote={s.state.authorNote}
-            onAuthorNoteChange={(text) =>
-              usePlayerStore.setState((st) => ({
-                state: st.state ? { ...st.state, authorNote: text } : st.state,
-              }))
-            }
+            hasNotes={s.state.authorNotes.some((n) => n.text.trim())}
+            onOpenNotes={() => setNotesOpen(true)}
           />
         </div>
       )}
 
       <EditPanel open={panel === 'edit'} onClose={() => setPanel(null)} />
       <HistoryPanel open={panel === 'history'} onClose={() => setPanel(null)} />
+      <AuthorNotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} />
       <SaveLoadPanel
         open={panel === 'saves'}
         onClose={() => setPanel(null)}

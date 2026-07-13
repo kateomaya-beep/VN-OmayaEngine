@@ -12,8 +12,8 @@ export function Console({
   onSubmit,
   onContinue,
   canContinue,
-  authorNote,
-  onAuthorNoteChange,
+  hasNotes,
+  onOpenNotes,
 }: {
   disabled: boolean;
   value: string;
@@ -21,11 +21,10 @@ export function Console({
   onSubmit: (text: string) => void;
   onContinue: () => void;
   canContinue: boolean;
-  authorNote: string;
-  onAuthorNoteChange: (text: string) => void;
+  hasNotes: boolean;
+  onOpenNotes: () => void;
 }) {
   const [showHelp, setShowHelp] = useState(false);
-  const [noteOpen, setNoteOpen] = useState(false);
 
   const send = () => {
     const t = value.trim();
@@ -47,9 +46,9 @@ export function Console({
           /
         </button>
         <button
-          className={`shrink-0 text-lg px-1 ${authorNote.trim() ? 'text-accent2' : 'text-gray-500 hover:text-gray-300'}`}
-          title="Заметка для ИИ (author's note)"
-          onClick={() => setNoteOpen((v) => !v)}
+          className={`shrink-0 text-lg px-1 ${hasNotes ? 'text-accent2' : 'text-gray-500 hover:text-gray-300'}`}
+          title="Авторские заметки для ИИ"
+          onClick={onOpenNotes}
         >
           📝
         </button>
@@ -80,16 +79,6 @@ export function Console({
       </div>
       {showHelp && (
         <div className="max-w-4xl mx-auto text-[11px] text-gray-500 mt-1 px-6">{SLASH_HELP}</div>
-      )}
-      {noteOpen && (
-        <div className="max-w-4xl mx-auto mt-2">
-          <textarea
-            className="input h-20 bg-black/70 text-sm"
-            placeholder="Заметка для ИИ — инструкция/направление сюжета, инжектится перед каждым ходом, пока не измените или не сотрёте…"
-            value={authorNote}
-            onChange={(e) => onAuthorNoteChange(e.target.value)}
-          />
-        </div>
       )}
     </div>
   );

@@ -8,6 +8,8 @@ import {
   type PromptBlock,
 } from '../../ai/promptPreset';
 import { usePresetSettings, type PresetSettings } from '../../ai/presetSettings';
+import { usePlayerStore } from '../player/playerStore';
+import { TokenCounter } from '../player/components/TokenCounter';
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
 import type { AdvancedPromptBlock, LlmRole } from '../../shared/types';
@@ -226,7 +228,10 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
 
       {/* Параметры генерации */}
       <div className="card !bg-panel2 mt-4">
-        <h4 className="font-semibold mb-3">Параметры генерации</h4>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="font-semibold">Параметры генерации</h4>
+          <ContextSizeBadge />
+        </div>
         <div className="grid sm:grid-cols-2 gap-3">
           <TurnLengthField cfg={cfg} patch={patch} />
           <ChoiceFrequencyField cfg={cfg} patch={patch} />
@@ -339,6 +344,17 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
       </div>
     </Modal>
   );
+}
+
+// Счётчик размера контекста (перенесён из плеера сюда). Считает по текущей игре,
+// если она открыта; иначе — подсказка. Порог = бюджет контекста из пресета.
+function ContextSizeBadge() {
+  const project = usePlayerStore((s) => s.project);
+  const state = usePlayerStore((s) => s.state);
+  if (!project || !state) {
+    return <span className="text-[11px] text-gray-500">размер контекста — виден в игре</span>;
+  }
+  return <TokenCounter project={project} state={state} />;
 }
 
 // Управляемое размышление: заменяет медленную родную «думалку» модели коротким

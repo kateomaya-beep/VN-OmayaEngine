@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote } from '../../shared/types';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn } from '../../ai/gameEngine';
 import { expandMacros } from '../../ai/macros';
@@ -54,6 +54,8 @@ interface PlayerStore {
   patchGm: (mutator: (gm: GameMasterState) => void) => void;
   // Правка памяти (список свёрток/саммари) прямо в игре.
   patchMemory: (mutator: (m: MemoryState) => void) => void;
+  // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
+  setAuthorNotes: (notes: AuthorNote[]) => void;
 }
 
 const AUTOSAVE_SLOT = 0;
@@ -256,6 +258,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const memory: MemoryState = JSON.parse(JSON.stringify(st.state.memory));
     mutator(memory);
     const nextState = { ...st.state, memory };
+    set({ state: nextState });
+    void get().save(AUTOSAVE_SLOT, `Автосейв · ход ${nextState.turnCount}`);
+  },
+
+  setAuthorNotes(notes) {
+    const st = get();
+    if (!st.state) return;
+    const nextState = { ...st.state, authorNotes: notes };
     set({ state: nextState });
     void get().save(AUTOSAVE_SLOT, `Автосейв · ход ${nextState.turnCount}`);
   },

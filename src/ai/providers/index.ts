@@ -29,22 +29,23 @@ export interface Provider {
 const DEFAULT_OPENAI_BASE = 'https://api.openai.com/v1';
 const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com/v1';
 
-// Обёртка над fetch: превращает «глухую» сетевую ошибку/CORS (TypeError: Failed to
-// fetch) в понятное сообщение. Частый кейс: список моделей грузится (GET), а
-// генерация (POST) блокируется CORS — провайдер не разрешает прямой запрос из
-// браузера. В SillyTavern работает, потому что там запрос идёт через свой сервер.
+// Обёртка над fetch. Браузер НЕ раскрывает точную причину «Failed to fetch»
+// (маскирует CORS/сеть/таймаут ради безопасности), поэтому не утверждаем, что это
+// именно CORS — перечисляем реальные варианты и отдаём исходную ошибку как есть.
+// Ретраев нет: решение повторить — за пользователем (кнопка «Повторить»).
 async function apiFetch(url: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(url, init);
   } catch (e) {
-    // Отмену пользователем не маскируем под ошибку CORS — пробрасываем как есть.
+    // Отмену пользователем пробрасываем как есть.
     if ((e as Error)?.name === 'AbortError') throw e;
+    const detail = (e as Error)?.message || String(e);
     throw new Error(
-      'Не удалось связаться с провайдером напрямую из браузера (сеть или CORS). ' +
-        'Часто это CORS: провайдер не разрешает запрос из браузера — тогда модели ' +
-        'грузятся, а генерация нет. В SillyTavern работает, потому что запрос идёт ' +
-        'через сервер. Возьмите провайдера/шлюз с поддержкой CORS (например OpenRouter) ' +
-        'или прокси. [' + (e as Error).message + ']'
+      `Запрос к провайдеру не дошёл: «${detail}». Браузер не показывает точную причину — это одно из:\n` +
+        `• CORS: провайдер не разрешает POST из браузера (тогда НЕ работает НИКОГДА на этом провайдере — модели-список грузится, а генерация нет). → шлюз с CORS (OpenRouter) или прокси.\n` +
+        `• Сетевой сбой/таймаут: если ИНОГДА срабатывает — длинный запрос рвётся (у вас большой контекст). → уменьшите «Живое окно»/контекст и возьмите модель побыстрее.\n` +
+        `• Пресет: включённый префилл или «управляемое размышление» некоторые провайдеры не принимают. → попробуйте выключить их в пресете.\n` +
+        `Точную причину видно в консоли браузера (там CORS помечен явно).`
     );
   }
 }
@@ -78,7 +79,7 @@ const openAiCompatible: Provider = {
         ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
       }),
     });
-    if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
+    if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 600)}`);
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
     if (typeof content !== 'string') throw new Error('Пустой ответ провайдера');
@@ -99,7 +100,10 @@ const anthropic: Provider = {
     const base = (conn.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
     const model = requireModel(req.model || conn.model);
     const messages = req.messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
-    if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
+    // Anthropic ЖЁСТКО отклоняет финальное assistant-сообщение с хвостовым пробелом/
+    // переводом строки (напр. префилл "<thinking>\n") — обрезаем хвост.
+    const pf = req.prefill ? req.prefill.replace(/\s+$/, '') : '';
+    if (pf) messages.push({ role: 'assistant', content: pf });
     const res = await apiFetch(`${base}/messages`, {
       method: 'POST',
       signal: req.signal,
@@ -111,11 +115,11 @@ const anthropic: Provider = {
       },
       body: JSON.stringify({ model, max_tokens: req.maxTokens || 4096, temperature: req.temperature, system: req.system, messages }),
     });
-    if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
+    if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 600)}`);
     const data = await res.json();
     const content = data?.content?.[0]?.text;
     if (typeof content !== 'string') throw new Error('Пустой ответ провайдера');
-    return req.prefill ? req.prefill + content : content;
+    return pf ? pf + content : content;
   },
   async listModels(conn, apiKey) {
     const base = (conn.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
@@ -135,7 +139,14 @@ export function getProvider(name: ApiConnection['provider']): Provider {
 export async function runCompletion(req: CompletionRequest): Promise<string> {
   const conn = getConnection();
   const model = req.model || conn.model || '(модель не выбрана)';
-  logEvent('info', 'llm', `Запрос → ${conn.provider} · ${model}`);
+  // Диагностика: размер запроса + активны ли префилл/reasoning — чтобы по логам
+  // сразу понять, не пресет ли мешает (некоторые провайдеры не принимают префилл).
+  const reqChars = req.system.length + req.messages.reduce((n, m) => n + m.content.length, 0);
+  const flags = [
+    req.prefill ? `префилл(${req.prefill.length})` : null,
+    req.reasoningEffort ? `reasoning:${req.reasoningEffort}` : null,
+  ].filter(Boolean).join(', ');
+  logEvent('info', 'llm', `Запрос → ${conn.provider} · ${model} · ~${Math.round(reqChars / 4)} ток.${flags ? ` · ${flags}` : ''}`);
   const started = Date.now();
   try {
     const out = await getProvider(conn.provider).complete(conn, getApiKey(conn.provider), req);

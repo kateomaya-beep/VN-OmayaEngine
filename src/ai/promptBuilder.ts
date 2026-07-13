@@ -349,8 +349,10 @@ export async function buildRequest(
 
   // Заметка для ИИ (Author's Note, см. CR v2 §M) — тот же слот глубины 0, что и
   // кастомные вставки Блока F, но со своим UI. Пусто — ничего не инжектится.
-  if (state.authorNote.trim()) {
-    withMove.push({ role: 'user', content: `[AUTHOR NOTE] ${expandMacros(state.authorNote, ctx)}` });
+  for (const note of state.authorNotes) {
+    if (note.text.trim()) {
+      withMove.push({ role: 'user', content: `[AUTHOR NOTE] ${expandMacros(note.text, ctx)}` });
+    }
   }
 
   // Ремайндер формата + длины на глубине 0 (в самый конец) — модели сильнее
