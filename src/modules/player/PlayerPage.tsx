@@ -165,12 +165,19 @@ export function PlayerPage() {
         </div>
       )}
 
-      {/* Thinking spinner */}
+      {/* Thinking spinner + отмена генерации */}
       {s.thinking && (
         <div className="absolute inset-x-0 bottom-28 flex justify-center z-20">
-          <div className="bg-black/70 rounded-full px-4 py-2 text-sm flex items-center gap-2">
+          <div className="bg-black/70 rounded-full pl-4 pr-2 py-2 text-sm flex items-center gap-2">
             <span className="inline-block w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
             {t('player.thinking')}
+            <button
+              className="ml-1 rounded-full bg-white/10 hover:bg-white/20 px-2.5 py-1 text-xs"
+              onClick={() => s.cancel()}
+              title="Отменить генерацию"
+            >
+              ✕ Отменить
+            </button>
           </div>
         </div>
       )}
@@ -216,6 +223,8 @@ export function PlayerPage() {
           )}
           <Console
             disabled={s.thinking}
+            value={s.draft}
+            onValueChange={(t) => s.setDraft(t)}
             canContinue={canContinue}
             onSubmit={(txt) => s.submitFreeInput(txt)}
             onContinue={() => s.continueStory()}

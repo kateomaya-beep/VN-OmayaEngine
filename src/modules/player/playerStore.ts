@@ -30,12 +30,17 @@ interface PlayerStore {
   error: string | null;
   statFlash: { statId: string; delta: number }[];
 
+  // Черновик строки ввода — живёт в сторе, чтобы при ошибке/отмене ввод НЕ терялся
+  // (очищается только после успешного хода).
+  draft: string;
+  setDraft: (t: string) => void;
   loadAndStart: (projectId: string, resume?: boolean, protagonistName?: string) => Promise<void>;
   advance: () => void; // reveal next beat
   choose: (choice: Choice) => Promise<void>;
   submitFreeInput: (text: string) => Promise<void>;
   continueStory: () => Promise<void>;
   regenerate: () => Promise<void>;
+  cancel: () => void; // отменить текущую генерацию (вернуть прошлый вид + ввод)
   clearError: () => void;
   save: (slot: number, title: string) => Promise<void>;
   loadSlot: (slot: number) => Promise<void>;
@@ -53,6 +58,10 @@ interface PlayerStore {
 
 const AUTOSAVE_SLOT = 0;
 
+// Контроллер текущей генерации (для «Отменить»). Модульная переменная, а не поле
+// стора — чтобы не гонять ре-рендеры и не сериализовать в сейв.
+let currentAbort: AbortController | null = null;
+
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
   project: null,
   state: null,
@@ -66,6 +75,15 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   thinking: false,
   error: null,
   statFlash: [],
+  draft: '',
+
+  setDraft(t) {
+    set({ draft: t });
+  },
+
+  cancel() {
+    currentAbort?.abort();
+  },
 
   async loadAndStart(projectId, resume, protagonistName = '') {
     set({ loading: true, error: null });
@@ -130,33 +148,40 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const { state, project } = get();
     if (!state || !project || !text.trim()) return;
 
-    // Слэш-команды (Блок B.3).
+    // Слэш-команды (Блок B.3). Обработанная команда очищает черновик ввода.
     const slash = parseSlash(text, project);
     switch (slash.kind) {
       case 'none':
         break;
       case 'regen':
+        set({ draft: '' });
         await get().regenerate();
         return;
       case 'mute':
         toggleMute();
+        set({ draft: '' });
         return;
       case 'help':
-        set({ error: SLASH_HELP });
+        set({ error: SLASH_HELP, draft: '' });
         return;
       case 'setBackground':
         usePlayerStore.setState((st) => ({
           state: st.state ? { ...st.state, currentBackgroundId: slash.assetId } : st.state,
+          draft: '',
         }));
         await get().save(0, `Автосейв · ход ${state.turnCount}`);
         return;
-      case 'move':
-        await runAndApply(set, get, project, state, slash.text);
+      case 'move': {
+        const ok = await runAndApply(set, get, project, state, slash.text);
+        if (ok) set({ draft: '' });
         return;
+      }
     }
 
     // Обычный ввод — ДОСЛОВНАЯ реплика героя (Блок B.2): ИИ не пишет за протагониста.
-    await runAndApply(set, get, project, state, `[VERBATIM] ${text.trim()}`);
+    // Черновик очищаем ТОЛЬКО при успехе — при ошибке/отмене ввод остаётся в строке.
+    const ok = await runAndApply(set, get, project, state, `[VERBATIM] ${text.trim()}`);
+    if (ok) set({ draft: '' });
   },
 
   async regenerate() {
@@ -178,14 +203,20 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   async save(slot, title) {
     const { project, state } = get();
     if (!project || !state) return;
+    // Глубокий снимок на момент сохранения — чтобы последующие мутации живого
+    // состояния (напр. списание стоимости выбора) не могли задним числом исказить
+    // уже отданный на запись сейв.
+    const snapshot: RuntimeState = JSON.parse(JSON.stringify(state));
     const save: SaveSlot = {
       slot,
       projectId: project.id,
       savedAt: Date.now(),
       title,
-      state,
+      state: snapshot,
     };
     await putSave(save);
+    const firstBeat = snapshot.lastTurn?.beats?.find((b) => 'text' in b && b.text)?.text || '';
+    logEvent('debug', 'save', `Сейв#${slot} ход ${snapshot.turnCount}, beats: ${snapshot.lastTurn?.beats?.length ?? 0} · «${firstBeat.slice(0, 40)}»`);
   },
 
   async loadSlot(slot) {
@@ -237,6 +268,8 @@ function applyLoadedState(
   state: RuntimeState
 ) {
   const last = state.lastTurn;
+  const firstBeat = last?.beats?.find((b) => 'text' in b && b.text)?.text || '';
+  logEvent('info', 'load', `Загружен ход ${state.turnCount}, beats: ${last?.beats?.length ?? 0} · «${firstBeat.slice(0, 40)}»`);
   playMusic(trackBlobKey(project, state.currentMusicAssetId));
   set({
     project,
@@ -253,18 +286,31 @@ function applyLoadedState(
 }
 
 // Core: run a turn against the LLM and apply its result to the store.
+// Возвращает true при успехе; false при ошибке или отмене (тогда прошлый вид сцены
+// восстанавливается, а черновик ввода вызывающий сохраняет).
 async function runAndApply(
   set: (partial: Partial<PlayerStore>) => void,
   get: () => PlayerStore,
   project: Project,
   baseState: RuntimeState,
   playerMove: string
-) {
+): Promise<boolean> {
+  // Снимок текущего вида — чтобы вернуть его при отмене/ошибке (последний ответ ИИ
+  // и его выборы остаются на экране, как будто хода не было).
+  const prevView = {
+    visibleBeats: get().visibleBeats,
+    queue: get().queue,
+    phase: get().phase,
+    choices: get().choices,
+    cg: get().cg,
+  };
+  const controller = new AbortController();
+  currentAbort = controller;
   set({ thinking: true, error: null, choices: [], statFlash: [], queue: [], visibleBeats: [] });
   logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
   try {
     // Обычная (нестриминговая) генерация — один ход целиком, затем показ.
-    const { turn, state } = await runTurn(project, baseState, playerMove);
+    const { turn, state } = await runTurn(project, baseState, playerMove, controller.signal);
 
     // Compute stat flashes vs. the pre-turn values.
     const flash: { statId: string; delta: number }[] = [];
@@ -294,8 +340,20 @@ async function runAndApply(
     // Autosave every turn.
     await get().save(AUTOSAVE_SLOT, `Автосейв · ход ${state.turnCount}`);
     logEvent('info', 'turn', `Ход применён (ход ${state.turnCount}, beats: ${turn.beats.length})`);
+    return true;
   } catch (e) {
-    logEvent('error', 'turn', 'Не удалось выполнить ход: ' + (e as Error).message, (e as Error).stack);
-    set({ thinking: false, error: (e as Error).message });
+    const aborted = (e as Error)?.name === 'AbortError';
+    if (aborted) {
+      // Отмена: возвращаем прошлый вид сцены; ошибку не показываем.
+      logEvent('info', 'turn', 'Генерация отменена — возвращён прошлый ход');
+      set({ thinking: false, error: null, ...prevView });
+    } else {
+      // Ошибка: тоже возвращаем прошлый вид (сцена не пустеет), показываем тост.
+      logEvent('error', 'turn', 'Не удалось выполнить ход: ' + (e as Error).message, (e as Error).stack);
+      set({ thinking: false, error: (e as Error).message, ...prevView });
+    }
+    return false;
+  } finally {
+    if (currentAbort === controller) currentAbort = null;
   }
 }

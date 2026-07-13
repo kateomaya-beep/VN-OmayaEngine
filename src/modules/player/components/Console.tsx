@@ -7,6 +7,8 @@ import { SLASH_HELP } from '../slashCommands';
 // игрока, живёт в сейве до ручного изменения/удаления.
 export function Console({
   disabled,
+  value,
+  onValueChange,
   onSubmit,
   onContinue,
   canContinue,
@@ -14,21 +16,23 @@ export function Console({
   onAuthorNoteChange,
 }: {
   disabled: boolean;
+  value: string;
+  onValueChange: (text: string) => void;
   onSubmit: (text: string) => void;
   onContinue: () => void;
   canContinue: boolean;
   authorNote: string;
   onAuthorNoteChange: (text: string) => void;
 }) {
-  const [text, setText] = useState('');
   const [showHelp, setShowHelp] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
 
   const send = () => {
-    const t = text.trim();
+    const t = value.trim();
     if (!t) return;
+    // НЕ очищаем строку здесь — стор очистит её только после успешного хода, чтобы
+    // при ошибке/отмене генерации ввод не пропал.
     onSubmit(t);
-    setText('');
   };
 
   return (
@@ -52,12 +56,12 @@ export function Console({
         <input
           className="input flex-1 bg-black/70"
           placeholder="Ваши слова или действие героя… ( / — команды)"
-          value={text}
+          value={value}
           disabled={disabled}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => onValueChange(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && send()}
         />
-        {text.trim() ? (
+        {value.trim() ? (
           <button className="btn-primary shrink-0" disabled={disabled} onClick={send}>
             →
           </button>

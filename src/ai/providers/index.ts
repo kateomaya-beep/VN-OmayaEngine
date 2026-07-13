@@ -17,6 +17,8 @@ export interface CompletionRequest {
   maxTokens?: number;
   // Глубина размышления reasoning-моделей → reasoning_effort. Меньше = быстрее.
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+  // Отмена генерации: сигнал прерывания fetch (кнопка «Отменить» в игре).
+  signal?: AbortSignal;
 }
 
 export interface Provider {
@@ -35,6 +37,8 @@ async function apiFetch(url: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(url, init);
   } catch (e) {
+    // Отмену пользователем не маскируем под ошибку CORS — пробрасываем как есть.
+    if ((e as Error)?.name === 'AbortError') throw e;
     throw new Error(
       'Не удалось связаться с провайдером напрямую из браузера (сеть или CORS). ' +
         'Часто это CORS: провайдер не разрешает запрос из браузера — тогда модели ' +
@@ -64,6 +68,7 @@ const openAiCompatible: Provider = {
     if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
     const res = await apiFetch(`${base}/chat/completions`, {
       method: 'POST',
+      signal: req.signal,
       headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
       body: JSON.stringify({
         model,
@@ -97,6 +102,7 @@ const anthropic: Provider = {
     if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
     const res = await apiFetch(`${base}/messages`, {
       method: 'POST',
+      signal: req.signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
@@ -136,7 +142,11 @@ export async function runCompletion(req: CompletionRequest): Promise<string> {
     logEvent('info', 'llm', `Ответ получен за ${Date.now() - started} мс (${out.length} симв.)`);
     return out;
   } catch (e) {
-    logEvent('error', 'llm', (e as Error).message, (e as Error).stack);
+    if ((e as Error)?.name === 'AbortError') {
+      logEvent('info', 'llm', 'Генерация отменена пользователем');
+    } else {
+      logEvent('error', 'llm', (e as Error).message, (e as Error).stack);
+    }
     throw e;
   }
 }

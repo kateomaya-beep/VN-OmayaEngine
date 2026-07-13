@@ -173,7 +173,8 @@ export async function applyTurn(
 export async function runTurn(
   project: Project,
   state: RuntimeState,
-  playerMove: string
+  playerMove: string,
+  signal?: AbortSignal
 ): Promise<TurnResult> {
   const req = await buildRequest(project, state, playerMove);
 
@@ -196,6 +197,7 @@ export async function runTurn(
     temperature: project.aiConfig.temperature,
     maxTokens,
     reasoningEffort,
+    signal,
   });
 
   let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
@@ -209,6 +211,7 @@ export async function runTurn(
       temperature: Math.min(project.aiConfig.temperature, 0.5),
       maxTokens,
       reasoningEffort,
+      signal,
     });
     parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
   }
