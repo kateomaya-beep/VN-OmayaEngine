@@ -39,9 +39,9 @@ RESPONSE SCHEMA:
 {
   "scene": { "backgroundId": string|null, "musicMood": string|null, "sfxId": string|null, "cutsceneCgId": string|null },
   "beats": [
-    { "type": "narration", "text": string },
+    { "type": "narration", "text": string, "bg": string|null },
     { "type": "thought", "text": string },
-    { "type": "dialogue", "characterId": string|null, "name": string|null, "emotion": string, "position": "left"|"center"|"right", "text": string }
+    { "type": "dialogue", "characterId": string|null, "name": string|null, "emotion": string, "position": "left"|"center"|"right", "text": string, "bg": string|null }
   ],
   "statChanges": [ { "statId": string, "delta": number, "reason": string } ],
   "choices": [ { "id": string, "text": string, "cost": null | { "statId": string, "amount": number } } ],
@@ -146,7 +146,8 @@ Each has a distinct voice and vocabulary. Background NPCs add texture. Not every
 - love_interest — a romance target; important_character — important (not a romance); npc — episodic: introduce directly
   in a line with "characterId": null and "name": "<name>".
 - A listed character's line: "characterId" = their id, "name": null.
-- If a sprite for the chosen emotion exists, the engine shows it; if not, name + text. Choose a fitting emotion.`
+- If a sprite for the chosen emotion exists, the engine shows it; if not, name + text. Choose a fitting emotion.
+- Dynamic background: to CHANGE the scene's location mid-turn, set "bg" (a background id from the manifest, by tags) on the beat where the move happens — like emotion, but for the backdrop. The engine carries it forward to later beats until changed. Set it only when the place actually changes; omit/null otherwise. scene.backgroundId is still the turn's opening background.`
     ),
     b(
       'emotions',

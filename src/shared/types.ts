@@ -277,9 +277,12 @@ export interface Project {
 
 // ---- Runtime / AI response types (JSON-контракт с ИИ) ----
 
+// bg — динамическая смена фона на этом бите (id ассета-фона), как emotion у реплик.
+// ИИ ставит его на бите, где меняется место/обстановка; движок при сборке хода
+// «протягивает» эффективный фон вперёд, поэтому у каждого бита bg заполнен.
 export type Beat =
-  | { type: 'narration'; text: string }
-  | { type: 'thought'; text: string }
+  | { type: 'narration'; text: string; bg?: string }
+  | { type: 'thought'; text: string; bg?: string }
   | {
       type: 'dialogue';
       characterId?: string; // для персонажей из списка
@@ -287,6 +290,7 @@ export type Beat =
       emotion: string;
       position: 'left' | 'center' | 'right';
       text: string;
+      bg?: string;
     };
 
 export interface SceneDirective {

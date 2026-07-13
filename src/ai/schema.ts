@@ -4,8 +4,8 @@ import { z } from 'zod';
 // the parser resolves/repairs against the manifest (политика fallback).
 
 export const beatSchema = z.union([
-  z.object({ type: z.literal('narration'), text: z.string() }),
-  z.object({ type: z.literal('thought'), text: z.string() }),
+  z.object({ type: z.literal('narration'), text: z.string(), bg: z.string().nullish() }),
+  z.object({ type: z.literal('thought'), text: z.string(), bg: z.string().nullish() }),
   z.object({
     type: z.literal('dialogue'),
     // characterId для персонажей из списка; name для эпизодических NPC от ИИ.
@@ -14,6 +14,7 @@ export const beatSchema = z.union([
     emotion: z.string().default('neutral'),
     position: z.enum(['left', 'center', 'right']).default('center'),
     text: z.string(),
+    bg: z.string().nullish(),
   }),
 ]);
 

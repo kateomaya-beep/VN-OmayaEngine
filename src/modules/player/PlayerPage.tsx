@@ -88,6 +88,8 @@ export function PlayerPage() {
 
   const moreBeatsQueued = s.queue.length > 0;
   const currentBeat = s.visibleBeats[s.visibleBeats.length - 1] || null;
+  // Динамический фон: фон текущего бита (движок протянул его вперёд), иначе — фон хода.
+  const bgId = currentBeat?.bg ?? s.state.currentBackgroundId;
   // Активный говорящий на сцене — только текущий dialogue-beat с characterId (Блок A.1).
   const active: ActiveSprite | null =
     currentBeat?.type === 'dialogue' && currentBeat.characterId
@@ -98,7 +100,7 @@ export function PlayerPage() {
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden">
-      <Stage project={s.project} backgroundId={s.state.currentBackgroundId} active={active} cg={s.cg} />
+      <Stage project={s.project} backgroundId={bgId} active={active} cg={s.cg} />
 
       {/* Постоянная верхняя панель (общая с главным экраном) + игровое бургер-меню.
           В самом поле сцены игровых иконок больше нет (см. Batch 3 §3). */}

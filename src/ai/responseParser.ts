@@ -71,10 +71,14 @@ export function stripMoveTag(text: string): string {
 // Чинит один beat против манифеста (используется и потоковым, и обычным путём).
 export function repairBeat(project: Project, b: any): Beat {
   const charById = new Map(project.characters.map((c) => [c.id, c]));
+  const bgIds = new Set(project.assets.filter((a) => a.type === 'background').map((a) => a.id));
   const txt = (v: unknown) => stripMoveTag(String(v ?? ''));
+  // Динамический фон бита: оставляем только валидный id фона, иначе — undefined
+  // (движок протянет прежний). Всегда undefined на невалидном — без крашей.
+  const bg = typeof b?.bg === 'string' && bgIds.has(b.bg) ? b.bg : undefined;
   if (!b || b.type !== 'dialogue') {
-    if (b?.type === 'thought') return { type: 'thought', text: txt(b.text) };
-    return { type: 'narration', text: txt(b?.text) };
+    if (b?.type === 'thought') return { type: 'thought', text: txt(b.text), bg };
+    return { type: 'narration', text: txt(b?.text), bg };
   }
   const position = ['left', 'center', 'right'].includes(b.position) ? b.position : 'center';
   const cid = b.characterId || undefined;
@@ -86,14 +90,14 @@ export function repairBeat(project: Project, b: any): Beat {
     if (available.length && !available.includes(emotion)) {
       emotion = available.includes('neutral') ? 'neutral' : available[0];
     }
-    return { type: 'dialogue', characterId: ch.id, emotion, position, text: txt(b.text) };
+    return { type: 'dialogue', characterId: ch.id, emotion, position, text: txt(b.text), bg };
   }
   const name = (b.name || '').trim();
   if (name) {
     const emotion = EMOTION_SET.has(b.emotion) ? b.emotion : 'neutral';
-    return { type: 'dialogue', name, emotion, position, text: txt(b.text) };
+    return { type: 'dialogue', name, emotion, position, text: txt(b.text), bg };
   }
-  return { type: 'narration', text: txt(b.text) };
+  return { type: 'narration', text: txt(b.text), bg };
 }
 
 // Чинит объект scene против манифеста.

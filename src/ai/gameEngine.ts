@@ -120,6 +120,17 @@ export async function applyTurn(
   }
   const onScreen = [...onScreenMap.values()].slice(-3);
 
+  // Динамический фон (CR: смена фона в ходе, как эмоции): протягиваем эффективный
+  // фон по битам вперёд от стартового (scene.backgroundId ?? прежний). Каждый бит
+  // получает актуальный на его момент фон, поэтому плеер меняет его при пролистывании,
+  // а финальный фон уходит в currentBackgroundId для следующего хода/перезагрузки.
+  let runBg: string | null = turn.scene.backgroundId ?? state.currentBackgroundId;
+  for (const b of turn.beats) {
+    if (b.bg) runBg = b.bg;
+    else b.bg = runBg ?? undefined;
+  }
+  const finalBackgroundId = runBg ?? state.currentBackgroundId;
+
   // Музыка: настроение -> конкретный трек (движок сам выбирает).
   const nextMood = turn.scene.musicMood ?? state.currentMusicMood;
   const nextTrack =
@@ -144,7 +155,7 @@ export async function applyTurn(
     ...state,
     statValues: values,
     relationship: rel.relationship,
-    currentBackgroundId: turn.scene.backgroundId ?? state.currentBackgroundId,
+    currentBackgroundId: finalBackgroundId,
     currentMusicMood: nextMood,
     currentMusicAssetId: nextTrack,
     onScreen,
