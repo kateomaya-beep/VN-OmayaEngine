@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Novel Forge — OmayaEngine",
-  "short_name": "Novel Forge",
+  "name": "VN Studio — Novel Engine",
+  "short_name": "VN Studio",
   "description": "Конструктор и плеер ИИ-визуальных новелл. Данные хранятся локально в браузере.",
   "lang": "ru",
   "start_url": "./#/library",

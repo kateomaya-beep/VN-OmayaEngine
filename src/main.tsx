@@ -7,7 +7,7 @@ import './index.css';
 
 // Build stamp — makes it unambiguous which code is actually running in the tab.
 console.info(`[NovelForge] v${__APP_VERSION__}`);
-logEvent('info', 'app', `Novel Forge v${__APP_VERSION__} запущен`);
+logEvent('info', 'app', `VN Studio v${__APP_VERSION__} запущен`);
 
 // Ловим необработанные ошибки и промисы — чтобы «молчаливые» сбои и вечная
 // загрузка были видны в панели логов (см. запрос про логи как в Таверне).

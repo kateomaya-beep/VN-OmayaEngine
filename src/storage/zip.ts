@@ -96,7 +96,7 @@ export async function importProjectZip(file: File): Promise<ImportResult> {
   if (!projFile) {
     const names = Object.keys(zip.files).slice(0, 8).join(', ') || 'пусто';
     throw new Error(
-      'В архиве нет project.json — это не экспорт Novel Forge. ' +
+      'В архиве нет project.json — это не экспорт VN Studio. ' +
         `Внутри: ${names}. Экспортируйте проект через «Экспорт» и импортируйте именно этот .zip.`
     );
   }
@@ -109,7 +109,7 @@ export async function importProjectZip(file: File): Promise<ImportResult> {
     throw new Error('project.json повреждён (невалидный JSON): ' + (e as Error).message);
   }
   if (!looksLikeProjectJson(parsed)) {
-    throw new Error('project.json не похож на проект Novel Forge (нет ожидаемых полей).');
+    throw new Error('project.json не похож на проект VN Studio (нет ожидаемых полей).');
   }
 
   const project = normalizeProject(parsed);

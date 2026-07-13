@@ -153,8 +153,8 @@ export function TopBar({
             </svg>
           </span>
           <span className="flex flex-col leading-none">
-            <span className="font-brand font-extrabold text-[15px] tracking-[0.2px] text-[#f5f2fc]">
-              Novel Forge
+            <span className="font-brand font-extrabold text-[16px] tracking-[0.2px] text-[#f5f2fc]">
+              VN Studio
             </span>
             <span className="text-[9px] font-semibold tracking-[1.6px] text-[#b18cff]">
               NOVEL ENGINE {variant === 'app' && `· v${__APP_VERSION__}`}
