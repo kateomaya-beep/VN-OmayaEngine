@@ -182,15 +182,16 @@ export function LibraryPage() {
                   )}
                 </div>
 
-                <div className="flex items-center justify-center gap-3 pb-5 pt-1">
+                {/* По две иконки по бокам, Play — по центру */}
+                <div className="flex items-center justify-center gap-3.5 pb-5 pt-1">
                   <CardIconBtn title={t('library.editor')} onClick={() => nav(`/project/${p.id}`)} icon="edit" />
                   <CardIconBtn title={t('library.export')} onClick={() => setShareTarget(p)} icon="export" />
+                  <CardIconBtn title={t('library.play')} onClick={() => nav(`/play/${p.id}`)} icon="play" primary />
                   <CardIconBtn
                     title={L('Ассеты и целостность', 'Assets & integrity')}
                     onClick={() => setDetailsTarget(p)}
                     icon="info"
                   />
-                  <CardIconBtn title={t('library.play')} onClick={() => nav(`/play/${p.id}`)} icon="play" primary />
                   <CardIconBtn title={t('library.delete')} onClick={() => onDelete(p)} icon="trash" />
                 </div>
               </div>
