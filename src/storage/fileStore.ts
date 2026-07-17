@@ -173,7 +173,23 @@ export async function loadProjectFromDisk(id: string): Promise<Project | null> {
 function saveToJsonl(save: SaveSlot): string {
   const { history, ...head } = save.state as RuntimeState;
   const lines: string[] = [];
-  lines.push(JSON.stringify({ t: 'meta', slot: save.slot, projectId: save.projectId, title: save.title, savedAt: save.savedAt }));
+  lines.push(
+    JSON.stringify({
+      t: 'meta',
+      slot: save.slot,
+      projectId: save.projectId,
+      title: save.title,
+      savedAt: save.savedAt,
+      // Batch 5.2 — метаданные прохождения/чекпоинта (сохраняются в durable-слое).
+      kind: save.kind,
+      playthroughId: save.playthroughId,
+      playthroughLabel: save.playthroughLabel,
+      playthroughCreatedAt: save.playthroughCreatedAt,
+      checkpointId: save.checkpointId,
+      parentCheckpointId: save.parentCheckpointId,
+      branchName: save.branchName,
+    })
+  );
   lines.push(JSON.stringify({ t: 'head', state: head }));
   for (const m of history) lines.push(JSON.stringify({ t: 'h', m }));
   return lines.join('\n') + '\n';
@@ -201,6 +217,13 @@ function jsonlToSave(text: string): SaveSlot | null {
     projectId: meta.projectId,
     title: meta.title || '',
     savedAt: meta.savedAt || Date.now(),
+    kind: meta.kind,
+    playthroughId: meta.playthroughId,
+    playthroughLabel: meta.playthroughLabel,
+    playthroughCreatedAt: meta.playthroughCreatedAt,
+    checkpointId: meta.checkpointId,
+    parentCheckpointId: meta.parentCheckpointId,
+    branchName: meta.branchName,
     state: { ...head, history } as RuntimeState,
   };
 }

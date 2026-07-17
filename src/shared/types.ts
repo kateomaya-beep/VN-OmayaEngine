@@ -549,10 +549,26 @@ export interface AuthorNote {
   text: string;
 }
 
+// Batch 5.2 — три уровня сущностей сейвов:
+//  • Прохождение (playthrough) — независимый заход в историю. У него ровно один
+//    автосейв-курсор (kind:'autosave', перезаписывается) и любое число чекпоинтов.
+//  • Автосейв — непрерывный курсор «последнее состояние» внутри прохождения.
+//  • Чекпоинт (kind:'checkpoint') — РУЧНАЯ точка-ветка (полная копия истории до неё).
+// Всё хранится теми же durable-сейвами (IndexedDB + диск). Старые сейвы без этих
+// полей попадают в бакет прохождения 'legacy' (kind по умолчанию — autosave).
+export type SaveKind = 'autosave' | 'checkpoint';
+
 export interface SaveSlot {
-  slot: number;
+  slot: number; // уникальный числовой id записи (файл saves/<slot>.jsonl)
   projectId: string;
   savedAt: number;
   title: string;
   state: RuntimeState;
+  kind?: SaveKind; // undefined ⇒ 'autosave'
+  playthroughId?: string; // undefined ⇒ бакет 'legacy'
+  playthroughLabel?: string; // человекочитаемое имя прохождения (на курсоре)
+  playthroughCreatedAt?: number;
+  checkpointId?: string; // стабильный id чекпоинта (для ссылок форка)
+  parentCheckpointId?: string; // от какого чекпоинта форкнулись (внутри прохождения)
+  branchName?: string; // имя чекпоинта/ветки для UI
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePlayerStore } from './playerStore';
-import { getSave } from '../../storage/db';
+import { LaunchScreen } from './components/LaunchScreen';
 import { stopAllMusic } from './audio';
 import { Stage, type ActiveSprite } from './components/Stage';
 import { DialogueBox } from './components/DialogueBox';
@@ -18,7 +18,7 @@ import { useT } from '../../shared/i18n';
 import { TopBar } from '../../app/TopBar';
 import { formatClock } from '../../ai/gameMaster';
 
-type Setup = 'checking' | 'resume' | 'play';
+type Setup = 'launch' | 'play';
 
 export function PlayerPage() {
   const { projectId } = useParams();
@@ -30,53 +30,16 @@ export function PlayerPage() {
   const [genOpen, setGenOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
-  const [setup, setSetup] = useState<Setup>('checking');
+  // Экран запуска (Batch 5.2): Продолжить / Загрузить / Новая история.
+  const [setup, setSetup] = useState<Setup>('launch');
 
   useEffect(() => {
-    if (!projectId) return;
-    (async () => {
-      const auto = await getSave(projectId, 0);
-      if (auto) setSetup('resume');
-      else {
-        setSetup('play');
-        s.loadAndStart(projectId, false); // имя героя берётся из карточки протагониста
-      }
-    })();
     return () => stopAllMusic();
   }, [projectId]);
 
-  if (setup === 'resume') {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-ink">
-        <div className="card max-w-sm text-center">
-          <h2 className="text-lg font-semibold mb-3">{t('player.resumeTitle')}</h2>
-          <p className="text-sm text-gray-400 mb-4">{t('player.resumeFound')}</p>
-          <div className="flex gap-2 justify-center">
-            <button
-              className="btn-primary"
-              onClick={() => {
-                setSetup('play');
-                s.loadAndStart(projectId!, true);
-              }}
-            >
-              {t('player.resume')}
-            </button>
-            <button
-              className="btn-ghost"
-              onClick={() => {
-                setSetup('play');
-                s.loadAndStart(projectId!, false);
-              }}
-            >
-              {t('player.restart')}
-            </button>
-          </div>
-          <button className="text-xs text-gray-500 mt-4" onClick={() => nav('/library')}>
-            {t('player.toLibrary')}
-          </button>
-        </div>
-      </div>
-    );
+  if (setup === 'launch') {
+    if (!projectId) return null;
+    return <LaunchScreen projectId={projectId} onStarted={() => setSetup('play')} />;
   }
 
   if (s.loading || !s.project || !s.state) {
@@ -239,16 +202,7 @@ export function PlayerPage() {
       <EditPanel open={panel === 'edit'} onClose={() => setPanel(null)} />
       <HistoryPanel open={panel === 'history'} onClose={() => setPanel(null)} />
       <AuthorNotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} />
-      <SaveLoadPanel
-        open={panel === 'saves'}
-        onClose={() => setPanel(null)}
-        project={s.project}
-        onSave={(slot) => s.save(slot, `Ручной сейв · ход ${s.state!.turnCount}`)}
-        onLoad={(slot) => {
-          s.loadSlot(slot);
-          setPanel(null);
-        }}
-      />
+      <SaveLoadPanel open={panel === 'saves'} onClose={() => setPanel(null)} />
     </div>
   );
 }

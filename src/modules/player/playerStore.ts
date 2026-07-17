@@ -3,10 +3,18 @@ import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, Me
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn } from '../../ai/gameEngine';
 import { expandMacros } from '../../ai/macros';
-import { getProject, putSave, getSave, saveProject } from '../../storage/db';
+import { getProject, putSave, saveProject, deleteSave } from '../../storage/db';
+import {
+  listPlaythroughs,
+  activePlaythrough,
+  deleteAllPlaythroughs,
+  LEGACY_PLAYTHROUGH,
+  type PlaythroughInfo,
+} from '../../storage/playthroughs';
 import { playMusic, playSfx, toggleMute } from './audio';
 import { parseSlash, SLASH_HELP } from './slashCommands';
 import { logEvent } from '../../shared/logStore';
+import { uid } from '../../shared/utils';
 
 // currentMusicAssetId — это id ассета; для проигрывания нужен его blobKey.
 function trackBlobKey(project: Project, assetId: string | null): string | null {
@@ -34,7 +42,26 @@ interface PlayerStore {
   // (очищается только после успешного хода).
   draft: string;
   setDraft: (t: string) => void;
-  loadAndStart: (projectId: string, resume?: boolean, protagonistName?: string) => Promise<void>;
+
+  // ---- Прохождения/чекпоинты (Batch 5.2) ----
+  // Текущий контекст сохранения: какое прохождение и куда пишется автосейв-курсор.
+  playthroughId: string;
+  playthroughLabel: string;
+  playthroughCreatedAt?: number;
+  autosaveSlot: number; // числовой слот файла-курсора текущего прохождения
+  currentCheckpointId?: string; // от какого чекпоинта форкнута текущая линия
+
+  // Продолжить активное прохождение (последний автосейв). false — продолжать нечего.
+  continuePlaythrough: (projectId: string) => Promise<boolean>;
+  // Начать новое прохождение с первого сообщения. wipe — удалить старый прогресс.
+  newPlaythrough: (projectId: string, opts: { wipe: boolean; label?: string }, protagonistName?: string) => Promise<void>;
+  // Загрузить конкретный сейв (автосейв прохождения ИЛИ чекпоинт-ветку).
+  resumeSave: (projectId: string, save: SaveSlot) => Promise<void>;
+  // Создать РУЧНОЙ чекпоинт (полная копия истории до текущей точки).
+  createCheckpoint: (name?: string) => Promise<void>;
+  renameCheckpoint: (slot: number, name: string) => Promise<void>;
+  deleteCheckpoint: (slot: number) => Promise<void>;
+
   advance: () => void; // reveal next beat
   choose: (choice: Choice) => Promise<void>;
   submitFreeInput: (text: string) => Promise<void>;
@@ -42,8 +69,8 @@ interface PlayerStore {
   regenerate: () => Promise<void>;
   cancel: () => void; // отменить текущую генерацию (вернуть прошлый вид + ввод)
   clearError: () => void;
-  save: (slot: number, title: string) => Promise<void>;
-  loadSlot: (slot: number) => Promise<void>;
+  // Автосейв-курсор текущего прохождения (перезаписывается). Заголовок опционален.
+  autosave: (title?: string) => Promise<void>;
   dismissChapter: () => void;
   // Правка проекта прямо в игре — общий источник истины с конструктором.
   // Мутация применяется к живому проекту (влияет на манифест следующего хода)
@@ -58,7 +85,13 @@ interface PlayerStore {
   setAuthorNotes: (notes: AuthorNote[]) => void;
 }
 
-const AUTOSAVE_SLOT = 0;
+// Монотонный аллокатор числовых слотов для новых записей (курсоры новых прохождений,
+// чекпоинты). Строго возрастающий, не пересекается с легаси-слотами 0..10.
+let slotSeq = 0;
+function nextSlot(): number {
+  slotSeq = Math.max(Date.now(), slotSeq + 1);
+  return slotSeq;
+}
 
 // Снимок вида сцены, к которому откатываемся при отмене/ошибке хода.
 type PrevView = Pick<PlayerStore, 'visibleBeats' | 'queue' | 'phase' | 'choices' | 'cg'>;
@@ -89,6 +122,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   error: null,
   statFlash: [],
   draft: '',
+  playthroughId: LEGACY_PLAYTHROUGH,
+  playthroughLabel: '',
+  playthroughCreatedAt: undefined,
+  autosaveSlot: 0,
+  currentCheckpointId: undefined,
 
   setDraft(t) {
     set({ draft: t });
@@ -105,28 +143,112 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     cur.controller.abort();
   },
 
-  async loadAndStart(projectId, resume, protagonistName = '') {
+  async continuePlaythrough(projectId) {
+    set({ loading: true, error: null });
+    const project = await getProject(projectId);
+    if (!project) {
+      set({ loading: false, error: 'Проект не найден' });
+      return false;
+    }
+    const info = await activePlaythrough(projectId);
+    const save = info?.autosave || info?.checkpoints[info.checkpoints.length - 1];
+    if (!info || !save) {
+      set({ loading: false });
+      return false;
+    }
+    applyResumedSave(set, project, info, save);
+    set({ loading: false });
+    return true;
+  },
+
+  async newPlaythrough(projectId, opts, protagonistName = '') {
     set({ loading: true, error: null });
     const project = await getProject(projectId);
     if (!project) {
       set({ loading: false, error: 'Проект не найден' });
       return;
     }
-
-    if (resume) {
-      const save = await getSave(projectId, AUTOSAVE_SLOT);
-      if (save) {
-        applyLoadedState(set, project, save.state);
-        set({ loading: false });
-        return;
-      }
-    }
-
+    const existing = await listPlaythroughs(projectId);
+    if (opts.wipe) await deleteAllPlaythroughs(projectId);
+    const id = uid('pt');
+    const createdAt = Date.now();
+    const label = opts.label?.trim() || `Прохождение ${opts.wipe ? 1 : existing.length + 1}`;
     const state = initialRuntimeState(project, protagonistName);
-    set({ project, state, loading: false, queue: [], visibleBeats: [], choices: [], cg: null });
+    set({
+      project,
+      state,
+      loading: false,
+      queue: [],
+      visibleBeats: [],
+      choices: [],
+      cg: null,
+      playthroughId: id,
+      playthroughLabel: label,
+      playthroughCreatedAt: createdAt,
+      autosaveSlot: nextSlot(),
+      currentCheckpointId: undefined,
+    });
     // Seed the opening turn (макросы в стартовой сцене раскрываются).
     const opening = expandMacros(project.lore.openingScene, { project, state });
     await runAndApply(set, get, project, state, `[GAME START] ${opening}`.trim());
+  },
+
+  async resumeSave(projectId, save) {
+    set({ loading: true, error: null });
+    const project = await getProject(projectId);
+    if (!project) {
+      set({ loading: false, error: 'Проект не найден' });
+      return;
+    }
+    const infos = await listPlaythroughs(projectId);
+    const info = infos.find((i) => i.id === (save.playthroughId || LEGACY_PLAYTHROUGH)) || null;
+    applyResumedSave(set, project, info, save);
+    set({ loading: false });
+  },
+
+  async createCheckpoint(name) {
+    const { project, state, playthroughId, playthroughLabel, playthroughCreatedAt, currentCheckpointId } = get();
+    if (!project || !state) return;
+    const snapshot: RuntimeState = JSON.parse(JSON.stringify(state));
+    const cpId = uid('cp');
+    const title = name?.trim() || `Чекпоинт · ход ${state.turnCount}`;
+    const save: SaveSlot = {
+      slot: nextSlot(),
+      projectId: project.id,
+      savedAt: Date.now(),
+      title,
+      state: snapshot,
+      kind: 'checkpoint',
+      playthroughId,
+      playthroughLabel,
+      playthroughCreatedAt,
+      checkpointId: cpId,
+      parentCheckpointId: currentCheckpointId,
+      branchName: title,
+    };
+    await putSave(save);
+    // Дальнейшая линия считается форкнутой от этого чекпоинта (для родословной).
+    set({ currentCheckpointId: cpId });
+    logEvent('info', 'save', `Чекпоинт создан: «${title}» (ход ${state.turnCount})`);
+  },
+
+  async renameCheckpoint(slot, name) {
+    const { project } = get();
+    if (!project) return;
+    const infos = await listPlaythroughs(project.id);
+    for (const info of infos) {
+      const cp = info.checkpoints.find((c) => c.slot === slot);
+      if (cp) {
+        await putSave({ ...cp, title: name, branchName: name, savedAt: cp.savedAt });
+        return;
+      }
+    }
+  },
+
+  async deleteCheckpoint(slot) {
+    const { project } = get();
+    if (!project) return;
+    await deleteSave(project.id, slot);
   },
 
   advance() {
@@ -189,7 +311,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           state: st.state ? { ...st.state, currentBackgroundId: slash.assetId } : st.state,
           draft: '',
         }));
-        await get().save(0, `Автосейв · ход ${state.turnCount}`);
+        await get().autosave();
         return;
       case 'move': {
         const ok = await runAndApply(set, get, project, state, slash.text);
@@ -220,30 +342,28 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set({ error: null });
   },
 
-  async save(slot, title) {
-    const { project, state } = get();
+  async autosave(title) {
+    const { project, state, autosaveSlot, playthroughId, playthroughLabel, playthroughCreatedAt, currentCheckpointId } = get();
     if (!project || !state) return;
     // Глубокий снимок на момент сохранения — чтобы последующие мутации живого
     // состояния (напр. списание стоимости выбора) не могли задним числом исказить
     // уже отданный на запись сейв.
     const snapshot: RuntimeState = JSON.parse(JSON.stringify(state));
     const save: SaveSlot = {
-      slot,
+      slot: autosaveSlot,
       projectId: project.id,
       savedAt: Date.now(),
-      title,
+      title: title || `Автосейв · ход ${state.turnCount}`,
       state: snapshot,
+      kind: 'autosave',
+      playthroughId,
+      playthroughLabel,
+      playthroughCreatedAt,
+      parentCheckpointId: currentCheckpointId,
     };
     await putSave(save);
     const firstBeat = snapshot.lastTurn?.beats?.find((b) => 'text' in b && b.text)?.text || '';
-    logEvent('debug', 'save', `Сейв#${slot} ход ${snapshot.turnCount}, beats: ${snapshot.lastTurn?.beats?.length ?? 0} · «${firstBeat.slice(0, 40)}»`);
-  },
-
-  async loadSlot(slot) {
-    const { project } = get();
-    if (!project) return;
-    const save = await getSave(project.id, slot);
-    if (save) applyLoadedState(set, project, save.state);
+    logEvent('debug', 'save', `Автосейв ход ${snapshot.turnCount}, beats: ${snapshot.lastTurn?.beats?.length ?? 0} · «${firstBeat.slice(0, 40)}»`);
   },
 
   dismissChapter() {
@@ -267,7 +387,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const nextState = { ...st.state, gm };
     set({ state: nextState });
     // Автосейв (fire-and-forget) — правки GM переживают перезагрузку.
-    void get().save(AUTOSAVE_SLOT, `Автосейв · ход ${nextState.turnCount}`);
+    void get().autosave();
   },
 
   patchMemory(mutator) {
@@ -277,7 +397,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     mutator(memory);
     const nextState = { ...st.state, memory };
     set({ state: nextState });
-    void get().save(AUTOSAVE_SLOT, `Автосейв · ход ${nextState.turnCount}`);
+    void get().autosave();
   },
 
   setAuthorNotes(notes) {
@@ -285,9 +405,54 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (!st.state) return;
     const nextState = { ...st.state, authorNotes: notes };
     set({ state: nextState });
-    void get().save(AUTOSAVE_SLOT, `Автосейв · ход ${nextState.turnCount}`);
+    void get().autosave();
   },
 }));
+
+// Загружает конкретный сейв (автосейв ИЛИ чекпоинт), выставляя контекст прохождения
+// так, чтобы дальнейший автосейв-курсор писался в это прохождение. При загрузке
+// чекпоинта курсор прохождения перезаписывается этим состоянием (продолжаем ветку,
+// не теряя сам чекпоинт-снимок). См. Batch 5.2.
+function applyResumedSave(
+  set: (partial: Partial<PlayerStore>) => void,
+  project: Project,
+  info: PlaythroughInfo | null,
+  save: SaveSlot
+) {
+  const isCheckpoint = save.kind === 'checkpoint';
+  const playthroughId = save.playthroughId || LEGACY_PLAYTHROUGH;
+  const playthroughLabel = save.playthroughLabel || info?.label || '';
+  const playthroughCreatedAt = save.playthroughCreatedAt ?? info?.createdAt;
+  // Куда писать курсор: если грузим чекпоинт — в существующий курсор прохождения
+  // (или новый слот, если курсора ещё нет); если автосейв — в его же слот.
+  const autosaveSlot = isCheckpoint ? info?.autosave?.slot ?? nextSlot() : save.slot;
+  const currentCheckpointId = isCheckpoint ? save.checkpointId : save.parentCheckpointId;
+
+  set({
+    playthroughId,
+    playthroughLabel,
+    playthroughCreatedAt,
+    autosaveSlot,
+    currentCheckpointId,
+  });
+  applyLoadedState(set, project, save.state);
+
+  // Сразу фиксируем курсор этого прохождения на загруженном состоянии — чтобы
+  // «Продолжить» возобновляло отсюда (особенно после захода в чекпоинт). В фоне.
+  const cursor: SaveSlot = {
+    slot: autosaveSlot,
+    projectId: project.id,
+    savedAt: Date.now(),
+    title: save.title || `Автосейв · ход ${save.state.turnCount}`,
+    state: JSON.parse(JSON.stringify(save.state)),
+    kind: 'autosave',
+    playthroughId,
+    playthroughLabel,
+    playthroughCreatedAt,
+    parentCheckpointId: currentCheckpointId,
+  };
+  void putSave(cursor).catch((e) => logEvent('error', 'save', 'Курсор не записан: ' + (e as Error).message));
+}
 
 // Reveal a loaded state without replaying beats (show last turn fully).
 function applyLoadedState(
@@ -381,7 +546,7 @@ async function runAndApply(
     // Автосейв — в ФОНЕ: UI уже обновлён, запись на диск не должна его блокировать.
     // Ошибка записи не откатывает показанное состояние (в худшем случае — тихий лог).
     void get()
-      .save(AUTOSAVE_SLOT, `Автосейв · ход ${state.turnCount}`)
+      .autosave()
       .catch((err) => logEvent('error', 'save', 'Фоновое автосохранение не удалось: ' + (err as Error).message));
     logEvent('info', 'turn', `Ход применён (ход ${state.turnCount}, beats: ${turn.beats.length})`);
     return true;
