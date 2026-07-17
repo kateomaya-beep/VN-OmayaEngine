@@ -1,6 +1,17 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { Project, SaveSlot } from '../shared/types';
 import { normalizeProject, normalizeRuntimeState } from '../shared/factory';
+import {
+  dataApiAvailable,
+  saveProjectToDisk,
+  loadProjectFromDisk,
+  deleteProjectFromDisk,
+  listDiskProjectIds,
+  saveSaveToDisk,
+  readSavesFromDisk,
+  deleteSaveFromDisk,
+  logDisk,
+} from './fileStore';
 
 interface NovelForgeDB extends DBSchema {
   projects: {
@@ -34,6 +45,37 @@ export function getDB(): Promise<IDBPDatabase<NovelForgeDB>> {
   return dbPromise;
 }
 
+// ---- Троттлинг записи на диск ----
+// Диск — источник истины, но частые автосейвы не должны долбить его на каждый чих.
+// Debounce с трейлингом на ключ: коалесцируем всплеск, но САМАЯ СВЕЖАЯ задача всегда
+// в итоге выполняется (потери максимум на окно debounce, а IndexedDB держит текущее).
+const debouncers = new Map<string, { last: number; timer: any; latest: (() => Promise<void>) | null }>();
+function diskDebounce(key: string, task: () => Promise<void>, ms: number): void {
+  let r = debouncers.get(key);
+  if (!r) {
+    r = { last: 0, timer: null, latest: null };
+    debouncers.set(key, r);
+  }
+  r.latest = task;
+  const fire = () => {
+    const t = r!.latest;
+    r!.latest = null;
+    r!.last = Date.now();
+    r!.timer = null;
+    if (t) t().catch((e) => logDisk('Запись на диск не удалась: ' + (e as Error).message));
+  };
+  if (r.timer) return; // всплеск — обновили latest, запись уже запланирована
+  const elapsed = Date.now() - r.last;
+  if (elapsed >= ms) fire();
+  else r.timer = setTimeout(fire, ms - elapsed);
+}
+
+let mirrorEnabled: boolean | null = null;
+async function mirrorOn(): Promise<boolean> {
+  if (mirrorEnabled === null) mirrorEnabled = await dataApiAvailable();
+  return mirrorEnabled;
+}
+
 // ---- Projects ----
 
 export async function listProjects(): Promise<Project[]> {
@@ -48,10 +90,19 @@ export async function getProject(id: string): Promise<Project | undefined> {
   return raw ? normalizeProject(raw) : undefined;
 }
 
-export async function saveProject(project: Project): Promise<void> {
+// Только IndexedDB (без зеркала на диск) — для внутреннего использования и sync.
+async function putProjectIdb(project: Project): Promise<void> {
   const db = await getDB();
-  project.updatedAt = Date.now();
   await db.put('projects', project);
+}
+
+export async function saveProject(project: Project): Promise<void> {
+  project.updatedAt = Date.now();
+  await putProjectIdb(project);
+  if (await mirrorOn()) {
+    const snap: Project = JSON.parse(JSON.stringify(project));
+    diskDebounce(`proj:${project.id}`, () => saveProjectToDisk(snap), 1200);
+  }
 }
 
 export async function deleteProject(id: string): Promise<void> {
@@ -65,6 +116,7 @@ export async function deleteProject(id: string): Promise<void> {
   const saveKeys = await db.getAllKeysFromIndex('saves', 'byProject', id);
   for (const k of saveKeys) await db.delete('saves', k);
   await db.delete('projects', id);
+  if (await mirrorOn()) void deleteProjectFromDisk(id);
 }
 
 // ---- Assets (blobs) ----
@@ -83,13 +135,22 @@ export async function getAssetBlob(key: string): Promise<Blob | undefined> {
 export async function deleteAsset(key: string): Promise<void> {
   const db = await getDB();
   await db.delete('assets', key);
+  // Файлы ассетов на диске чистятся при следующем saveProjectToDisk (по факту диффа).
 }
 
 // ---- Saves ----
 
-export async function putSave(save: SaveSlot): Promise<void> {
+async function putSaveIdb(save: SaveSlot): Promise<void> {
   const db = await getDB();
   await db.put('saves', { ...save, key: `${save.projectId}:${save.slot}` });
+}
+
+export async function putSave(save: SaveSlot): Promise<void> {
+  await putSaveIdb(save);
+  if (await mirrorOn()) {
+    const snap: SaveSlot = JSON.parse(JSON.stringify(save));
+    diskDebounce(`save:${save.projectId}:${save.slot}`, () => saveSaveToDisk(snap), 1500);
+  }
 }
 
 export async function listSaves(projectId: string): Promise<SaveSlot[]> {
@@ -114,4 +175,50 @@ export async function getSave(projectId: string, slot: number): Promise<SaveSlot
 export async function deleteSave(projectId: string, slot: number): Promise<void> {
   const db = await getDB();
   await db.delete('saves', `${projectId}:${slot}`);
+  if (await mirrorOn()) void deleteSaveFromDisk(projectId, slot);
+}
+
+// ---- Синхронизация с диском (файловый источник истины) ----
+// Вызывается один раз при старте. Аддитивно: IndexedDB остаётся рабочим слоем.
+// 1) Проекты только в IndexedDB → мигрируем на диск (существующие тест-проекты).
+// 2) Проекты с диска → прогреваем IndexedDB (диск переживает очистку браузера).
+// 3) Сейвы сверяем по времени: где новее — то и оставляем (защита от debounce-окна).
+export async function syncStorage(): Promise<void> {
+  if (!(await dataApiAvailable())) {
+    mirrorEnabled = false;
+    logDisk('Файловый сервер недоступен — работаем только на IndexedDB (открыто без лаунчера).');
+    return;
+  }
+  mirrorEnabled = true;
+  try {
+    const diskIds = await listDiskProjectIds();
+    const diskSet = new Set(diskIds);
+    const idbProjects = await listProjects();
+
+    // 1) Миграция IndexedDB → диск (то, чего на диске ещё нет).
+    for (const p of idbProjects) {
+      if (!diskSet.has(p.id)) {
+        await saveProjectToDisk(p);
+        for (const s of await listSaves(p.id)) await saveSaveToDisk(s);
+        logDisk(`Миграция на диск: «${p.meta.title}»`);
+      }
+    }
+
+    // 2) Загрузка с диска → IndexedDB (диск — источник истины).
+    const db = await getDB();
+    for (const id of diskIds) {
+      const dp = await loadProjectFromDisk(id);
+      if (!dp) continue;
+      await putProjectIdb(dp);
+      // 3) Сейвы: диск, но если в IndexedDB новее — оставляем новее.
+      const diskSaves = await readSavesFromDisk(id);
+      for (const ds of diskSaves) {
+        const cur = await db.get('saves', `${ds.projectId}:${ds.slot}`);
+        if (!cur || (ds.savedAt || 0) >= ((cur as any).savedAt || 0)) await putSaveIdb(ds);
+      }
+    }
+    logDisk(`Синхронизация с диском завершена (${diskIds.length} проектов на диске).`);
+  } catch (e) {
+    logDisk('Ошибка синхронизации с диском: ' + (e as Error).message);
+  }
 }

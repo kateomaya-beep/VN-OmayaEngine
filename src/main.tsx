@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 import { router } from './app/router';
 import { logEvent } from './shared/logStore';
+import { syncStorage } from './storage/db';
 import './index.css';
 
 // Build stamp — makes it unambiguous which code is actually running in the tab.
@@ -40,8 +41,19 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   });
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <RouterProvider router={router} />
-  </React.StrictMode>
-);
+// Перед рендером синхронизируемся с файловым хранилищем на диске (если доступен
+// локальный сервер): прогреваем/мигрируем IndexedDB из файлов. Так библиотека сразу
+// показывает актуальный набор, а прогресс переживает очистку данных браузера.
+async function boot() {
+  try {
+    await syncStorage();
+  } catch (e) {
+    logEvent('warn', 'disk', 'Синхронизация с диском не удалась: ' + (e as Error).message);
+  }
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <RouterProvider router={router} />
+    </React.StrictMode>
+  );
+}
+boot();
