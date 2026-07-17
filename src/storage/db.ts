@@ -1,6 +1,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { Project, SaveSlot } from '../shared/types';
 import { normalizeProject, normalizeRuntimeState } from '../shared/factory';
+import { uid } from '../shared/utils';
 import {
   dataApiAvailable,
   saveProjectToDisk,
@@ -103,6 +104,48 @@ export async function saveProject(project: Project): Promise<void> {
     const snap: Project = JSON.parse(JSON.stringify(project));
     diskDebounce(`proj:${project.id}`, () => saveProjectToDisk(snap), 1200);
   }
+}
+
+// Полная независимая копия проекта (игры): новый id проекта, НОВЫЕ id ассетов и
+// СКОПИРОВАННЫЕ blob'ы (чтобы удаление копии не задело оригинал). Прогресс (сейвы) НЕ
+// копируется — копия начинается с чистого листа. Возвращает новый проект.
+export async function duplicateProject(source: Project, newTitle?: string): Promise<Project> {
+  const clone: Project = JSON.parse(JSON.stringify(source));
+  clone.id = uid('proj');
+  clone.createdAt = Date.now();
+  clone.updatedAt = Date.now();
+  clone.meta.title = (newTitle || `${source.meta.title || 'Проект'} (копия)`).slice(0, 200);
+
+  // Копируем blob'ы под новыми ключами и строим карту старый→новый id ассета.
+  const idMap = new Map<string, string>();
+  for (const a of clone.assets) {
+    const oldId = a.id;
+    const newBlobKey = uid('blob');
+    const blob = await getAssetBlob(a.blobKey);
+    if (blob) await putAsset(newBlobKey, blob);
+    a.id = uid('asset');
+    a.blobKey = newBlobKey;
+    idMap.set(oldId, a.id);
+  }
+  const remap = (id?: string): string | undefined => (id && idMap.get(id)) || undefined;
+
+  // Перепривязываем все ссылки на ассеты внутри проекта.
+  clone.meta.coverAssetId = remap(clone.meta.coverAssetId);
+  for (const c of clone.characters) {
+    const remapMap = (m: Record<string, string>) => {
+      for (const k of Object.keys(m)) {
+        const nn = remap(m[k]);
+        if (nn) m[k] = nn;
+        else delete m[k];
+      }
+    };
+    remapMap(c.sprites as Record<string, string>);
+    for (const o of c.outfits || []) remapMap(o.sprites as Record<string, string>);
+  }
+  for (const st of clone.stats) st.iconAssetId = remap(st.iconAssetId);
+
+  await saveProject(clone);
+  return clone;
 }
 
 export async function deleteProject(id: string): Promise<void> {

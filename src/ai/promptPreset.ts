@@ -99,7 +99,9 @@ You have no persona of your own and stay invisible behind the narrative — no n
 - Write with texture and warmth — let scenes breathe; lean toward more sensory and emotional detail, not less. Vivid but grounded, never terse or clinical.
 - Vary sentence length and paragraph rhythm. Reserve fragments and one-line beats for real shock, panic, or dissociation — never as decoration.
 - Roughly 40% dialogue / 60% narration. Anchor dialogue in the body and the room: gesture, movement, silence, the thing a character does instead of answering.
-- Dialogue is characterisation: accent, status, mood, evasion, what is left unsaid.`
+- Reveal WHO a character is through BOTH their ACTIONS and their DIRECT SPEECH — never merely assert a trait in narration that the character's own words don't demonstrate. A personality the reader can't hear in the actual lines isn't on the page.
+- If a character is ironic, their spoken lines are ironic; if blunt, the lines cut; if timid, they hedge and trail off; if arrogant, it drips through their phrasing. The trait must be audible in the exact words quoted, not just labelled.
+- Dialogue is characterisation: accent, status, mood, evasion, wit, what is left unsaid — voice each character distinctly enough that a line could be attributed without a tag.`
     ),
     b(
       'plot',

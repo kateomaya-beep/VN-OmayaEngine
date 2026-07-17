@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '../../shared/types';
-import { listProjects, saveProject, deleteProject } from '../../storage/db';
+import { listProjects, saveProject, deleteProject, duplicateProject } from '../../storage/db';
 import { createEmptyProject } from '../../shared/factory';
 import { exportProjectZip, downloadBlob, importProjectZip, countSaves } from '../../storage/zip';
 import { AssetImage, Modal } from '../../shared/ui';
@@ -94,6 +94,18 @@ export function LibraryPage() {
     if (!confirm(`Удалить проект «${p.meta.title}» и все его ассеты?`)) return;
     await deleteProject(p.id);
     await refresh();
+  }
+
+  async function onDuplicate(p: Project) {
+    setBusy(L('Копирование…', 'Copying…'));
+    try {
+      const copy = await duplicateProject(p);
+      setShareTarget(null);
+      await refresh();
+      logEvent('info', 'app', `Проект скопирован: «${copy.meta.title}»`);
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
@@ -296,13 +308,18 @@ export function LibraryPage() {
               стороннего сервиса (сток, AI-генератор и т.д.) — убедитесь, что имеете право их
               распространять. Ответственность за содержимое — на вас.
             </div>
-            <div className="flex justify-end gap-2">
-              <button className="btn-ghost" onClick={() => setShareTarget(null)}>
-                Отмена
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <button className="btn-ghost" onClick={() => onDuplicate(shareTarget)} title={L('Независимая копия на этом устройстве', 'An independent copy on this device')}>
+                ⧉ {L('Сделать копию', 'Make a copy')}
               </button>
-              <button className="btn-primary" onClick={() => onShareDownload(shareTarget, withProgress)}>
-                Скачать .zip
-              </button>
+              <div className="flex gap-2">
+                <button className="btn-ghost" onClick={() => setShareTarget(null)}>
+                  {L('Отмена', 'Cancel')}
+                </button>
+                <button className="btn-primary" onClick={() => onShareDownload(shareTarget, withProgress)}>
+                  {L('Скачать .zip', 'Download .zip')}
+                </button>
+              </div>
             </div>
           </>
         )}
