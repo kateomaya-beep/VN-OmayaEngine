@@ -113,6 +113,13 @@ export function normalizeProject(raw: any): Project {
     }
     return out;
   };
+  // Доп. наряды (Batch 5.3): [{ outfit, sprites }]. Пустые/безымянные отбрасываем.
+  const normOutfits = (v: unknown): { outfit: string; sprites: Partial<Record<Emotion, string>> }[] | undefined => {
+    const list = arr<any>(v)
+      .map((o) => ({ outfit: str(o?.outfit).trim(), sprites: normSprites(o?.sprites) }))
+      .filter((o) => o.outfit);
+    return list.length ? list : undefined;
+  };
 
   const clampRel = (v: unknown) => clamp(num(v, 0), -100, 100);
   const normRelationship = (v: any): RelationshipStats => ({
@@ -152,6 +159,10 @@ export function normalizeProject(raw: any): Project {
           : undefined,
       },
       sprites: normSprites(c?.sprites),
+      outfits: normOutfits(c?.outfits),
+      defaultOutfit: typeof c?.defaultOutfit === 'string' && c.defaultOutfit.trim()
+        ? c.defaultOutfit.trim()
+        : undefined,
       relationship: normRelationship(c?.relationship),
       relationshipHidden: bool(c?.relationshipHidden, false) || undefined,
       linkedStatId: typeof c?.linkedStatId === 'string' ? c.linkedStatId : undefined,

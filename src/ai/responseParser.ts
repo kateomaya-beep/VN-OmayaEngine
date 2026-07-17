@@ -1,6 +1,7 @@
 import type { Project, AiTurn, Beat, RuntimeState, RelationshipStats } from '../shared/types';
 import { EMOTIONS, AUDIO_MOODS, RELATIONSHIP_FIELDS } from '../shared/types';
 import { aiTurnSchema } from './schema';
+import { characterOutfits, defaultOutfitTag } from '../shared/outfits';
 import { clamp } from '../shared/utils';
 
 // Статы отношений адресуются как statId = `rel:<charId>:<field>` (см. CR v2 §C.3).
@@ -84,13 +85,17 @@ export function repairBeat(project: Project, b: any): Beat {
   const cid = b.characterId || undefined;
   const ch = cid ? charById.get(cid) : undefined;
   if (ch) {
-    const available = Object.keys(ch.sprites);
+    // Эмоция — только из закрытого словаря (защита от рассинхрона мимики). Конкретный
+    // спрайт наряд+эмоция подбирает resolveSprite на отрисовке (с fallback-цепочкой),
+    // поэтому эмоцию к «доступным» больше НЕ приводим — сохраняем задумку ИИ.
     let emotion = b.emotion;
     if (!EMOTION_SET.has(emotion)) emotion = 'neutral';
-    if (available.length && !available.includes(emotion)) {
-      emotion = available.includes('neutral') ? 'neutral' : available[0];
-    }
-    return { type: 'dialogue', characterId: ch.id, emotion, position, text: txt(b.text), bg };
+    // Наряд — открытый тег: валиден только из загруженных для этого персонажа; иначе
+    // дефолтный (который храним как undefined). resolveSprite всё равно подстрахует.
+    const outfits = characterOutfits(ch);
+    const raw = typeof b.outfit === 'string' ? b.outfit.trim() : '';
+    const outfit = raw && outfits.includes(raw) && raw !== defaultOutfitTag(ch) ? raw : undefined;
+    return { type: 'dialogue', characterId: ch.id, emotion, ...(outfit ? { outfit } : {}), position, text: txt(b.text), bg };
   }
   const name = (b.name || '').trim();
   if (name) {

@@ -4,6 +4,7 @@ import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { getPresetSettings } from './presetSettings';
 import { matchLorebook } from './lorebookEngine';
+import { characterOutfits, defaultOutfitTag, hasExtraOutfits } from '../shared/outfits';
 import { extractJson } from './responseParser';
 import { formatClock } from './gameMaster';
 import { expandMacros, type MacroContext } from './macros';
@@ -91,6 +92,11 @@ function characterBlocks(
   const desc = (c: (typeof project.characters)[number]) => {
     const emotions = Object.keys(c.sprites);
     const emo = emotions.length ? emotions.join(', ') : '(no sprites — render as name + text)';
+    // Наряды (Batch 5.3): показываем строку только если у персонажа есть выбор
+    // (>1 наряда). ИИ ставит "outfit" на dialogue-beat по контексту сцены, как фон.
+    const outfitLine = hasExtraOutfits(c)
+      ? `\nAvailable outfits (pick by scene context, default is "${defaultOutfitTag(c)}"): ${characterOutfits(c).join(', ')}`
+      : '';
     return `### ${c.name} (id: ${c.id}, role: ${roleLabel[c.role] || c.role})
 Appearance: ${expandMacros(c.card.appearance, ctx)}
 Personality: ${expandMacros(c.card.personality, ctx)}
@@ -98,7 +104,7 @@ Backstory: ${expandMacros(c.card.backstory, ctx)}
 Speech style: ${expandMacros(c.card.speechStyle, ctx)}${
       c.card.relationshipArc ? `\nRelationship arc: ${expandMacros(c.card.relationshipArc, ctx)}` : ''
     }${relLine(c)}
-Available emotions: ${emo}`;
+Available emotions: ${emo}${outfitLine}`;
   };
 
   const present = project.characters.filter((c) => onScreenIds.includes(c.id));

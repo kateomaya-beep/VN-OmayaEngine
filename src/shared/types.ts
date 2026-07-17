@@ -120,14 +120,28 @@ export function emptyRelationship(): RelationshipStats {
   return { affection: 0, passion_stat: 0, friendship: 0, respect: 0 };
 }
 
+// Набор спрайтов одного наряда (костюма/внешнего вида) персонажа. Наряд — открытая
+// ось (свободный тег), НЕЗАВИСИМАЯ от закрытого словаря эмоций. Внутри наряда — та же
+// сетка 11 эмоций. См. Batch 5.3.
+export interface OutfitSprites {
+  outfit: string; // свободный тег наряда, задаёт юзер (regular/masked/suit/…)
+  sprites: Partial<Record<Emotion, string>>;
+}
+
 export interface Character {
   id: string;
   name: string;
   role: CharacterRole;
   card: CharacterCard;
-  // emotion -> assetId. Спрайты опциональны для любой роли: нет спрайта —
-  // реплика рендерится как имя + текст (единое правило, без крашей).
+  // emotion -> assetId ДЕФОЛТНОГО наряда. Спрайты опциональны для любой роли: нет
+  // спрайта — реплика рендерится как имя + текст (единое правило, без крашей).
   sprites: Partial<Record<Emotion, string>>;
+  // Дополнительные наряды сверх дефолтного (опционально). Персонаж без доп. нарядов
+  // работает как раньше — один набор спрайтов (this.sprites). См. Batch 5.3.
+  outfits?: OutfitSprites[];
+  // Тег дефолтного наряда (набор которого лежит в this.sprites). undefined ⇒ 'base'.
+  // Обязателен как fallback: невалидный/отсутствующий наряд откатывается на него.
+  defaultOutfit?: string;
   relationship: RelationshipStats; // стартовые значения (правятся в конструкторе)
   relationshipHidden?: boolean; // скрыть в инфобоксе
   linkedStatId?: string;
@@ -288,6 +302,9 @@ export type Beat =
       characterId?: string; // для персонажей из списка
       name?: string; // для эпизодических NPC, введённых ИИ
       emotion: string;
+      // Наряд говорящего на этом бите (свободный тег из доступных наряду персонажа).
+      // undefined ⇒ дефолтный наряд. Невалидный тег движок откатывает по fallback.
+      outfit?: string;
       position: 'left' | 'center' | 'right';
       text: string;
       bg?: string;
@@ -486,6 +503,7 @@ export function emptyGameMaster(): GameMasterState {
 export interface OnScreenSprite {
   characterId: string;
   emotion: string;
+  outfit?: string; // текущий наряд персонажа на сцене (undefined ⇒ дефолтный)
   position: 'left' | 'center' | 'right';
 }
 

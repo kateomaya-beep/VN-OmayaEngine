@@ -32,6 +32,17 @@ export function validateProject(project: Project): ValidationIssue[] {
         message: `У «${c.name}» есть спрайты, но нет neutral (используется как fallback).`,
       });
     }
+    // Доп. наряд со спрайтами без своего neutral — подстрахуется дефолтным нарядом,
+    // но лучше залить (Batch 5.3).
+    for (const o of c.outfits || []) {
+      const es = Object.keys(o.sprites);
+      if (es.length > 0 && !o.sprites.neutral) {
+        issues.push({
+          level: 'warning',
+          message: `У наряда «${o.outfit}» персонажа «${c.name}» нет neutral (откат на дефолтный наряд).`,
+        });
+      }
+    }
   }
 
   const loveInterests = project.characters.filter((c) => c.role === 'love_interest');

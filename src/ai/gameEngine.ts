@@ -115,6 +115,7 @@ export async function applyTurn(
       onScreenMap.set(b.characterId, {
         characterId: b.characterId,
         emotion: b.emotion,
+        outfit: b.outfit,
         position: b.position,
       });
     }

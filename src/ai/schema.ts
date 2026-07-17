@@ -12,6 +12,7 @@ export const beatSchema = z.union([
     characterId: z.string().nullish(),
     name: z.string().nullish(),
     emotion: z.string().default('neutral'),
+    outfit: z.string().nullish(), // наряд говорящего (открытый тег); движок валидирует
     position: z.enum(['left', 'center', 'right']).default('center'),
     text: z.string(),
     bg: z.string().nullish(),

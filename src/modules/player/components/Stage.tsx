@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAssetUrl } from '../../../shared/ui';
 import type { Project } from '../../../shared/types';
+import { resolveSprite } from '../../../shared/outfits';
 
 export interface ActiveSprite {
   characterId: string;
   emotion: string;
+  outfit?: string;
 }
 
 // Сцена (CR v2 §A): фон с кроссфейдом + МАКСИМУМ один активный говорящий +
@@ -75,10 +77,8 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
     if (!a) return { key: '__none__' };
     const char = project.characters.find((c) => c.id === a.characterId);
     if (!char) return { key: '__none__' };
-    const assetId =
-      char.sprites[a.emotion as keyof typeof char.sprites] ||
-      char.sprites.neutral ||
-      Object.values(char.sprites)[0];
+    // Наряд+эмоция → спрайт по fallback-цепочке (Batch 5.3). Никогда не крашит.
+    const assetId = resolveSprite(char, a.outfit, a.emotion);
     if (!assetId) return { key: '__none__' }; // нет спрайта → рендер имя+текст, тут пусто
     return { key: `${a.characterId}:${assetId}`, assetId };
   };

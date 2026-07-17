@@ -91,10 +91,20 @@ function spriteMap(project: Project): Map<string, string> {
   const byId = new Map(project.assets.map((a) => [a.id, a]));
   const map = new Map<string, string>();
   for (const c of project.characters) {
+    const dir = safe(c.name) || c.id;
+    // Дефолтный наряд: characters/<имя>/expressions/<эмоция>.<ext> (без изменений).
     for (const [emotion, assetId] of Object.entries(c.sprites || {})) {
       const a = assetId ? byId.get(assetId) : undefined;
       if (!a) continue;
-      map.set(a.id, `characters/${safe(c.name) || c.id}/expressions/${safe(emotion)}.${extOf(a)}`);
+      map.set(a.id, `characters/${dir}/expressions/${safe(emotion)}.${extOf(a)}`);
+    }
+    // Доп. наряды (Batch 5.3): characters/<имя>/outfits/<наряд>/<эмоция>.<ext>.
+    for (const o of c.outfits || []) {
+      for (const [emotion, assetId] of Object.entries(o.sprites || {})) {
+        const a = assetId ? byId.get(assetId) : undefined;
+        if (!a) continue;
+        map.set(a.id, `characters/${dir}/outfits/${safe(o.outfit)}/${safe(emotion)}.${extOf(a)}`);
+      }
     }
   }
   return map;

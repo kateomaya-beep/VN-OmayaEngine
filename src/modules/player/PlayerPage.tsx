@@ -94,7 +94,7 @@ export function PlayerPage() {
   // Активный говорящий на сцене — только текущий dialogue-beat с characterId (Блок A.1).
   const active: ActiveSprite | null =
     currentBeat?.type === 'dialogue' && currentBeat.characterId
-      ? { characterId: currentBeat.characterId, emotion: currentBeat.emotion }
+      ? { characterId: currentBeat.characterId, emotion: currentBeat.emotion, outfit: currentBeat.outfit }
       : null;
   const showChoices = s.phase === 'choices' && !s.thinking && s.choices.length > 0 && !s.cg;
   const canContinue = s.phase === 'choices' && !s.thinking && !s.cg;

@@ -40,11 +40,11 @@ export function removeAsset(project: Project, assetId: string): void {
   project.assets = project.assets.filter((a) => a.id !== assetId);
   if (project.meta.coverAssetId === assetId) project.meta.coverAssetId = undefined;
   for (const c of project.characters) {
-    for (const emo of Object.keys(c.sprites)) {
-      if (c.sprites[emo as keyof typeof c.sprites] === assetId) {
-        delete c.sprites[emo as keyof typeof c.sprites];
-      }
-    }
+    const strip = (m: Record<string, string | undefined>) => {
+      for (const emo of Object.keys(m)) if (m[emo] === assetId) delete m[emo];
+    };
+    strip(c.sprites);
+    for (const o of c.outfits || []) strip(o.sprites);
   }
   for (const s of project.stats) {
     if (s.iconAssetId === assetId) s.iconAssetId = undefined;

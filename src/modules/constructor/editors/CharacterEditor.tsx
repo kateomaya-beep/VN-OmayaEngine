@@ -17,6 +17,12 @@ import type {
   RelationshipField,
 } from '../../../shared/types';
 import { uploadAsset } from '../../../storage/assetOps';
+import {
+  characterOutfits,
+  defaultOutfitTag,
+  outfitSpriteMap,
+  ensureOutfitMap,
+} from '../../../shared/outfits';
 import { clamp } from '../../../shared/utils';
 import { parseSpriteZip } from '../../../storage/spriteZip';
 import { importTavernCard } from '../../../storage/tavernCard';
@@ -289,26 +295,38 @@ export function CharacterEditor() {
 function SpriteBinder({ characterId }: { characterId: string }) {
   const { project, update } = useProjectStore();
   const lang = useLang((s) => s.lang);
+  const L = (ru: string, en: string) => (lang === 'ru' ? ru : en);
   const [tray, setTray] = useState<AssetMeta[]>([]);
   const [busy, setBusy] = useState(false);
+  const [activeOutfit, setActiveOutfit] = useState('');
   const zipRef = useRef<HTMLInputElement>(null);
   const slotRefs = useRef<Record<string, HTMLInputElement | null>>({});
   if (!project) return null;
   const char = project.characters.find((c) => c.id === characterId)!;
 
+  // Активный наряд в редакторе (Batch 5.3). Дефолтный набор спрайтов лежит в
+  // char.sprites; доп. наряды — в char.outfits[]. Сетка эмоций всегда правит спрайты
+  // ТЕКУЩЕГО наряда. Guard: если выбранный наряд исчез (сменили персонажа/удалили) —
+  // откатываемся на дефолтный.
+  const outfits = characterOutfits(char);
+  const effOutfit = activeOutfit && outfits.includes(activeOutfit) ? activeOutfit : outfits[0];
+  const activeMap = outfitSpriteMap(char, effOutfit);
+  const isDefaultOutfit = effOutfit === defaultOutfitTag(char);
+
   function setSprite(emotion: Emotion, assetId: string | null, addAsset?: AssetMeta) {
     update((p) => {
       const c = p.characters.find((c) => c.id === characterId)!;
       if (addAsset && !p.assets.some((a) => a.id === addAsset.id)) p.assets.push(addAsset);
-      if (assetId) c.sprites[emotion] = assetId;
-      else delete c.sprites[emotion];
+      const map = ensureOutfitMap(c, effOutfit);
+      if (assetId) map[emotion] = assetId;
+      else delete map[emotion];
     });
   }
 
   async function uploadToSlot(emotion: Emotion, file: File) {
     setBusy(true);
     const asset = await uploadAsset(file, 'sprite');
-    asset.name = `${char.name}_${emotion}`;
+    asset.name = isDefaultOutfit ? `${char.name}_${emotion}` : `${char.name}_${effOutfit}_${emotion}`;
     setSprite(emotion, asset.id, asset);
     setBusy(false);
   }
@@ -318,9 +336,10 @@ function SpriteBinder({ characterId }: { characterId: string }) {
     const { recognized, unrecognized } = await parseSpriteZip(file);
     update((p) => {
       const c = p.characters.find((c) => c.id === characterId)!;
+      const map = ensureOutfitMap(c, effOutfit);
       for (const { emotion, asset } of recognized) {
         if (!p.assets.some((a) => a.id === asset.id)) p.assets.push(asset);
-        c.sprites[emotion] = asset.id;
+        map[emotion] = asset.id;
       }
       for (const a of unrecognized) if (!p.assets.some((x) => x.id === a.id)) p.assets.push(a);
     });
@@ -333,16 +352,121 @@ function SpriteBinder({ characterId }: { characterId: string }) {
     setTray((t) => t.filter((a) => a.id !== assetId));
   }
 
-  const hasNeutral = !!char.sprites.neutral;
+  // ---- Управление нарядами ----
+  function addOutfit() {
+    const tag = (window.prompt(L('Название наряда (тег), напр. suit, masked', 'Outfit tag, e.g. suit, masked')) || '').trim();
+    if (!tag) return;
+    if (outfits.includes(tag)) { setActiveOutfit(tag); return; }
+    update((p) => {
+      const c = p.characters.find((c) => c.id === characterId)!;
+      c.outfits = c.outfits || [];
+      c.outfits.push({ outfit: tag, sprites: {} });
+    });
+    setActiveOutfit(tag);
+  }
+
+  function renameOutfit(tag: string) {
+    const next = (window.prompt(L('Новое название наряда', 'New outfit name'), tag) || '').trim();
+    if (!next || next === tag || outfits.includes(next)) return;
+    update((p) => {
+      const c = p.characters.find((c) => c.id === characterId)!;
+      if (tag === defaultOutfitTag(c)) c.defaultOutfit = next;
+      else { const o = c.outfits?.find((x) => x.outfit === tag); if (o) o.outfit = next; }
+    });
+    setActiveOutfit(next);
+  }
+
+  function deleteOutfit(tag: string) {
+    if (!window.confirm(L(`Удалить наряд «${tag}» со всеми его спрайтами?`, `Delete outfit "${tag}" and its sprites?`))) return;
+    update((p) => {
+      const c = p.characters.find((c) => c.id === characterId)!;
+      c.outfits = (c.outfits || []).filter((o) => o.outfit !== tag);
+    });
+    setActiveOutfit(defaultOutfitTag(char));
+  }
+
+  // Сделать текущий (доп.) наряд дефолтным: его набор становится char.sprites,
+  // прежний дефолтный переезжает в outfits[]. Тег дефолтного = этот наряд.
+  function makeDefault(tag: string) {
+    update((p) => {
+      const c = p.characters.find((c) => c.id === characterId)!;
+      const oldDefault = defaultOutfitTag(c);
+      if (tag === oldDefault) return;
+      c.outfits = c.outfits || [];
+      const idx = c.outfits.findIndex((o) => o.outfit === tag);
+      if (idx < 0) return;
+      const newDefaultSprites = c.outfits[idx].sprites;
+      c.outfits.splice(idx, 1);
+      c.outfits.push({ outfit: oldDefault, sprites: c.sprites });
+      c.sprites = newDefaultSprites;
+      c.defaultOutfit = tag;
+    });
+    setActiveOutfit(tag);
+  }
+
+  const hasNeutral = !!activeMap.neutral;
 
   return (
     <div className="card">
+      {/* Панель нарядов (Batch 5.3): вкладки-теги + управление. Дефолтный помечен ★. */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-3">
+        {outfits.map((o) => {
+          const isDflt = o === defaultOutfitTag(char);
+          const activeTab = o === effOutfit;
+          return (
+            <span
+              key={o}
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs cursor-pointer ${
+                activeTab ? 'border-accent bg-accent/15 text-accent' : 'border-white/15 text-gray-300 hover:bg-white/5'
+              }`}
+              onClick={() => setActiveOutfit(o)}
+              title={isDflt ? L('Наряд по умолчанию (fallback)', 'Default outfit (fallback)') : o}
+            >
+              {isDflt && <span className="text-accent">★</span>}
+              {o}
+            </span>
+          );
+        })}
+        <button className="btn-ghost !px-2 !py-0.5 text-xs" onClick={addOutfit}>
+          + {L('наряд', 'outfit')}
+        </button>
+      </div>
+
+      {/* Действия над активным нарядом */}
+      <div className="flex items-center gap-2 flex-wrap mb-3 text-xs">
+        <button className="btn-ghost !px-2 !py-0.5" onClick={() => renameOutfit(effOutfit)}>
+          ✎ {L('переименовать', 'rename')}
+        </button>
+        {!isDefaultOutfit && (
+          <>
+            <button className="btn-ghost !px-2 !py-0.5" onClick={() => makeDefault(effOutfit)}>
+              ★ {L('сделать по умолчанию', 'set as default')}
+            </button>
+            <button className="btn-ghost !px-2 !py-0.5 text-red-300" onClick={() => deleteOutfit(effOutfit)}>
+              ✕ {L('удалить наряд', 'delete outfit')}
+            </button>
+          </>
+        )}
+        <span className="text-gray-500">
+          {L('Наряд', 'Outfit')}: <code>{effOutfit}</code>
+          {isDefaultOutfit && ` · ${L('по умолчанию', 'default')}`}
+        </span>
+      </div>
+
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <div>
-          <h4 className="font-semibold">Спрайты и эмоции</h4>
+          <h4 className="font-semibold">
+            {L('Спрайты и эмоции', 'Sprites & emotions')}
+            {!isDefaultOutfit && <span className="text-gray-400"> · {effOutfit}</span>}
+          </h4>
           <p className="text-xs text-gray-500">
-            Нейминг: <code>имя_эмоция.png</code> (напр. <code>{char.name || 'ares'}_joy.png</code>).
-            Обязателен <code>neutral</code> — остальное подменяется им.
+            {L('Нейминг', 'Naming')}:{' '}
+            <code>
+              {isDefaultOutfit
+                ? `${char.name || 'ares'}_joy.png`
+                : `${char.name || 'peter'}_${effOutfit}_surprise.png`}
+            </code>
+            . {L('Обязателен', 'Required')} <code>neutral</code> — {L('остальное подменяется им', 'others fall back to it')}.
           </p>
         </div>
         <div className="flex gap-2">
@@ -369,7 +493,7 @@ function SpriteBinder({ characterId }: { characterId: string }) {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {EMOTIONS.map((emo) => {
-          const assetId = char.sprites[emo];
+          const assetId = activeMap[emo];
           const asset = assetId && project.assets.find((a) => a.id === assetId);
           return (
             <div

@@ -60,7 +60,7 @@ export const CORE_PROMPT = `Ты — движок-режиссёр интера�
     { "type": "narration", "text": string },
     { "type": "thought", "text": string },
     { "type": "dialogue", "characterId": string|null, "name": string|null,
-      "emotion": string, "position": "left"|"center"|"right", "text": string }
+      "emotion": string, "outfit": string|null, "position": "left"|"center"|"right", "text": string }
   ],
   "statChanges": [ { "statId": string, "delta": number, "reason": string } ],
   "choices": [ { "id": string, "text": string, "cost": null | { "statId": string, "amount": number } } ],
@@ -82,8 +82,16 @@ export const CORE_PROMPT = `Ты — движок-режиссёр интера�
 ${EMOTIONS.join(', ')}.
 - Обязателен только neutral (fallback). irritation ≠ anger (раздражение, не гнев).
   tender — нежность; passion — страсть/желание; mad — одержимость/безумие (не злость).
-- Для КАЖДОЙ реплика-emotion выбирай ТОЛЬКО из этого словаря И только из списка
-  «доступные эмоции», переданного для этого персонажа. Иначе — neutral.
+- Для КАЖДОЙ реплика-emotion выбирай ТОЛЬКО из этого словаря. Иначе — neutral.
+
+НАРЯДЫ (открытая ось, НЕ эмоция — костюм/внешний вид):
+- Наряд — это отдельная ось от эмоции (напр. regular / masked / suit). Для персонажа
+  с несколькими нарядами в его карточке указан список «Available outfits» и наряд
+  по умолчанию.
+- Ставь "outfit" на dialogue-beat по контексту сцены (как выбираешь фон): выбирай
+  ТОЛЬКО из доступных нарядов ЭТОГО персонажа. Меняй только при реальной смене
+  костюма/облика. Нет нужды менять — оставь "outfit": null (будет дефолтный).
+- Персонажи без списка нарядов наряд не имеют — для них всегда "outfit": null.
 
 СЛОВАРЬ АУДИО-НАСТРОЕНИЙ (закрытый, базовые + возможные кастомные проекта):
 Базовые: ${AUDIO_MOODS.join(', ')}. Проект может добавить свои — полный список для
