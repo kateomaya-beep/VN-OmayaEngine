@@ -144,6 +144,9 @@ export interface Character {
   defaultOutfit?: string;
   relationship: RelationshipStats; // стартовые значения (правятся в конструкторе)
   relationshipHidden?: boolean; // скрыть в инфобоксе
+  /** @deprecated Связь стат↔персонаж переехала на StatDefinition.linkedCharacterId
+   * (чтобы к одному персонажу можно было привязать несколько статов). Поле читается
+   * только для миграции старых проектов. */
   linkedStatId?: string;
   importedFrom?: 'tavern_v2' | 'tavern_v3' | 'manual' | 'promoted_npc';
   sourceSystemPrompt?: string; // из карточки, НЕ применять авто
@@ -158,6 +161,9 @@ export interface StatDefinition {
   initial: number;
   visible: boolean;
   description: string;
+  // Персонаж, к которому привязан стат (опционально). Связь живёт НА СТАТЕ, поэтому к
+  // одному персонажу можно привязать НЕСКОЛЬКО статов (many-to-one).
+  linkedCharacterId?: string;
 }
 
 export interface AssetMeta {

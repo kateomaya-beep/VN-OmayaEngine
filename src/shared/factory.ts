@@ -181,7 +181,18 @@ export function normalizeProject(raw: any): Project {
     initial: num(s?.initial, 0),
     visible: bool(s?.visible, true),
     description: str(s?.description),
+    linkedCharacterId: typeof s?.linkedCharacterId === 'string' ? s.linkedCharacterId : undefined,
   }));
+
+  // Миграция старой связи (Character.linkedStatId, one-to-one) → новую
+  // (StatDefinition.linkedCharacterId, many-to-one). Только если у стата ещё нет связи.
+  for (const c of characters) {
+    if (c.linkedStatId) {
+      const st = stats.find((s) => s.id === c.linkedStatId);
+      if (st && !st.linkedCharacterId) st.linkedCharacterId = c.id;
+      c.linkedStatId = undefined;
+    }
+  }
 
   const assetTypes: AssetType[] = ['background', 'sprite', 'music', 'sfx', 'cg', 'icon'];
   const assets: AssetMeta[] = arr<any>(raw?.assets)

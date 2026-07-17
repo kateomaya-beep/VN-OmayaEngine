@@ -106,15 +106,8 @@ export function StatsEditor() {
                     <label className="label">Связан с персонажем</label>
                     <select
                       className="input"
-                      value={project.characters.find((c) => c.linkedStatId === s.id)?.id || ''}
-                      onChange={(e) =>
-                        update((p) => {
-                          for (const c of p.characters)
-                            if (c.linkedStatId === s.id) c.linkedStatId = undefined;
-                          const c = p.characters.find((c) => c.id === e.target.value);
-                          if (c) c.linkedStatId = s.id;
-                        })
-                      }
+                      value={s.linkedCharacterId || ''}
+                      onChange={(e) => patch(s.id, { linkedCharacterId: e.target.value || undefined })}
                     >
                       <option value="">—</option>
                       {project.characters.map((c) => (

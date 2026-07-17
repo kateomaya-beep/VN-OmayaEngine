@@ -257,6 +257,19 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
             </p>
           </div>
           <GuidedThinkingField cfg={cfg} patch={patch} />
+          <Field label="Язык повествования (язык текста истории, не интерфейса)">
+            <div className="flex gap-2">
+              {(['ru', 'en'] as const).map((lg) => (
+                <button
+                  key={lg}
+                  className={`chip !px-3 !py-1.5 ${cfg.narrativeLanguage === lg ? 'bg-accent2 text-white' : ''}`}
+                  onClick={() => patch({ narrativeLanguage: lg })}
+                >
+                  {lg === 'ru' ? 'Русский' : 'English'}
+                </button>
+              ))}
+            </div>
+          </Field>
           <Field label={`Температура: ${cfg.temperature.toFixed(2)}`}>
             <input
               type="range"

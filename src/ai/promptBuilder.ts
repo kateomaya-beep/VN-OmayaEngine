@@ -330,6 +330,12 @@ export async function buildRequest(
       `CHOICE FREQUENCY (authoritative): offer a choices block at most about once every ${gap} turns. On all other turns return choices: [] and let the player type. Only surface choices at a real decision point.`
     );
   }
+  // Язык повествования (пресет). Управляет языком ТЕКСТА истории; ключи JSON и
+  // id/настроения ассетов остаются английскими.
+  const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
+  systemParts.push(
+    `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts, character dialogue and choice texts — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate JSON keys, character ids, emotion keys, outfit tags, music moods or background ids — those stay exactly as given.`
+  );
   const system = systemParts.join('\n\n');
 
   // Live window of history. Прошлые ходы ассистента храним сырым JSON (для реплея),

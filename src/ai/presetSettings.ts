@@ -9,6 +9,9 @@ import { DEFAULT_TURN_LENGTH, normalizeTurnLength } from '../shared/types';
 // localStorage, как и подключение к ИИ.
 export interface PresetSettings {
   preset: PromptPreset;
+  // Язык ПОВЕСТВОВАНИЯ (нарратив/реплики/выборы), НЕ язык интерфейса. Влияет на язык,
+  // на котором ИИ пишет текст истории. Пока ru/en.
+  narrativeLanguage: 'ru' | 'en';
   temperature: number;
   liveWindow: number;
   contextBudget: number;
@@ -26,6 +29,7 @@ const LS_KEY = 'nf_preset';
 function defaults(): PresetSettings {
   return {
     preset: defaultPreset(),
+    narrativeLanguage: 'ru',
     temperature: 0.9,
     liveWindow: 12,
     contextBudget: 8000,
@@ -45,6 +49,7 @@ function load(): PresetSettings {
     const num = (x: unknown, def: number) => (typeof x === 'number' && !Number.isNaN(x) ? x : def);
     return {
       preset: normalizePreset(v.preset),
+      narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
       liveWindow: num(v.liveWindow, d.liveWindow),
       contextBudget: num(v.contextBudget, d.contextBudget),
