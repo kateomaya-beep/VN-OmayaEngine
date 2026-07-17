@@ -37,6 +37,13 @@ function embedBuiltin(texts: string[]): Promise<number[][]> {
   });
 }
 
+// Локальные эмбеддинги (MiniLM в Web Worker) — независимо от режима памяти проекта.
+// Используется локальным Селектором ассетов (Batch 5.4) для классификации по смыслу.
+export function embedLocal(texts: string[]): Promise<number[][]> {
+  return embedBuiltin(texts);
+}
+export { cosine as cosineSim };
+
 async function embedCustom(project: Project, texts: string[]): Promise<number[][]> {
   const conn = project.memoryConfig.embeddingsConnection;
   if (!conn) throw new Error('Не настроено подключение для эмбеддингов');

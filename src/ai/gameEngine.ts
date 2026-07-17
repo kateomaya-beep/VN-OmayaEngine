@@ -5,6 +5,7 @@ import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
 import { mergeWorldState } from './gameMaster';
+import { selectAssets } from './assetSelector';
 import { maybeCompress } from './memoryEngine';
 import { uid } from '../shared/utils';
 
@@ -232,7 +233,10 @@ export async function runTurn(
     throw new Error(parsed.error || 'Не удалось разобрать ответ ИИ');
   }
 
-  const turn = parsed.turn;
+  // Разделение ролей ИИ (Batch 5.4): если настроен отдельный Селектор ассетов
+  // ('custom'/'local'), он переопределяет emotion/наряд/музыку из закрытых списков.
+  // source==='main' или ошибка → ход без изменений (выбор Рассказчика).
+  const turn = await selectAssets(project, state, parsed.turn);
   const nextState = await applyTurn(project, state, playerMove, turn, raw);
   return { turn, state: nextState };
 }

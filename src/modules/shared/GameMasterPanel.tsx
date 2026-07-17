@@ -11,13 +11,14 @@ import { uid } from '../../shared/utils';
 import { DEFAULT_MONTHS, RELATIONSHIP_FIELDS, RELATIONSHIP_META } from '../../shared/types';
 import type {
   Project, MemoryConfig, VectorizationMode, GmCharacter, GameMasterState, RelationshipStats,
+  AssetSelectorSource,
 } from '../../shared/types';
 
 // Game Master (вдохновлено Horae): динамическое состояние мира — персонажи с
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
 // отношений, календарь (день/месяц/год/время/локация + кастомные месяцы), адженда,
 // список саммари (свёрток) и векторизация. Двуязычно (по глобальному языку UI).
-type Tab = 'characters' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'summary' | 'vector';
+type Tab = 'characters' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'summary' | 'vector' | 'selector';
 type Lf = (ru: string, en: string) => string;
 type GM = GameMasterState;
 type PatchGm = (m: (gm: GM) => void) => void;
@@ -47,6 +48,7 @@ export function GameMasterPanel({
     { id: 'agenda', label: L('Адженда', 'Agenda'), icon: '✅' },
     { id: 'summary', label: L('Саммари', 'Summary'), icon: '🧠' },
     { id: 'vector', label: L('Векторизация', 'Vectorization'), icon: '🔎' },
+    { id: 'selector', label: L('Селектор', 'Selector'), icon: '🎨' },
   ];
 
   const noGame = (
@@ -77,6 +79,7 @@ export function GameMasterPanel({
       {tab === 'agenda' && (gm ? <AgendaTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'summary' && <SummaryTab project={project} onPatch={onPatch} L={L} />}
       {tab === 'vector' && <VectorTab project={project} onPatch={onPatch} L={L} />}
+      {tab === 'selector' && <SelectorTab project={project} onPatch={onPatch} L={L} />}
     </Modal>
   );
 }
@@ -637,6 +640,54 @@ function VectorTab({ project, onPatch, L }: { project?: Project | null; onPatch?
           conn={mc.embeddingsConnection || { provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: 'text-embedding-3-small' }}
           keyRole="embeddings"
           onChange={(conn) => patchMem({ embeddingsConnection: conn })}
+        />
+      )}
+    </div>
+  );
+}
+
+// Селектор ассетов (Batch 5.4): источник выбора emotion/наряда/музыки — основной
+// (как сейчас), отдельное дешёвое подключение, или локальная модель в браузере.
+function SelectorTab({ project, onPatch, L }: { project?: Project | null; onPatch?: (m: (p: Project) => void) => void; L: Lf }) {
+  if (!project || !onPatch) return <p className="text-sm text-gray-400">{L('Откройте проект.', 'Open a project.')}</p>;
+  const cfg = project.aiConfig.assetSelector || { source: 'main' as const };
+  const setSource = (source: AssetSelectorSource) =>
+    onPatch((p) => {
+      const g = getConnection();
+      p.aiConfig.assetSelector = {
+        source,
+        customApi:
+          source === 'custom'
+            ? p.aiConfig.assetSelector?.customApi || { provider: g.provider, baseUrl: g.baseUrl, model: g.model }
+            : undefined,
+      };
+    });
+  const options: { id: AssetSelectorSource; label: string; hint: string }[] = [
+    { id: 'main', label: L('Основной', 'Main'), hint: L('Ассеты выбирает сам Рассказчик (как сейчас).', 'The Narrator picks assets itself (as now).') },
+    { id: 'custom', label: L('Отдельный API', 'Separate API'), hint: L('Дешёвая/быстрая модель только для выбора ассетов.', 'A cheap/fast model just for asset selection.') },
+    { id: 'local', label: L('Локальная', 'Local'), hint: L('Модель MiniLM в браузере (Web Worker), ничего наружу.', 'MiniLM model in-browser (Web Worker), nothing leaves the device.') },
+  ];
+  return (
+    <div>
+      <p className="text-xs text-gray-500 mb-3">
+        {L(
+          'Выбор эмоции (из 11), наряда и музыкального настроения — задача классификации из закрытого списка. Её можно снять с дорогого основного запроса. Эмоции остаются закрытым словарём; невалидный ответ селектора не крашит игру (откат к выбору Рассказчика).',
+          'Picking emotion (of 11), outfit and music mood is closed-list classification. It can be offloaded from the expensive main request. Emotions stay a closed vocabulary; an invalid selector reply never crashes the game (falls back to the Narrator\'s choice).'
+        )}
+      </p>
+      <div className="flex gap-2 mb-3 flex-wrap">
+        {options.map((o) => (
+          <button key={o.id} className={`chip !px-3 !py-1.5 ${cfg.source === o.id ? 'bg-accent2 text-white' : ''}`} onClick={() => setSource(o.id)}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-gray-500 mb-3">{options.find((o) => o.id === cfg.source)?.hint}</p>
+      {cfg.source === 'custom' && (
+        <ApiConnectionField
+          conn={cfg.customApi || { provider: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', model: '' }}
+          keyRole="assetSelector"
+          onChange={(conn) => onPatch((p) => { if (p.aiConfig.assetSelector) p.aiConfig.assetSelector.customApi = conn; })}
         />
       )}
     </div>

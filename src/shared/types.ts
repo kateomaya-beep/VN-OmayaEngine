@@ -185,6 +185,18 @@ export interface ApiConnection {
   availableModels?: string[];
 }
 
+// Разделение ролей ИИ (Batch 5.4): Рассказчик (основная модель, сюжет/beats/статы) и
+// Селектор ассетов (классификация emotion/наряд/фон/музыка из закрытых списков —
+// справляются и маленькие/локальные модели). Источник селектора:
+//   'main'   — та же модель, что Рассказчик (дефолт; ассеты выбирает сам нарратор);
+//   'custom' — отдельное подключение (дешёвая/быстрая модель, ключ роли 'assetSelector');
+//   'local'  — локальная модель в браузере (эмбеддинги MiniLM в Web Worker, как §E3).
+export type AssetSelectorSource = 'main' | 'custom' | 'local';
+export interface AssetSelectorConfig {
+  source: AssetSelectorSource;
+  customApi?: ApiConnection; // если source === 'custom'
+}
+
 // Тумблеры Слоя 2 (см. CR v2 §F1.2, адаптация пресета Omaya).
 export type PromptLength = 'short' | 'medium' | 'long';
 export type PromptPacing = 'slow_burn' | 'fast' | 'adaptive';
@@ -233,6 +245,8 @@ export interface AiConfig {
   // Отдельное подключение для саммари (см. CR v2 §E2.3/§G). undefined = использовать
   // основное игровое подключение (глобальное).
   summaryConnection?: ApiConnection;
+  // Селектор ассетов (Batch 5.4). undefined ⇒ { source: 'main' } — как сейчас.
+  assetSelector?: AssetSelectorConfig;
   // Полностью редактируемый пресет промпта (Batch 3 §8). any — чтобы не тянуть
   // ai-слой в shared/types; реальная форма — PromptPreset из ai/promptPreset.ts.
   promptPreset?: unknown;

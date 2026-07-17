@@ -288,6 +288,9 @@ export function normalizeProject(raw: any): Project {
       imageBaseUrl: typeof ai.imageBaseUrl === 'string' ? ai.imageBaseUrl : undefined,
       imageModel: typeof ai.imageModel === 'string' ? ai.imageModel : undefined,
       summaryConnection: normConnection(ai.summaryConnection),
+      assetSelector: ['main', 'custom', 'local'].includes(ai.assetSelector?.source)
+        ? { source: ai.assetSelector.source, customApi: normConnection(ai.assetSelector.customApi) }
+        : undefined,
       promptPreset: ai.promptPreset && typeof ai.promptPreset === 'object' ? ai.promptPreset : undefined,
     },
     memoryConfig: {
