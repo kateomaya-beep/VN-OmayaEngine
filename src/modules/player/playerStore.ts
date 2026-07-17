@@ -60,9 +60,20 @@ interface PlayerStore {
 
 const AUTOSAVE_SLOT = 0;
 
-// Контроллер текущей генерации (для «Отменить»). Модульная переменная, а не поле
-// стора — чтобы не гонять ре-рендеры и не сериализовать в сейв.
-let currentAbort: AbortController | null = null;
+// Снимок вида сцены, к которому откатываемся при отмене/ошибке хода.
+type PrevView = Pick<PlayerStore, 'visibleBeats' | 'queue' | 'phase' | 'choices' | 'cg'>;
+
+// Текущая генерация в полёте (для «Отменить»/регенерации). Модульная переменная, а не
+// поле стора — чтобы не гонять ре-рендеры и не сериализовать в сейв.
+// `prevView` держим здесь же, чтобы cancel() мог откатить UI МГНОВЕННО, не дожидаясь,
+// пока прервётся сеть и раскрутится промис. `handled` = вид уже восстановлен
+// (оптимистичная отмена) или ход вытеснен новым — тогда catch/успех его не трогают.
+interface InFlight {
+  controller: AbortController;
+  prevView: PrevView;
+  handled: boolean;
+}
+let inFlight: InFlight | null = null;
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
   project: null,
@@ -84,7 +95,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   cancel() {
-    currentAbort?.abort();
+    const cur = inFlight;
+    if (!cur) return;
+    // Оптимистично: возвращаем прошлый вид сцены СРАЗУ (не ждём обрыва сети/раскрутки
+    // промиса). Помечаем ход обработанным, чтобы его catch не перезаписал UI повторно.
+    cur.handled = true;
+    set({ thinking: false, error: null, ...cur.prevView });
+    // Реальный обрыв сетевого запроса — в фоне.
+    cur.controller.abort();
   },
 
   async loadAndStart(projectId, resume, protagonistName = '') {
@@ -305,9 +323,17 @@ async function runAndApply(
   baseState: RuntimeState,
   playerMove: string
 ): Promise<boolean> {
+  // Новый ход вытесняет предыдущий: если что-то ещё в полёте (напр. регенерация
+  // поверх текущей генерации) — сразу абортим его, не дожидаясь завершения. Помечаем
+  // handled, чтобы его catch не тронул UI, который мы сейчас перезапишем своим видом.
+  if (inFlight) {
+    inFlight.handled = true;
+    inFlight.controller.abort();
+  }
+
   // Снимок текущего вида — чтобы вернуть его при отмене/ошибке (последний ответ ИИ
   // и его выборы остаются на экране, как будто хода не было).
-  const prevView = {
+  const prevView: PrevView = {
     visibleBeats: get().visibleBeats,
     queue: get().queue,
     phase: get().phase,
@@ -315,12 +341,17 @@ async function runAndApply(
     cg: get().cg,
   };
   const controller = new AbortController();
-  currentAbort = controller;
+  const self: InFlight = { controller, prevView, handled: false };
+  inFlight = self;
   set({ thinking: true, error: null, choices: [], statFlash: [], queue: [], visibleBeats: [] });
   logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
   try {
     // Обычная (нестриминговая) генерация — один ход целиком, затем показ.
     const { turn, state } = await runTurn(project, baseState, playerMove, controller.signal);
+
+    // Ход вытеснен (отмена/регенерация) пока ждали ответ — результат игнорируем,
+    // UI уже приведён в нужное состояние тем, кто нас вытеснил.
+    if (self.handled) return false;
 
     // Compute stat flashes vs. the pre-turn values.
     const flash: { statId: string; delta: number }[] = [];
@@ -347,11 +378,16 @@ async function runAndApply(
       chapterTitle: turn.chapterEvent === 'chapter_end' ? 'Сюжетная веха' : null,
     });
 
-    // Autosave every turn.
-    await get().save(AUTOSAVE_SLOT, `Автосейв · ход ${state.turnCount}`);
+    // Автосейв — в ФОНЕ: UI уже обновлён, запись на диск не должна его блокировать.
+    // Ошибка записи не откатывает показанное состояние (в худшем случае — тихий лог).
+    void get()
+      .save(AUTOSAVE_SLOT, `Автосейв · ход ${state.turnCount}`)
+      .catch((err) => logEvent('error', 'save', 'Фоновое автосохранение не удалось: ' + (err as Error).message));
     logEvent('info', 'turn', `Ход применён (ход ${state.turnCount}, beats: ${turn.beats.length})`);
     return true;
   } catch (e) {
+    // Ход уже обработан (оптимистичная отмена или вытеснение новым ходом) — не трогаем UI.
+    if (self.handled) return false;
     const aborted = (e as Error)?.name === 'AbortError';
     if (aborted) {
       // Отмена: возвращаем прошлый вид сцены; ошибку не показываем.
@@ -364,6 +400,6 @@ async function runAndApply(
     }
     return false;
   } finally {
-    if (currentAbort === controller) currentAbort = null;
+    if (inFlight === self) inFlight = null;
   }
 }
