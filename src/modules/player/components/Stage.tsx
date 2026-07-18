@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAssetUrl } from '../../../shared/ui';
+import { getAssetUrl } from '../../../storage/assetUrls';
 import type { Project } from '../../../shared/types';
 import { resolveSprite } from '../../../shared/outfits';
 
@@ -70,8 +71,11 @@ function CrossfadeBg({ blobKey }: { blobKey: string | null }) {
   );
 }
 
-// Держит один активный спрайт с fade in/out. При смене говорящего старый плавно
-// уходит, новый появляется; на чистом нарративе (active=null) — уходит в никого.
+// Активный спрайт с КРОССФЕЙДОМ: новый спрайт проявляется ПОВЕРХ старого (два слоя),
+// старый затем удаляется. Персонаж не пропадает в пустоту между сменами эмоций —
+// иначе при частой смене эмоций в сцене спрайт «дёргается» (пропал → появился).
+// URL берём напрямую из кэша getAssetUrl (а не через useAssetUrl, который на кадр
+// отстаёт при смене blobKey и подсунул бы старую картинку в кроссфейд).
 function ActiveSpriteLayer({ project, active }: { project: Project; active: ActiveSprite | null }) {
   const resolve = (a: ActiveSprite | null): { key: string; assetId?: string } => {
     if (!a) return { key: '__none__' };
@@ -84,37 +88,72 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
   };
 
   const target = resolve(active);
-  const [shown, setShown] = useState(target);
-  const [visible, setVisible] = useState(!!target.assetId);
+  const targetBlobKey = target.assetId
+    ? project.assets.find((a) => a.id === target.assetId)?.blobKey || null
+    : null;
+
+  const [layers, setLayers] = useState<{ id: number; url: string; on: boolean }[]>([]);
+  const idRef = useRef(0);
+  const lastKeyRef = useRef('__init__');
 
   useEffect(() => {
-    if (target.key === shown.key) return;
-    // Fade out текущего, затем подмена и fade in нового.
-    setVisible(false);
-    const t = setTimeout(() => {
-      setShown(target);
-      setVisible(!!target.assetId);
-    }, 220);
-    return () => clearTimeout(t);
-  }, [target.key]);
+    if (target.key === lastKeyRef.current) return;
+    lastKeyRef.current = target.key;
+    let cancelled = false;
+    const timers: Array<() => void> = [];
+    const later = (fn: () => void, ms: number) => {
+      const h = setTimeout(fn, ms);
+      timers.push(() => clearTimeout(h));
+    };
 
-  const blobKey = project.assets.find((a) => a.id === shown.assetId)?.blobKey;
-  const url = useAssetUrl(blobKey);
-  if (!shown.assetId || !url) return null;
+    if (!targetBlobKey) {
+      // Уход в нарратив (нет спрайта): плавно гасим верхний слой, затем чистим.
+      setLayers((prev) => prev.map((l) => ({ ...l, on: false })));
+      later(() => !cancelled && setLayers([]), 320);
+    } else {
+      getAssetUrl(targetBlobKey).then((url) => {
+        if (cancelled || !url) return;
+        const id = ++idRef.current;
+        // Добавляем слой выключенным, затем через кадр включаем — чтобы сработал
+        // CSS-переход opacity (кроссфейд поверх предыдущего спрайта).
+        setLayers((prev) => [...prev, { id, url, on: false }].slice(-2));
+        const raf = requestAnimationFrame(() =>
+          requestAnimationFrame(
+            () => !cancelled && setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, on: true } : l)))
+          )
+        );
+        timers.push(() => cancelAnimationFrame(raf));
+        // По завершении кроссфейда оставляем только новый слой.
+        later(() => !cancelled && setLayers((prev) => prev.filter((l) => l.id === id)), 360);
+      });
+    }
+    return () => {
+      cancelled = true;
+      timers.forEach((t) => t());
+    };
+  }, [target.key, targetBlobKey]);
+
+  if (layers.length === 0) return null;
 
   return (
-    // Спрайт прижат к низу и на мобилке (растёт снизу, «врастает» в градиент), крупнее.
-    <div className="absolute inset-0 flex justify-center items-end pointer-events-none">
-      <img
-        src={url}
-        alt=""
-        // Мобилка: крупный спрайт, сдвинут ниже (низ уходит за край/за диалог),
-        // голова остаётся ниже верхней панели. Десктоп — как было.
-        className={`object-contain object-bottom transition-all duration-300 h-[120%] -mb-[62%] max-w-[135%] sm:h-[88%] sm:mb-0 sm:max-w-[46%] ${
-          visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
-        }`}
-      />
-    </div>
+    <>
+      {layers.map((l) => (
+        // Каждый слой — отдельный кадр с той же нормализацией/позицией, что и раньше;
+        // кроссфейд — через opacity обёртки (спрайт прижат к низу, растёт снизу).
+        <div
+          key={l.id}
+          className={`absolute inset-0 flex justify-center items-end pointer-events-none transition-opacity duration-300 ${
+            l.on ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <img
+            src={l.url}
+            alt=""
+            className="object-contain object-bottom h-[120%] -mb-[62%] max-w-[135%] sm:h-[88%] sm:mb-0 sm:max-w-[46%]"
+          />
+        </div>
+      ))}
+    </>
   );
 }
 
