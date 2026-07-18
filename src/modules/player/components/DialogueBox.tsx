@@ -22,6 +22,17 @@ export function DialogueBox({
 
   const fullText = beat?.text ?? '';
 
+  // Сброс СИНХРОННО при смене beat (паттерн «правка стейта во время рендера»). Без
+  // этого первый кадр нового бита рендерится со СТАРЫМ done=true и на миллисекунду
+  // показывает весь markdown целиком, пока после отрисовки не отработает useEffect —
+  // особенно заметно, когда одновременно меняется спрайт (лишний ре-рендер).
+  const [tracked, setTracked] = useState(fullText);
+  if (tracked !== fullText) {
+    setTracked(fullText);
+    setShown('');
+    setDone(false);
+  }
+
   useEffect(() => {
     setShown('');
     setDone(false);
