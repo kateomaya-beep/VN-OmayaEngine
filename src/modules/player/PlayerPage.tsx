@@ -64,11 +64,17 @@ export function PlayerPage() {
   const currentBeat = s.visibleBeats[s.visibleBeats.length - 1] || null;
   // Динамический фон: фон текущего бита (движок протянул его вперёд), иначе — фон хода.
   const bgId = currentBeat?.bg ?? s.state.currentBackgroundId;
-  // Активный говорящий на сцене — только текущий dialogue-beat с characterId (Блок A.1).
-  const active: ActiveSprite | null =
-    currentBeat?.type === 'dialogue' && currentBeat.characterId
-      ? { characterId: currentBeat.characterId, emotion: currentBeat.emotion, outfit: currentBeat.outfit }
-      : null;
+  // Активный спрайт: НЕ гасим его на нарративе/мыслях — держим последнего говорящего
+  // из уже показанных битов, пока не заговорит другой или сцена не сбросит спрайт.
+  // Иначе при чередовании «нарратив ↔ реплика» спрайт мигал бы на каждом бите.
+  let active: ActiveSprite | null = null;
+  for (let i = s.visibleBeats.length - 1; i >= 0; i--) {
+    const b = s.visibleBeats[i];
+    if (b.type === 'dialogue' && b.characterId) {
+      active = { characterId: b.characterId, emotion: b.emotion, outfit: b.outfit };
+      break;
+    }
+  }
   const showChoices = s.phase === 'choices' && !s.thinking && s.choices.length > 0 && !s.cg;
   const canContinue = s.phase === 'choices' && !s.thinking && !s.cg;
 

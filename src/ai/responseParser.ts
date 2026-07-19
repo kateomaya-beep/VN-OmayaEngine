@@ -90,11 +90,13 @@ export function repairBeat(project: Project, b: any): Beat {
     // поэтому эмоцию к «доступным» больше НЕ приводим — сохраняем задумку ИИ.
     let emotion = b.emotion;
     if (!EMOTION_SET.has(emotion)) emotion = 'neutral';
-    // Наряд — открытый тег: валиден только из загруженных для этого персонажа; иначе
-    // дефолтный (который храним как undefined). resolveSprite всё равно подстрахует.
+    // Наряд — открытый тег: сопоставляем БЕЗ учёта регистра к каноничному тегу
+    // персонажа (модель может слегка менять регистр). Дефолтный храним как undefined.
+    // resolveSprite всё равно подстрахует.
     const outfits = characterOutfits(ch);
     const raw = typeof b.outfit === 'string' ? b.outfit.trim() : '';
-    const outfit = raw && outfits.includes(raw) && raw !== defaultOutfitTag(ch) ? raw : undefined;
+    const canon = raw ? outfits.find((o) => o.toLowerCase() === raw.toLowerCase()) : undefined;
+    const outfit = canon && canon !== defaultOutfitTag(ch) ? canon : undefined;
     return { type: 'dialogue', characterId: ch.id, emotion, ...(outfit ? { outfit } : {}), position, text: txt(b.text), bg };
   }
   const name = (b.name || '').trim();

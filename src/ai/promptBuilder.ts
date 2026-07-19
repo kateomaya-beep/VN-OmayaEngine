@@ -129,6 +129,21 @@ Available emotions: ${emo}${outfitLine}`;
   return out;
 }
 
+// Текущие спрайты на сцене с эмоцией и нарядом — чтобы модель вела непрерывность
+// (держала эмоцию/наряд между ходами и меняла осознанно, а не заново угадывала).
+function onScreenState(project: Project, state: RuntimeState): string {
+  if (!state.onScreen.length) return 'nobody';
+  return state.onScreen
+    .map((s) => {
+      const c = project.characters.find((x) => x.id === s.characterId);
+      const name = c?.name || s.characterId;
+      const bits = [`emotion: ${s.emotion}`];
+      if (s.outfit) bits.push(`outfit: ${s.outfit}`);
+      return `${name} (${s.characterId}; ${bits.join(', ')})`;
+    })
+    .join('; ');
+}
+
 function statsState(project: Project, values: Record<string, number>): string {
   if (!project.stats.length) return '(no stats)';
   return project.stats
@@ -289,9 +304,10 @@ export async function buildRequest(
     state: () =>
       `== CURRENT STATE ==\nStats:\n${statsState(project, state.statValues)}\nCurrent background: ${currentBg} (${
         state.currentBackgroundId ?? 'null'
-      })\nMusic mood: ${state.currentMusicMood ?? 'none'}\nOn screen: ${
-        onScreenIds.length ? onScreenIds.join(', ') : 'nobody'
-      }`,
+      })\nMusic mood: ${state.currentMusicMood ?? 'none'}\nOn screen (current emotion & outfit — keep them unless the scene changes): ${onScreenState(
+        project,
+        state
+      )}`,
     memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
     gamemaster: () => gameMasterBlock(state),
   };
