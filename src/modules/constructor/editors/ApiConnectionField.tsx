@@ -4,6 +4,12 @@ import { getApiKey, setApiKey } from '../../../ai/keys';
 import { listModels, testConnection } from '../../../ai/providers';
 import type { ApiConnection } from '../../../shared/types';
 
+// Дефолтный base URL под провайдера (совпадает с providers/index.ts).
+const DEFAULT_BASE: Record<ApiConnection['provider'], string> = {
+  'openai-compatible': 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com/v1',
+};
+
 // Переиспользуемый редактор ApiConnection: provider/baseUrl/model/ключ + автоподгрузка
 // моделей + тест соединения (см. CR v2 §G). keyRole — под какой ролью хранится ключ
 // в localStorage ('summary' | 'embeddings' | 'image' | 'openai-compatible' | 'anthropic').
@@ -59,7 +65,21 @@ export function ApiConnectionField({
           <select
             className="input"
             value={conn.provider}
-            onChange={(e) => onChange({ ...conn, provider: e.target.value as ApiConnection['provider'] })}
+            onChange={(e) => {
+              // Смена провайдера сбрасывает провайдер-специфичные данные, иначе
+              // остаются модели/URL от старого провайдера (баг «показывает старое»).
+              const provider = e.target.value as ApiConnection['provider'];
+              const wasDefault =
+                !conn.baseUrl || Object.values(DEFAULT_BASE).includes(conn.baseUrl.replace(/\/$/, ''));
+              onChange({
+                ...conn,
+                provider,
+                baseUrl: wasDefault ? DEFAULT_BASE[provider] : conn.baseUrl,
+                model: '',
+                availableModels: undefined,
+              });
+              setStatus({ busy: false });
+            }}
           >
             <option value="openai-compatible">OpenAI-совместимый</option>
             <option value="anthropic">Anthropic</option>
