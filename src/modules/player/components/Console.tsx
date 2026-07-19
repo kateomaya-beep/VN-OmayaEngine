@@ -34,11 +34,16 @@ export function Console({
     onSubmit(t);
   };
 
+  const iconBtn =
+    'shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-lg transition-colors border';
+  const iconIdle =
+    'text-[#d6cdf0] bg-white/[0.04] border-[rgba(180,150,255,0.22)] hover:bg-[rgba(160,110,255,0.16)] hover:border-[rgba(190,150,255,0.5)]';
+
   return (
-    <div className="px-4 sm:px-6 pt-1 pb-3">
-      <div className="max-w-4xl mx-auto flex items-center gap-2">
+    <div className="bg-[rgba(14,12,22,0.62)] backdrop-blur-lg border-t border-[rgba(180,150,255,0.14)] px-3 sm:px-4 pt-3 pb-4">
+      <div className="max-w-4xl mx-auto flex items-center gap-2.5">
         <button
-          className="shrink-0 text-gray-500 hover:text-gray-300 text-lg px-1"
+          className={`${iconBtn} ${iconIdle}`}
           title={SLASH_HELP}
           onMouseEnter={() => setShowHelp(true)}
           onMouseLeave={() => setShowHelp(false)}
@@ -46,14 +51,18 @@ export function Console({
           /
         </button>
         <button
-          className={`shrink-0 text-lg px-1 ${hasNotes ? 'text-accent2' : 'text-gray-500 hover:text-gray-300'}`}
+          className={`${iconBtn} ${
+            hasNotes
+              ? 'text-[#1c1526] bg-[rgba(177,140,255,0.9)] border-transparent shadow-[0_0_12px_rgba(177,140,255,0.4)]'
+              : iconIdle
+          }`}
           title="Авторские заметки для ИИ"
           onClick={onOpenNotes}
         >
           📝
         </button>
         <input
-          className="input flex-1 bg-black/70"
+          className="flex-1 rounded-[14px] px-4 py-2.5 text-[13.5px] outline-none text-[#f0ecfa] bg-white/[0.05] border border-[rgba(180,150,255,0.25)] focus:border-[rgba(190,150,255,0.7)] disabled:opacity-50"
           placeholder="Ваши слова или действие героя… ( / — команды)"
           value={value}
           disabled={disabled}
@@ -61,13 +70,17 @@ export function Console({
           onKeyDown={(e) => e.key === 'Enter' && send()}
         />
         {value.trim() ? (
-          <button className="btn-primary shrink-0" disabled={disabled} onClick={send}>
+          <button
+            className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-[#1c1526] bg-gradient-to-b from-[#d3b8ff] to-[#b18cff] shadow-[0_0_16px_rgba(177,140,255,0.5),inset_0_1px_0_rgba(255,255,255,0.4)] disabled:opacity-40"
+            disabled={disabled}
+            onClick={send}
+          >
             →
           </button>
         ) : (
           canContinue && (
             <button
-              className="btn-ghost shrink-0"
+              className={`${iconBtn} ${iconIdle}`}
               disabled={disabled}
               onClick={onContinue}
               title="Продолжить историю"
@@ -78,7 +91,7 @@ export function Console({
         )}
       </div>
       {showHelp && (
-        <div className="max-w-4xl mx-auto text-[11px] text-gray-500 mt-1 px-6">{SLASH_HELP}</div>
+        <div className="max-w-4xl mx-auto text-[11px] text-[#c9c3de]/60 mt-2 px-1">{SLASH_HELP}</div>
       )}
     </div>
   );

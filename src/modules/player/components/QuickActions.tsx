@@ -63,7 +63,7 @@ export function QuickActions({ open, onClose }: { open: boolean; onClose: () => 
 
   return (
     <div
-      className="absolute top-14 right-3 z-30 w-80 card !bg-black/85 backdrop-blur"
+      className="absolute top-14 right-3 z-30 w-80 glass-panel p-4"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between mb-3">

@@ -66,16 +66,19 @@ export function Modal({
   // тонкой шапке и обрезаются (см. правку «модальные окна ускакивают вверх»).
   return createPortal(
     <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-start sm:items-center justify-center p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-[rgba(6,5,12,0.72)] backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className={`card w-full my-auto ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto scrollbar-thin`}
+        className={`glass-panel p-4 sm:p-5 w-full my-auto ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto scrollbar-thin`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold text-lg">{title}</h3>
-          <button className="btn-ghost !px-2 !py-1" onClick={onClose}>
+          <h3 className="font-brand font-extrabold text-lg text-[#f5f2fc]">{title}</h3>
+          <button
+            className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[#d6cdf0] bg-white/[0.04] border border-[rgba(180,150,255,0.22)] hover:bg-[rgba(160,110,255,0.16)] hover:border-[rgba(190,150,255,0.5)] transition-colors"
+            onClick={onClose}
+          >
             ✕
           </button>
         </div>

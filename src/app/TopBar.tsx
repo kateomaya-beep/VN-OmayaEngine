@@ -198,9 +198,21 @@ export function TopBarControls({
 
   const inPlayer = variant === 'player';
 
+  const langBtn = (
+    <IconBtn
+      title={L(`Язык интерфейса: ${lang === 'ru' ? 'сменить на English' : 'switch to Русский'}`, `UI language: switch to ${lang === 'en' ? 'Русский' : 'English'}`)}
+      onClick={() => setLang(lang === 'ru' ? 'en' : 'ru')}
+    >
+      {Icons.lang}
+    </IconBtn>
+  );
+
   return (
     <>
-      {/* Порядок: Пресет · API · [в игре: GM · Расширения] · Логи · Язык */}
+      {/* Порядок app: Пресет · API · Логи · Язык.
+          Порядок player: Язык · Пресет · API · GM · Расширения · Логи (бургер идёт
+          последним из PlayerPage) — язык и бургер переставлены местами (импорт «VN Player»). */}
+      {inPlayer && langBtn}
       <IconBtn title={L('Пресет промпта', 'Prompt preset')} onClick={() => setPresetOpen(true)}>
         {Icons.preset}
       </IconBtn>
@@ -220,12 +232,7 @@ export function TopBarControls({
       <IconBtn title={L('Логи (события и ошибки)', 'Logs (events & errors)')} onClick={() => setLogsOpen(true)} badge={errorCount}>
         {Icons.logs}
       </IconBtn>
-      <IconBtn
-        title={L(`Язык интерфейса: ${lang === 'ru' ? 'сменить на English' : 'switch to Русский'}`, `UI language: switch to ${lang === 'en' ? 'Русский' : 'English'}`)}
-        onClick={() => setLang(lang === 'ru' ? 'en' : 'ru')}
-      >
-        {Icons.lang}
-      </IconBtn>
+      {!inPlayer && langBtn}
 
       <ConnectionPanel open={connOpen} onClose={() => setConnOpen(false)} />
       <PresetPanel open={presetOpen} onClose={() => setPresetOpen(false)} />

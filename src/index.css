@@ -42,13 +42,26 @@ body {
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed;
   }
+  /* Основная кнопка — фиолетовый неон-градиент (импорт дизайна «VN Player»). */
   .btn-primary {
-    @apply btn bg-accent text-white hover:bg-pink-500;
+    @apply btn font-semibold;
+    color: #1c1526;
+    background: linear-gradient(155deg, #d3b8ff, #b18cff);
+    box-shadow: 0 4px 16px rgba(177, 140, 255, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  }
+  .btn-primary:not(:disabled):hover {
+    filter: brightness(1.06);
   }
   .btn-ghost {
-    @apply btn bg-panel2 text-gray-200 hover:bg-white/10;
+    @apply btn text-gray-200;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(180, 150, 255, 0.22);
+  }
+  .btn-ghost:not(:disabled):hover {
+    background: rgba(160, 110, 255, 0.16);
+    border-color: rgba(190, 150, 255, 0.5);
   }
   .btn-danger {
     @apply btn bg-red-600/80 text-white hover:bg-red-600;
@@ -56,14 +69,29 @@ body {
   .card {
     @apply rounded-xl bg-panel border border-white/5 p-4;
   }
+  /* Стеклянная панель окон (модалки/поповеры плеера) — импорт дизайна «VN Player». */
+  .glass-panel {
+    border-radius: 20px;
+    background: rgba(16, 13, 24, 0.9);
+    border: 1px solid rgba(180, 150, 255, 0.2);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(180, 150, 255, 0.05);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    backdrop-filter: blur(20px) saturate(150%);
+  }
   .input {
-    @apply w-full rounded-lg bg-ink border border-white/10 px-3 py-2 text-sm outline-none focus:border-accent2;
+    @apply w-full rounded-xl bg-ink px-3 py-2 text-sm outline-none transition-colors;
+    border: 1px solid rgba(180, 150, 255, 0.25);
+  }
+  .input:focus {
+    border-color: rgba(190, 150, 255, 0.7);
   }
   .label {
     @apply block text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1;
   }
   .chip {
-    @apply inline-flex items-center gap-1 rounded-full bg-panel2 px-2.5 py-0.5 text-xs;
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(180, 150, 255, 0.22);
   }
 }
 

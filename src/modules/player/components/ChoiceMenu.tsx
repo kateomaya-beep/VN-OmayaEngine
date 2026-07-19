@@ -25,10 +25,10 @@ export function ChoiceMenu({
               key={c.id}
               disabled={!affordable}
               onClick={() => onChoose(c)}
-              className={`w-full text-left px-5 py-2.5 rounded-xl border transition-all ${
+              className={`w-full text-left px-5 py-2.5 rounded-[14px] border backdrop-blur-md transition-all ${
                 c.cost
-                  ? 'bg-gradient-to-r from-amber-500/20 to-accent/20 border-amber-400/40 hover:border-amber-400'
-                  : 'bg-black/70 border-white/10 hover:border-accent2 hover:bg-accent2/10'
+                  ? 'bg-gradient-to-r from-amber-500/20 to-[rgba(177,140,255,0.2)] border-amber-400/40 hover:border-amber-400'
+                  : 'bg-[rgba(16,13,24,0.7)] border-[rgba(180,150,255,0.22)] hover:border-[rgba(190,150,255,0.6)] hover:bg-[rgba(160,110,255,0.14)]'
               } disabled:opacity-40`}
             >
               <InlineMarkdown text={c.text} />

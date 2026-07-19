@@ -16,7 +16,6 @@ import { AuthorNotesPanel } from './components/AuthorNotesPanel';
 import { SaveLoadPanel } from './components/Panels';
 import { useT } from '../../shared/i18n';
 import { TopBar } from '../../app/TopBar';
-import { formatClock } from '../../ai/gameMaster';
 
 type Setup = 'launch' | 'play';
 
@@ -72,10 +71,10 @@ export function PlayerPage() {
         variant="player"
         project={s.project}
         onPatchProject={s.patchProject}
-        menuSlot={
+        right={
           <div className="relative">
             <button
-              className="bg-black/40 hover:bg-black/60 rounded-lg px-3 py-1.5 text-sm"
+              className="w-[34px] h-[34px] rounded-[10px] flex items-center justify-center text-[#e5deF7] transition-colors bg-white/[0.04] border border-[rgba(180,150,255,0.22)] hover:bg-[rgba(160,110,255,0.16)] hover:border-[rgba(190,150,255,0.55)] hover:shadow-[0_0_12px_rgba(170,120,255,0.35)]"
               title="Меню игры"
               onClick={() => setMenuOpen((v) => !v)}
             >
@@ -85,7 +84,7 @@ export function PlayerPage() {
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
                 <div
-                  className="absolute right-0 mt-1 z-40 w-48 rounded-lg bg-panel border border-white/10 shadow-xl py-1 text-sm"
+                  className="absolute right-0 mt-1.5 z-40 w-52 rounded-[14px] py-1.5 text-sm bg-[rgba(16,13,24,0.92)] border border-[rgba(180,150,255,0.2)] shadow-[0_20px_60px_rgba(0,0,0,0.6)] backdrop-blur-xl"
                   onClick={() => setMenuOpen(false)}
                 >
                   {/* Отношения/память/история переехали в Game Master (🎮) на верхней панели. */}
@@ -102,14 +101,8 @@ export function PlayerPage() {
         }
       />
 
+      {/* HUD: календарь/локация + статы — единая стеклянная плашка (StatsHUD). */}
       <StatsHUD project={s.project} state={s.state} flash={s.statFlash} />
-
-      {/* Внутриигровые часы/дата (вынесены галочкой в Game Master → Календарь). */}
-      {s.state.gm.showClockInGame && formatClock(s.state.gm.clock) && (
-        <div className="absolute top-16 right-3 z-10 bg-black/55 backdrop-blur rounded-lg px-3 py-1.5 text-sm text-gray-100">
-          🗓 {formatClock(s.state.gm.clock)}
-        </div>
-      )}
 
       <Mixer open={mixerOpen} onClose={() => setMixerOpen(false)} />
       <QuickActions open={genOpen} onClose={() => setGenOpen(false)} />
@@ -219,7 +212,7 @@ function MenuItem({
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 text-left"
+      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-[rgba(160,110,255,0.16)] text-left"
     >
       <span className="w-5 text-center">{icon}</span>
       <span>{label}</span>

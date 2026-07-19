@@ -11,7 +11,7 @@ export function Mixer({ open, onClose }: { open: boolean; onClose: () => void })
 
   return (
     <div
-      className="absolute top-14 right-3 z-30 w-72 card !bg-black/85 backdrop-blur"
+      className="absolute top-14 right-3 z-30 w-72 glass-panel p-4"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between mb-3">
