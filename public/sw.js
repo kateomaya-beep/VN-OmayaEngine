@@ -2,7 +2,7 @@
 // окно без браузерной обвязки) и даёт офлайн-режим. Кэширует только свои ассеты;
 // запросы к сторонним API (провайдеры ИИ) НЕ трогает и НЕ кэширует.
 
-const CACHE = 'nf-cache-v1';
+const CACHE = 'nf-cache-v2';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -25,6 +25,12 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   // Чужие домены (эндпоинты ИИ, картинки-провайдеры и т.п.) — мимо кэша.
   if (url.origin !== self.location.origin) return;
+
+  // Внутренние ДИНАМИЧЕСКИЕ эндпоинты лаунчера — НИКОГДА не кэшировать. Особенно
+  // /__proxy: адрес провайдера сидит в заголовке x-target-url, а URL у всех запросов
+  // один (/__proxy), поэтому cache-first по URL отдавал бы первый же ответ /models
+  // (напр. список Gemini) для ЛЮБОГО провайдера. /__data — файловое API (сейвы/ассеты).
+  if (url.pathname.startsWith('/__proxy') || url.pathname.startsWith('/__data')) return;
 
   // Навигации — network-first, при офлайне отдаём кэшированную оболочку.
   if (req.mode === 'navigate') {
