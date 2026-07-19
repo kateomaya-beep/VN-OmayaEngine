@@ -35,17 +35,16 @@ export function ApiConnectionField({
     setStatus({ busy: true });
     try {
       const models = await listModels(conn, key);
-      // Если текущая модель отсутствует у провайдера (частый кейс: остался дефолтный
-      // gpt-4o-mini, а провайдер другой) — авто-выбираем первую из списка, чтобы
-      // генерация не падала с «model not found».
-      const model = conn.model && models.includes(conn.model) ? conn.model : models[0] || conn.model;
+      // НЕ затираем уже выбранную/вписанную модель (провайдер может отдавать не весь
+      // список). Автоподставляем первую только если модель ещё не задана.
+      const model = conn.model || models[0] || '';
       onChange({ ...conn, availableModels: models, model });
       setStatus({
         busy: false,
         ok: true,
-        msg:
-          `${models.length} моделей` +
-          (model && model !== conn.model ? ` · выбрана «${model}»` : ''),
+        msg: `${models.length} моделей подтянуто${
+          model && !models.includes(model) ? ` · текущая «${model}» не в списке (оставлена)` : ''
+        }`,
       });
     } catch (e) {
       setStatus({ busy: false, ok: false, msg: (e as Error).message });
@@ -93,29 +92,37 @@ export function ApiConnectionField({
           onChange={(e) => onChange({ ...conn, baseUrl: e.target.value })}
         />
       </Field>
-      <Field label="Модель">
+      <Field
+        label="Модель"
+        hint={
+          conn.availableModels?.length
+            ? `Подтянуто ${conn.availableModels.length} — можно выбрать из списка ИЛИ вписать любую модель вручную (если провайдер отдаёт не все).`
+            : 'Нажмите ⟳ чтобы подтянуть список, либо впишите модель вручную.'
+        }
+      >
         <div className="flex gap-2">
+          {/* Свободный ввод + подсказки из подтянутого списка (datalist): даже если
+              провайдер вернул не все модели, нужную можно вписать руками. */}
+          <input
+            className="input flex-1"
+            list={`models-${keyRole}`}
+            value={conn.model || ''}
+            placeholder="напр. gpt-4o, claude-…, deepseek-chat"
+            onChange={(e) => onChange({ ...conn, model: e.target.value })}
+          />
           {conn.availableModels?.length ? (
-            <select
-              className="input flex-1"
-              value={conn.model || ''}
-              onChange={(e) => onChange({ ...conn, model: e.target.value })}
-            >
-              <option value="">— выбрать —</option>
+            <datalist id={`models-${keyRole}`}>
               {conn.availableModels.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
+                <option key={m} value={m} />
               ))}
-            </select>
-          ) : (
-            <input
-              className="input flex-1"
-              value={conn.model || ''}
-              onChange={(e) => onChange({ ...conn, model: e.target.value })}
-            />
-          )}
-          <button className="btn-ghost !px-2 text-xs" disabled={status.busy} onClick={refreshModels}>
+            </datalist>
+          ) : null}
+          <button
+            className="btn-ghost !px-2 text-xs"
+            disabled={status.busy}
+            onClick={refreshModels}
+            title="Подтянуть список моделей"
+          >
             ⟳
           </button>
         </div>

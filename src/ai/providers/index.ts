@@ -134,8 +134,7 @@ const openAiCompatible: Provider = {
     const res = await netFetch(`${base}/models`, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}`);
     const data = await res.json();
-    const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
-    return list.map((m: any) => m.id || m.name).filter((id: unknown) => typeof id === 'string').sort();
+    return parseModelList(data);
   },
 };
 
@@ -170,10 +169,30 @@ const anthropic: Provider = {
     const res = await netFetch(`${base}/models`, { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } });
     if (!res.ok) throw new Error(`Провайдер вернул ${res.status}`);
     const data = await res.json();
-    const list = Array.isArray(data?.data) ? data.data : [];
-    return list.map((m: any) => m.id).filter((id: unknown) => typeof id === 'string').sort();
+    return parseModelList(data);
   },
 };
+
+// Терпимый разбор ответа /models: разные обёртки (data / models / result / сам массив)
+// и разные поля идентификатора (id / name / model / slug / строка). Дедуп + сортировка.
+// Так список не «теряет» модели из-за нестандартной формы ответа провайдера.
+function parseModelList(data: any): string[] {
+  const list: any[] = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.models)
+        ? data.models
+        : Array.isArray(data?.result)
+          ? data.result
+          : Array.isArray(data?.data?.models)
+            ? data.data.models
+            : [];
+  const ids = list
+    .map((m) => (typeof m === 'string' ? m : m?.id || m?.name || m?.model || m?.slug))
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  return Array.from(new Set(ids)).sort();
+}
 
 export function getProvider(name: ApiConnection['provider']): Provider {
   return name === 'anthropic' ? anthropic : openAiCompatible;
