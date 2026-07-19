@@ -14,6 +14,8 @@ import { EditPanel } from './components/EditPanel';
 import { HistoryPanel } from './components/HistoryPanel';
 import { AuthorNotesPanel } from './components/AuthorNotesPanel';
 import { SaveLoadPanel } from './components/Panels';
+import { WorkshopPanel } from './components/WorkshopPanel';
+import { usePlayerTheme, themeVars, ensureFontLink } from './playerTheme';
 import { useT } from '../../shared/i18n';
 import { TopBar } from '../../app/TopBar';
 
@@ -29,12 +31,20 @@ export function PlayerPage() {
   const [genOpen, setGenOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [workshopOpen, setWorkshopOpen] = useState(false);
   // Экран запуска (Batch 5.2): Продолжить / Загрузить / Новая история.
   const [setup, setSetup] = useState<Setup>('launch');
+  // Оформление плеера (мини-мастерская): акцент/шрифт/размер — только для игры.
+  const theme = usePlayerTheme((st) => st.theme);
 
   useEffect(() => {
     return () => stopAllMusic();
   }, [projectId]);
+
+  // Подгружаем сохранённый шрифт при входе в плеер / смене ссылки.
+  useEffect(() => {
+    ensureFontLink(theme.fontUrl);
+  }, [theme.fontUrl]);
 
   if (setup === 'launch') {
     if (!projectId) return null;
@@ -62,7 +72,7 @@ export function PlayerPage() {
   const canContinue = s.phase === 'choices' && !s.thinking && !s.cg;
 
   return (
-    <div className="fixed inset-0 bg-black text-white overflow-hidden">
+    <div className="fixed inset-0 bg-black text-white overflow-hidden" style={themeVars(theme)}>
       <Stage project={s.project} backgroundId={bgId} active={active} cg={s.cg} />
 
       {/* Постоянная верхняя панель (общая с главным экраном) + игровое бургер-меню.
@@ -91,7 +101,8 @@ export function PlayerPage() {
                   <MenuItem icon="📜" label="История" onClick={() => setPanel('history')} />
                   <MenuItem icon="💾" label={t('player.saves')} onClick={() => setPanel('saves')} />
                   <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
-                  <MenuItem icon="🎨" label="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
+                  <MenuItem icon="🎨" label="Оформление" onClick={() => setWorkshopOpen(true)} />
+                  <MenuItem icon="🖼" label="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
                   <MenuItem icon="✎" label="Правка в игре" onClick={() => setPanel('edit')} />
                   <MenuItem icon="↻" label={t('player.regen')} onClick={() => s.regenerate()} />
                 </div>
@@ -127,7 +138,7 @@ export function PlayerPage() {
       {s.thinking && (
         <div className="absolute inset-x-0 bottom-28 flex justify-center z-20">
           <div className="bg-black/70 rounded-full pl-4 pr-2 py-2 text-sm flex items-center gap-2">
-            <span className="inline-block w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            <span className="inline-block w-3 h-3 border-2 border-[var(--pl-accent)] border-t-transparent rounded-full animate-spin" />
             {t('player.thinking')}
             <button
               className="ml-1 rounded-full bg-white/10 hover:bg-white/20 px-2.5 py-1 text-xs"
@@ -196,6 +207,7 @@ export function PlayerPage() {
       <HistoryPanel open={panel === 'history'} onClose={() => setPanel(null)} />
       <AuthorNotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} />
       <SaveLoadPanel open={panel === 'saves'} onClose={() => setPanel(null)} />
+      <WorkshopPanel open={workshopOpen} onClose={() => setWorkshopOpen(false)} />
     </div>
   );
 }

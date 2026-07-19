@@ -77,12 +77,15 @@ export function DialogueBox({
     <div className="px-4 sm:px-6 cursor-pointer select-none" onClick={handleClick}>
       <div className="max-w-4xl mx-auto">
         {speaker && (
-          <div className="inline-block px-4 py-1.5 rounded-t-[10px] font-bold text-[12px] tracking-[0.3px] text-[#1c1526] bg-[rgba(177,140,255,0.92)] shadow-[0_0_16px_rgba(177,140,255,0.5)]">
+          <div className="inline-block px-4 py-1.5 rounded-t-[10px] font-bold text-[12px] tracking-[0.3px] text-[#1c1526] bg-[var(--pl-accent)] shadow-[0_0_16px_var(--pl-accent-glow)]">
             {speaker}
           </div>
         )}
         <div className="rounded-[4px_18px_18px_18px] p-5 min-h-[6rem] bg-[rgba(16,13,24,0.72)] border border-[rgba(180,150,255,0.18)] shadow-[0_10px_30px_rgba(0,0,0,0.4)] backdrop-blur-lg">
-          <div className={`text-[15px] leading-[1.6] text-[#f0ecfa] md-content ${isThought ? 'italic text-[#e9e2fb]' : ''}`}>
+          <div
+            className={`leading-[1.6] text-[#f0ecfa] md-content ${isThought ? 'italic text-[#e9e2fb]' : ''}`}
+            style={{ fontSize: 'calc(15px * var(--pl-font-scale, 1))' }}
+          >
             {/* Во время тайпрайтера — обычный текст; по завершении — безопасный markdown. */}
             {done ? (
               <Markdown text={fullText} />
@@ -94,7 +97,7 @@ export function DialogueBox({
             )}
           </div>
           {done && hasMore && (
-            <div className="text-right text-accent2 text-sm mt-2 animate-pulse">▼ далее</div>
+            <div className="text-right text-[var(--pl-accent-bright)] text-sm mt-2 animate-pulse">▼ далее</div>
           )}
         </div>
       </div>
