@@ -105,6 +105,50 @@ function requireModel(model: string | undefined): string {
   return model;
 }
 
+// Человекочитаемая ошибка HTTP от провайдера. Тело часто — HTML-страница шлюза
+// (nginx 504 и т.п.); её НЕ вываливаем сырьём, а даём короткое понятное объяснение
+// по коду статуса. `bodyText` — уже прочитанный текст ответа (может быть пустым).
+const HTTP_HINTS: Record<number, string> = {
+  400: 'некорректный запрос — возможно, провайдер не принимает какие-то параметры (префилл/размышление в пресете) или имя модели.',
+  401: 'неверный или отсутствующий API-ключ.',
+  403: 'доступ запрещён (ключ, модель или регион недоступны).',
+  404: 'не найдено — проверьте Base URL и имя модели.',
+  408: 'таймаут запроса на стороне провайдера.',
+  413: 'слишком большой запрос — уменьшите контекст/«Живое окно».',
+  429: 'слишком много запросов (rate limit) — подождите немного и повторите.',
+  500: 'внутренняя ошибка сервера провайдера.',
+  502: 'плохой шлюз (Bad Gateway) — временный сбой на стороне провайдера.',
+  503: 'сервис недоступен (перегрузка/обслуживание) — попробуйте позже.',
+  504: 'сервер провайдера не ответил вовремя (Gateway Time-out) — модель перегружена или слишком медленная.',
+};
+const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
+
+function htmlToText(s: string): string {
+  const t = (s || '').trim();
+  if (!t) return '';
+  if (!/<[a-z!/]/i.test(t)) return t.slice(0, 300);
+  const title = /<title[^>]*>([^<]+)<\/title>/i.exec(t)?.[1];
+  if (title) return title.trim();
+  return t
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+}
+
+function providerHttpError(status: number, bodyText: string): Error {
+  const hint = HTTP_HINTS[status];
+  if (hint) {
+    const tail = RETRYABLE.has(status)
+      ? ' Нажмите «Повторить»; если повторяется — возьмите модель побыстрее или уменьшите контекст.'
+      : '';
+    return new Error(`Провайдер вернул ${status}: ${hint}${tail}`);
+  }
+  const detail = htmlToText(bodyText);
+  return new Error(`Провайдер вернул ${status}${detail ? `: ${detail}` : ''}`);
+}
+
 const openAiCompatible: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
@@ -123,7 +167,7 @@ const openAiCompatible: Provider = {
         ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
       }),
     });
-    if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 600)}`);
+    if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => ''));
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
     if (typeof content !== 'string') throw new Error('Пустой ответ провайдера');
@@ -132,7 +176,7 @@ const openAiCompatible: Provider = {
   async listModels(conn, apiKey) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
     const res = await netFetch(`${base}/models`, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
-    if (!res.ok) throw new Error(`Провайдер вернул ${res.status}`);
+    if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => ''));
     const data = await res.json();
     return parseModelList(data);
   },
@@ -158,7 +202,7 @@ const anthropic: Provider = {
       },
       body: JSON.stringify({ model, max_tokens: req.maxTokens || 4096, temperature: req.temperature, system: req.system, messages }),
     });
-    if (!res.ok) throw new Error(`Провайдер вернул ${res.status}: ${(await res.text().catch(() => '')).slice(0, 600)}`);
+    if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => ''));
     const data = await res.json();
     const content = data?.content?.[0]?.text;
     if (typeof content !== 'string') throw new Error('Пустой ответ провайдера');
@@ -167,7 +211,7 @@ const anthropic: Provider = {
   async listModels(conn, apiKey) {
     const base = (conn.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
     const res = await netFetch(`${base}/models`, { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } });
-    if (!res.ok) throw new Error(`Провайдер вернул ${res.status}`);
+    if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => ''));
     const data = await res.json();
     return parseModelList(data);
   },
