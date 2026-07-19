@@ -83,6 +83,7 @@ export function themeVars(t: PlayerTheme): CSSProperties {
     '--pl-italic': t.italicColor,
     '--pl-cal': t.calendarColor,
     '--pl-font-scale': String(t.fontScale),
+    '--pl-name-scale': String(t.nameScale),
     ...(t.fontFamily ? { fontFamily: `'${t.fontFamily}', 'Inter', system-ui, sans-serif` } : {}),
   } as CSSProperties;
 }

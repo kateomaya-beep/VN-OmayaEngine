@@ -333,11 +333,28 @@ export function WorkshopPanel({
           className="w-full accent-[var(--pl-accent,#b18cff)]"
         />
 
+        {/* Размер имени */}
+        <label className="label mt-4">
+          {L('Размер имени', 'Name size')}: {Math.round(theme.nameScale * 100)}%
+        </label>
+        <input
+          type="range"
+          min={0.8}
+          max={1.6}
+          step={0.05}
+          value={theme.nameScale}
+          onChange={(e) => set({ nameScale: Number(e.target.value) })}
+          className="w-full accent-[var(--pl-accent,#b18cff)]"
+        />
+
         {/* Живой предпросмотр (реплика + обычный и премиум выборы) */}
         <div className="label mt-5">{L('Предпросмотр', 'Preview')}</div>
         <div className="rounded-xl overflow-hidden border border-white/10">
           <div className="p-4 bg-gradient-to-b from-[#241d33] to-[#0a0912]">
-            <div className="inline-block px-4 py-1.5 rounded-t-[10px] font-bold text-[12px] tracking-[0.3px] text-[var(--pl-name)] bg-[var(--pl-accent)] shadow-[0_0_16px_var(--pl-accent-glow)]">
+            <div
+              className="inline-block px-4 py-1.5 rounded-t-[10px] font-bold tracking-[0.3px] text-[var(--pl-name)] bg-[var(--pl-accent)] shadow-[0_0_16px_var(--pl-accent-glow)]"
+              style={{ fontSize: 'calc(12px * var(--pl-name-scale, 1))' }}
+            >
               {L('Ноэль', 'Noel')}
             </div>
             <div className="rounded-[4px_18px_18px_18px] p-4 border border-[rgba(180,150,255,0.18)] bg-[var(--pl-bubble-bg)] backdrop-blur-lg">

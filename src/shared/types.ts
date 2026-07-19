@@ -333,6 +333,7 @@ export interface PlayerTheme {
   fontUrl: string; // ссылка на таблицу стилей шрифта (Google Fonts и т.п.), опц.
   fontFamily: string; // CSS font-family, опц.
   fontScale: number; // множитель размера читаемого текста (0.8–1.6)
+  nameScale: number; // множитель размера имени говорящего (0.8–1.6)
 }
 
 export const DEFAULT_PLAYER_THEME: PlayerTheme = {
@@ -351,6 +352,7 @@ export const DEFAULT_PLAYER_THEME: PlayerTheme = {
   fontUrl: '',
   fontFamily: '',
   fontScale: 1,
+  nameScale: 1,
 };
 
 // Санитизация частичной/битой темы (импорт проекта, старый глобальный конфиг) → полная.
@@ -376,6 +378,7 @@ export function normalizePlayerTheme(p: unknown): PlayerTheme {
     fontUrl: strOr(o.fontUrl, ''),
     fontFamily: strOr(o.fontFamily, ''),
     fontScale: numIn(o.fontScale, 1, 0.6, 2),
+    nameScale: numIn(o.nameScale, 1, 0.6, 2),
   };
 }
 

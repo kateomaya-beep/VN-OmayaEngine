@@ -77,7 +77,10 @@ export function DialogueBox({
     <div className="px-4 sm:px-6 cursor-pointer select-none" onClick={handleClick}>
       <div className="max-w-4xl mx-auto">
         {speaker && (
-          <div className="inline-block px-4 py-1.5 rounded-t-[10px] font-bold text-[12px] tracking-[0.3px] text-[var(--pl-name)] bg-[var(--pl-accent)] shadow-[0_0_16px_var(--pl-accent-glow)]">
+          <div
+            className="inline-block px-4 py-1.5 rounded-t-[10px] font-bold tracking-[0.3px] text-[var(--pl-name)] bg-[var(--pl-accent)] shadow-[0_0_16px_var(--pl-accent-glow)]"
+            style={{ fontSize: 'calc(12px * var(--pl-name-scale, 1))' }}
+          >
             {speaker}
           </div>
         )}

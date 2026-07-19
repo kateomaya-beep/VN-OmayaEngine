@@ -149,7 +149,7 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
           <img
             src={l.url}
             alt=""
-            className="object-contain object-bottom h-[112%] -mb-[66%] max-w-[122%] sm:h-[82%] sm:-mb-[3%] sm:max-w-[42%]"
+            className="object-contain object-bottom h-[118%] -mb-[60%] max-w-[130%] sm:h-[88%] sm:mb-[2%] sm:max-w-[46%]"
           />
         </div>
       ))}
