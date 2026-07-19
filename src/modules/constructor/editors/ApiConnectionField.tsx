@@ -96,27 +96,33 @@ export function ApiConnectionField({
         label="Модель"
         hint={
           conn.availableModels?.length
-            ? `Подтянуто ${conn.availableModels.length} — можно выбрать из списка ИЛИ вписать любую модель вручную (если провайдер отдаёт не все).`
+            ? `Выберите из списка (${conn.availableModels.length}) ИЛИ впишите вручную ниже — если провайдер отдаёт не все.`
             : 'Нажмите ⟳ чтобы подтянуть список, либо впишите модель вручную.'
         }
       >
+        {/* Строка 1 — выбор из подтянутого списка (если он есть). */}
+        {conn.availableModels?.length ? (
+          <select
+            className="input mb-2"
+            value={conn.availableModels.includes(conn.model || '') ? conn.model : ''}
+            onChange={(e) => e.target.value && onChange({ ...conn, model: e.target.value })}
+          >
+            <option value="">— выбрать из списка ({conn.availableModels.length}) —</option>
+            {conn.availableModels.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        {/* Строка 2 — ручной ввод + кнопка обновления списка. */}
         <div className="flex gap-2">
-          {/* Свободный ввод + подсказки из подтянутого списка (datalist): даже если
-              провайдер вернул не все модели, нужную можно вписать руками. */}
           <input
             className="input flex-1"
-            list={`models-${keyRole}`}
             value={conn.model || ''}
-            placeholder="напр. gpt-4o, claude-…, deepseek-chat"
+            placeholder="или впишите вручную: gpt-4o, claude-…, deepseek-chat"
             onChange={(e) => onChange({ ...conn, model: e.target.value })}
           />
-          {conn.availableModels?.length ? (
-            <datalist id={`models-${keyRole}`}>
-              {conn.availableModels.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-          ) : null}
           <button
             className="btn-ghost !px-2 text-xs"
             disabled={status.busy}
