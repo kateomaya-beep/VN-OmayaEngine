@@ -10,6 +10,9 @@ export interface ActiveSprite {
   outfit?: string;
 }
 
+// Длительность кроссфейда спрайта (мс). Мягкий ease-in-out поверх предекода картинки.
+const FADE_MS = 420;
+
 // Сцена (CR v2 §A): фон с кроссфейдом + МАКСИМУМ один активный говорящий +
 // нижний градиент-затемнение + нормализация размеров + CG-оверлей.
 export function Stage({
@@ -109,22 +112,33 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
     if (!targetBlobKey) {
       // Уход в нарратив (нет спрайта): плавно гасим верхний слой, затем чистим.
       setLayers((prev) => prev.map((l) => ({ ...l, on: false })));
-      later(() => !cancelled && setLayers([]), 320);
+      later(() => !cancelled && setLayers([]), FADE_MS + 40);
     } else {
-      getAssetUrl(targetBlobKey).then((url) => {
+      getAssetUrl(targetBlobKey).then(async (url) => {
         if (cancelled || !url) return;
+        // ПРЕДЕКОД: дожидаемся готовности картинки в памяти, чтобы фейд не спотыкался
+        // о декодирование в главном потоке в первый же кадр перехода (главная причина
+        // рывка). decode() может отклониться — тогда просто продолжаем.
+        try {
+          const im = new Image();
+          im.src = url;
+          await im.decode();
+        } catch {
+          /* всё равно продолжаем — картинка отрисуется, просто без предекода */
+        }
+        if (cancelled) return;
         const id = ++idRef.current;
-        // Добавляем слой выключенным, затем через кадр включаем — чтобы сработал
-        // CSS-переход opacity (кроссфейд поверх предыдущего спрайта).
+        // Добавляем слой выключенным (поверх старого, старый остаётся непрозрачным —
+        // без просвета фона), затем короткой паузой включаем: браузер успевает
+        // отрисовать opacity:0, и CSS-переход реально проигрывается (двойной rAF
+        // React иногда схлопывал в один кадр → «скачок» вместо фейда).
         setLayers((prev) => [...prev, { id, url, on: false }].slice(-2));
-        const raf = requestAnimationFrame(() =>
-          requestAnimationFrame(
-            () => !cancelled && setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, on: true } : l)))
-          )
+        later(
+          () => !cancelled && setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, on: true } : l))),
+          40
         );
-        timers.push(() => cancelAnimationFrame(raf));
-        // По завершении кроссфейда оставляем только новый слой.
-        later(() => !cancelled && setLayers((prev) => prev.filter((l) => l.id === id)), 360);
+        // После завершения перехода убираем старые слои.
+        later(() => !cancelled && setLayers((prev) => prev.filter((l) => l.id === id)), FADE_MS + 80);
       });
     }
     return () => {
@@ -138,13 +152,18 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
   return (
     <>
       {layers.map((l) => (
-        // Каждый слой — отдельный кадр с той же нормализацией/позицией, что и раньше;
-        // кроссфейд — через opacity обёртки (спрайт прижат к низу, растёт снизу).
+        // Каждый слой — отдельный кадр с той же нормализацией/позицией; кроссфейд —
+        // через opacity обёртки. Переход и will-change заданы инлайном (надёжнее, чем
+        // утилиты), GPU-композитинг через translateZ — фейд идёт вне главного потока.
         <div
           key={l.id}
-          className={`absolute inset-0 flex justify-center items-end pointer-events-none transition-opacity duration-300 ${
-            l.on ? 'opacity-100' : 'opacity-0'
-          }`}
+          className="absolute inset-0 flex justify-center items-end pointer-events-none"
+          style={{
+            opacity: l.on ? 1 : 0,
+            transition: `opacity ${FADE_MS}ms ease-in-out`,
+            willChange: 'opacity',
+            transform: 'translateZ(0)',
+          }}
         >
           <img
             src={l.url}
