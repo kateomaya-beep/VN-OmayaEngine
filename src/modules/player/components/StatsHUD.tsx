@@ -29,7 +29,7 @@ function PinIcon() {
 }
 
 const PILL =
-  'flex items-center rounded-full bg-[rgba(20,17,30,0.6)] backdrop-blur-md border border-[rgba(180,150,255,0.22)]';
+  'flex items-center rounded-full bg-[var(--pl-bubble-bg)] backdrop-blur-md border border-[rgba(180,150,255,0.22)]';
 
 export function StatsHUD({
   project,
@@ -59,7 +59,7 @@ export function StatsHUD({
           {leftText && (
             <>
               <CalendarIcon />
-              <span className="text-[11.5px] font-semibold text-[#eae6f7] whitespace-nowrap overflow-hidden text-ellipsis">
+              <span className="text-[11.5px] font-semibold text-[var(--pl-cal)] whitespace-nowrap overflow-hidden text-ellipsis">
                 {leftText}
               </span>
             </>
@@ -68,7 +68,7 @@ export function StatsHUD({
           {loc && (
             <>
               <PinIcon />
-              <span className="text-[11.5px] font-semibold text-[#eae6f7] whitespace-nowrap overflow-hidden text-ellipsis">
+              <span className="text-[11.5px] font-semibold text-[var(--pl-cal)] whitespace-nowrap overflow-hidden text-ellipsis">
                 {loc}
               </span>
             </>

@@ -77,13 +77,13 @@ export function DialogueBox({
     <div className="px-4 sm:px-6 cursor-pointer select-none" onClick={handleClick}>
       <div className="max-w-4xl mx-auto">
         {speaker && (
-          <div className="inline-block px-4 py-1.5 rounded-t-[10px] font-bold text-[12px] tracking-[0.3px] text-[#1c1526] bg-[var(--pl-accent)] shadow-[0_0_16px_var(--pl-accent-glow)]">
+          <div className="inline-block px-4 py-1.5 rounded-t-[10px] font-bold text-[12px] tracking-[0.3px] text-[var(--pl-name)] bg-[var(--pl-accent)] shadow-[0_0_16px_var(--pl-accent-glow)]">
             {speaker}
           </div>
         )}
         <div className="rounded-[4px_18px_18px_18px] p-5 min-h-[6rem] bg-[var(--pl-bubble-bg)] border border-[rgba(180,150,255,0.18)] shadow-[0_10px_30px_rgba(0,0,0,0.4)] backdrop-blur-lg">
           <div
-            className={`leading-[1.6] text-[#f0ecfa] md-content ${isThought ? 'italic text-[#e9e2fb]' : ''}`}
+            className={`leading-[1.6] md-content ${isThought ? 'italic text-[var(--pl-italic)]' : 'text-[var(--pl-text)]'}`}
             style={{ fontSize: 'calc(15px * var(--pl-font-scale, 1))' }}
           >
             {/* Во время тайпрайтера — обычный текст; по завершении — безопасный markdown. */}

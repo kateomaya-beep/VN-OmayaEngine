@@ -315,8 +315,21 @@ export interface Project {
 // на плеер (CSS-переменные корня плеера), не на конструктор/библиотеку.
 export interface PlayerTheme {
   accent: string; // hex акцент (тег имени, кнопка отправки, подсветки)
-  bubbleColor: string; // hex фон пузыря реплики/вариантов
-  bubbleOpacity: number; // прозрачность пузыря 0..1
+  // «Окна/панели»: пузырь реплики, панель ввода, плашки HUD (календарь+статы).
+  bubbleColor: string;
+  bubbleOpacity: number; // 0..1
+  // Обычные кнопки выбора.
+  choiceColor: string;
+  choiceOpacity: number; // 0..1
+  // Премиум-выборы (стоят очков стата).
+  premiumColor: string;
+  premiumOpacity: number; // 0..1
+  // Цвета текста.
+  textColor: string; // основной текст реплики
+  nameColor: string; // имя говорящего (тег-заголовок)
+  quoteColor: string; // прямая речь в кавычках
+  italicColor: string; // курсив (действия/мысли)
+  calendarColor: string; // текст плашки календаря/локации
   fontUrl: string; // ссылка на таблицу стилей шрифта (Google Fonts и т.п.), опц.
   fontFamily: string; // CSS font-family, опц.
   fontScale: number; // множитель размера читаемого текста (0.8–1.6)
@@ -326,6 +339,15 @@ export const DEFAULT_PLAYER_THEME: PlayerTheme = {
   accent: '#b18cff',
   bubbleColor: '#100d18',
   bubbleOpacity: 0.72,
+  choiceColor: '#100d18',
+  choiceOpacity: 0.72,
+  premiumColor: '#f59e0b',
+  premiumOpacity: 0.22,
+  textColor: '#f0ecfa',
+  nameColor: '#1c1526',
+  quoteColor: '#f0ecfa',
+  italicColor: '#f0ecfa',
+  calendarColor: '#eae6f7',
   fontUrl: '',
   fontFamily: '',
   fontScale: 1,
@@ -336,12 +358,23 @@ export function normalizePlayerTheme(p: unknown): PlayerTheme {
   const o = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>;
   const numIn = (v: unknown, def: number, lo: number, hi: number) =>
     typeof v === 'number' && v >= lo && v <= hi ? v : def;
+  const D = DEFAULT_PLAYER_THEME;
+  const strOr = (v: unknown, def: string) => (typeof v === 'string' ? v : def);
   return {
-    accent: typeof o.accent === 'string' ? o.accent : DEFAULT_PLAYER_THEME.accent,
-    bubbleColor: typeof o.bubbleColor === 'string' ? o.bubbleColor : DEFAULT_PLAYER_THEME.bubbleColor,
-    bubbleOpacity: numIn(o.bubbleOpacity, DEFAULT_PLAYER_THEME.bubbleOpacity, 0, 1),
-    fontUrl: typeof o.fontUrl === 'string' ? o.fontUrl : '',
-    fontFamily: typeof o.fontFamily === 'string' ? o.fontFamily : '',
+    accent: strOr(o.accent, D.accent),
+    bubbleColor: strOr(o.bubbleColor, D.bubbleColor),
+    bubbleOpacity: numIn(o.bubbleOpacity, D.bubbleOpacity, 0, 1),
+    choiceColor: strOr(o.choiceColor, D.choiceColor),
+    choiceOpacity: numIn(o.choiceOpacity, D.choiceOpacity, 0, 1),
+    premiumColor: strOr(o.premiumColor, D.premiumColor),
+    premiumOpacity: numIn(o.premiumOpacity, D.premiumOpacity, 0, 1),
+    textColor: strOr(o.textColor, D.textColor),
+    nameColor: strOr(o.nameColor, D.nameColor),
+    quoteColor: strOr(o.quoteColor, D.quoteColor),
+    italicColor: strOr(o.italicColor, D.italicColor),
+    calendarColor: strOr(o.calendarColor, D.calendarColor),
+    fontUrl: strOr(o.fontUrl, ''),
+    fontFamily: strOr(o.fontFamily, ''),
     fontScale: numIn(o.fontScale, 1, 0.6, 2),
   };
 }

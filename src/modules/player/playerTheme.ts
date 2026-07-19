@@ -56,18 +56,32 @@ export function ensureFontLink(url: string): void {
   document.head.appendChild(link);
 }
 
+// rgba() из hex + прозрачности (с fallback-цветом при мусоре).
+function rgba(hex: string, opacity: number, fallback: [number, number, number]): string {
+  const [r, g, b] = hexToRgb(hex, fallback);
+  const op = Math.max(0, Math.min(1, opacity));
+  return `rgba(${r}, ${g}, ${b}, ${op})`;
+}
+
 // CSS-переменные корня плеера, вычисленные из темы.
 export function themeVars(t: PlayerTheme): CSSProperties {
   const acc = hexToRgb(t.accent, [177, 140, 255]);
   const [ar, ag, ab] = acc;
-  const [br, bg, bb] = hexToRgb(t.bubbleColor, [16, 13, 24]);
-  const op = Math.max(0, Math.min(1, t.bubbleOpacity));
   return {
     '--pl-accent': `rgb(${ar}, ${ag}, ${ab})`,
     '--pl-accent-bright': mixWhite(acc, 0.35),
     '--pl-accent-glow': `rgba(${ar}, ${ag}, ${ab}, 0.5)`,
     '--pl-accent-soft': `rgba(${ar}, ${ag}, ${ab}, 0.16)`,
-    '--pl-bubble-bg': `rgba(${br}, ${bg}, ${bb}, ${op})`,
+    // Поверхности: окна/панели (реплика+ввод+HUD), обычные и премиум выборы.
+    '--pl-bubble-bg': rgba(t.bubbleColor, t.bubbleOpacity, [16, 13, 24]),
+    '--pl-choice-bg': rgba(t.choiceColor, t.choiceOpacity, [16, 13, 24]),
+    '--pl-premium-bg': rgba(t.premiumColor, t.premiumOpacity, [245, 158, 11]),
+    // Цвета текста.
+    '--pl-text': t.textColor,
+    '--pl-name': t.nameColor,
+    '--pl-quote': t.quoteColor,
+    '--pl-italic': t.italicColor,
+    '--pl-cal': t.calendarColor,
     '--pl-font-scale': String(t.fontScale),
     ...(t.fontFamily ? { fontFamily: `'${t.fontFamily}', 'Inter', system-ui, sans-serif` } : {}),
   } as CSSProperties;

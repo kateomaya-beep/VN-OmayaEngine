@@ -127,6 +127,15 @@ body {
 .md-content em {
   font-style: italic;
 }
+/* Подкраска курсива и прямой речи из темы плеера (переменные заданы только на
+   корне плеера, вне его — inherit, т.е. без изменений). */
+.md-content em,
+.md-quote em {
+  color: var(--pl-italic, inherit);
+}
+.md-quote {
+  color: var(--pl-quote, inherit);
+}
 .md-content code {
   font-family: ui-monospace, monospace;
   font-size: 0.9em;
