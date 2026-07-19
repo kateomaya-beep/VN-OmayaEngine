@@ -307,6 +307,43 @@ export interface Project {
   aiConfig: AiConfig;
   memoryConfig: MemoryConfig;
   audioMoods: string[]; // кастомные настроения сверх базовых 8 (см. CR v2 §N.2)
+  playerTheme?: PlayerTheme; // пер-проектное оформление плеера (мини-мастерская)
+}
+
+// Пер-проектное оформление ЭКРАНА ИГРЫ (мини-мастерская в бургер-меню плеера).
+// Хранится в проекте → едет с ним при копировании/экспорте/шаринге. Влияет только
+// на плеер (CSS-переменные корня плеера), не на конструктор/библиотеку.
+export interface PlayerTheme {
+  accent: string; // hex акцент (тег имени, кнопка отправки, подсветки)
+  bubbleColor: string; // hex фон пузыря реплики/вариантов
+  bubbleOpacity: number; // прозрачность пузыря 0..1
+  fontUrl: string; // ссылка на таблицу стилей шрифта (Google Fonts и т.п.), опц.
+  fontFamily: string; // CSS font-family, опц.
+  fontScale: number; // множитель размера читаемого текста (0.8–1.6)
+}
+
+export const DEFAULT_PLAYER_THEME: PlayerTheme = {
+  accent: '#b18cff',
+  bubbleColor: '#100d18',
+  bubbleOpacity: 0.72,
+  fontUrl: '',
+  fontFamily: '',
+  fontScale: 1,
+};
+
+// Санитизация частичной/битой темы (импорт проекта, старый глобальный конфиг) → полная.
+export function normalizePlayerTheme(p: unknown): PlayerTheme {
+  const o = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>;
+  const numIn = (v: unknown, def: number, lo: number, hi: number) =>
+    typeof v === 'number' && v >= lo && v <= hi ? v : def;
+  return {
+    accent: typeof o.accent === 'string' ? o.accent : DEFAULT_PLAYER_THEME.accent,
+    bubbleColor: typeof o.bubbleColor === 'string' ? o.bubbleColor : DEFAULT_PLAYER_THEME.bubbleColor,
+    bubbleOpacity: numIn(o.bubbleOpacity, DEFAULT_PLAYER_THEME.bubbleOpacity, 0, 1),
+    fontUrl: typeof o.fontUrl === 'string' ? o.fontUrl : '',
+    fontFamily: typeof o.fontFamily === 'string' ? o.fontFamily : '',
+    fontScale: numIn(o.fontScale, 1, 0.6, 2),
+  };
 }
 
 // ---- Runtime / AI response types (JSON-контракт с ИИ) ----

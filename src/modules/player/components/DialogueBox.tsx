@@ -81,7 +81,7 @@ export function DialogueBox({
             {speaker}
           </div>
         )}
-        <div className="rounded-[4px_18px_18px_18px] p-5 min-h-[6rem] bg-[rgba(16,13,24,0.72)] border border-[rgba(180,150,255,0.18)] shadow-[0_10px_30px_rgba(0,0,0,0.4)] backdrop-blur-lg">
+        <div className="rounded-[4px_18px_18px_18px] p-5 min-h-[6rem] bg-[var(--pl-bubble-bg)] border border-[rgba(180,150,255,0.18)] shadow-[0_10px_30px_rgba(0,0,0,0.4)] backdrop-blur-lg">
           <div
             className={`leading-[1.6] text-[#f0ecfa] md-content ${isThought ? 'italic text-[#e9e2fb]' : ''}`}
             style={{ fontSize: 'calc(15px * var(--pl-font-scale, 1))' }}

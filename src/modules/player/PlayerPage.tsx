@@ -15,7 +15,7 @@ import { HistoryPanel } from './components/HistoryPanel';
 import { AuthorNotesPanel } from './components/AuthorNotesPanel';
 import { SaveLoadPanel } from './components/Panels';
 import { WorkshopPanel } from './components/WorkshopPanel';
-import { usePlayerTheme, themeVars, ensureFontLink } from './playerTheme';
+import { themeVars, ensureFontLink, loadGlobalTheme } from './playerTheme';
 import { useT } from '../../shared/i18n';
 import { TopBar } from '../../app/TopBar';
 
@@ -34,14 +34,15 @@ export function PlayerPage() {
   const [workshopOpen, setWorkshopOpen] = useState(false);
   // Экран запуска (Batch 5.2): Продолжить / Загрузить / Новая история.
   const [setup, setSetup] = useState<Setup>('launch');
-  // Оформление плеера (мини-мастерская): акцент/шрифт/размер — только для игры.
-  const theme = usePlayerTheme((st) => st.theme);
+  // Оформление плеера (мини-мастерская) — ПЕР-ПРОЕКТНОЕ: тема живёт в project.playerTheme.
+  // Если у проекта её нет — берём прежнюю глобальную (back-compat), иначе дефолт.
+  const theme = s.project?.playerTheme ?? loadGlobalTheme();
 
   useEffect(() => {
     return () => stopAllMusic();
   }, [projectId]);
 
-  // Подгружаем сохранённый шрифт при входе в плеер / смене ссылки.
+  // Подгружаем шрифт темы при входе в плеер / смене ссылки.
   useEffect(() => {
     ensureFontLink(theme.fontUrl);
   }, [theme.fontUrl]);
@@ -207,7 +208,16 @@ export function PlayerPage() {
       <HistoryPanel open={panel === 'history'} onClose={() => setPanel(null)} />
       <AuthorNotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} />
       <SaveLoadPanel open={panel === 'saves'} onClose={() => setPanel(null)} />
-      <WorkshopPanel open={workshopOpen} onClose={() => setWorkshopOpen(false)} />
+      <WorkshopPanel
+        open={workshopOpen}
+        onClose={() => setWorkshopOpen(false)}
+        theme={theme}
+        onChange={(patch) =>
+          s.patchProject((p) => {
+            p.playerTheme = { ...(p.playerTheme ?? theme), ...patch };
+          })
+        }
+      />
     </div>
   );
 }

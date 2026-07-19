@@ -29,7 +29,7 @@ export function ChoiceMenu({
               className={`w-full text-left px-5 py-2.5 rounded-[14px] border backdrop-blur-md transition-all ${
                 c.cost
                   ? 'bg-gradient-to-r from-amber-500/20 to-[var(--pl-accent-soft)] border-amber-400/40 hover:border-amber-400'
-                  : 'bg-[rgba(16,13,24,0.7)] border-[rgba(180,150,255,0.22)] hover:border-[var(--pl-accent)] hover:bg-[var(--pl-accent-soft)]'
+                  : 'bg-[var(--pl-bubble-bg)] border-[rgba(180,150,255,0.22)] hover:border-[var(--pl-accent)] hover:bg-[var(--pl-accent-soft)]'
               } disabled:opacity-40`}
             >
               <InlineMarkdown text={c.text} />

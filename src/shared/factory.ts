@@ -20,7 +20,14 @@ import type {
   ApiConnection,
   GameMasterState,
 } from './types';
-import { EMOTIONS, AUDIO_MOODS, defaultMemoryConfig, emptyGameMaster, normalizeTurnLength } from './types';
+import {
+  EMOTIONS,
+  AUDIO_MOODS,
+  defaultMemoryConfig,
+  emptyGameMaster,
+  normalizeTurnLength,
+  normalizePlayerTheme,
+} from './types';
 import { uid, clamp } from './utils';
 
 export const DEFAULT_STYLE_PRESET = 'romance_club';
@@ -311,6 +318,7 @@ export function normalizeProject(raw: any): Project {
       embeddingsConnection: normConnection(mem.embeddingsConnection),
     },
     audioMoods,
+    playerTheme: raw?.playerTheme ? normalizePlayerTheme(raw.playerTheme) : undefined,
   };
 }
 
