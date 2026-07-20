@@ -39,10 +39,13 @@ export function outfitSpriteMap(
   return found ? found.sprites : c.sprites; // невалидный наряд → дефолтный
 }
 
-// Полная fallback-цепочка Batch 5.3 §3.5:
-//   наряд+эмоция → neutral этого наряда → neutral дефолтного наряда → любой спрайт.
-// Возвращает assetId или undefined (если у персонажа вообще нет спрайтов — тогда
-// рендерим имя+текст, как сегодня). Никогда не бросает.
+// Fallback-цепочка (наряд ПЕРВИЧЕН): сначала полностью исчерпываем набор выбранного
+// наряда, и лишь затем падаем в дефолтный. Так неполный наряд (напр. underwear без
+// какой-то эмоции) всё равно показывается СВОИМ спрайтом, а не «прыгает» в дефолтную
+// одежду. Порядок:
+//   наряд+эмоция → neutral наряда → любой спрайт наряда
+//   → дефолт+эмоция → neutral дефолта → любой дефолтный.
+// Возвращает assetId или undefined (нет спрайтов вообще → рендерим имя+текст). Не бросает.
 export function resolveSprite(
   c: Character,
   outfit: string | null | undefined,
@@ -53,9 +56,9 @@ export function resolveSprite(
   return (
     map[emotion as Emotion] ||
     map.neutral ||
-    dmap.neutral ||
-    dmap[emotion as Emotion] ||
     Object.values(map)[0] ||
+    dmap[emotion as Emotion] ||
+    dmap.neutral ||
     Object.values(dmap)[0]
   );
 }

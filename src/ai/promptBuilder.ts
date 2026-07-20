@@ -93,9 +93,18 @@ function characterBlocks(
     const emotions = Object.keys(c.sprites);
     const emo = emotions.length ? emotions.join(', ') : '(no sprites — render as name + text)';
     // Наряды (Batch 5.3): показываем строку только если у персонажа есть выбор
-    // (>1 наряда). ИИ ставит "outfit" на dialogue-beat по контексту сцены, как фон.
+    // (>1 наряда). Каждый наряд — с его триггером-описанием (когда его надевать),
+    // чтобы модель уверенно мапила сцену на тег (напр. «в белье» → underwear).
     const outfitLine = hasExtraOutfits(c)
-      ? `\nAvailable outfits (pick by scene context, default is "${defaultOutfitTag(c)}"): ${characterOutfits(c).join(', ')}`
+      ? `\nAvailable outfits — set "outfit" to the tag whose situation matches the scene (default when nothing special: "${defaultOutfitTag(
+          c
+        )}"):\n${characterOutfits(c)
+          .map((tag) => {
+            if (tag === defaultOutfitTag(c)) return `  - ${tag} (default everyday look)`;
+            const desc = c.outfits?.find((o) => o.outfit === tag)?.description?.trim();
+            return `  - ${tag}${desc ? ` — use when: ${desc}` : ''}`;
+          })
+          .join('\n')}`
       : '';
     return `### ${c.name} (id: ${c.id}, role: ${roleLabel[c.role] || c.role})
 Appearance: ${expandMacros(c.card.appearance, ctx)}

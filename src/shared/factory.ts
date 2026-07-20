@@ -120,10 +120,15 @@ export function normalizeProject(raw: any): Project {
     }
     return out;
   };
-  // Доп. наряды (Batch 5.3): [{ outfit, sprites }]. Пустые/безымянные отбрасываем.
-  const normOutfits = (v: unknown): { outfit: string; sprites: Partial<Record<Emotion, string>> }[] | undefined => {
+  // Доп. наряды (Batch 5.3): [{ outfit, description?, sprites }]. Пустые/безымянные отбрасываем.
+  const normOutfits = (
+    v: unknown
+  ): { outfit: string; description?: string; sprites: Partial<Record<Emotion, string>> }[] | undefined => {
     const list = arr<any>(v)
-      .map((o) => ({ outfit: str(o?.outfit).trim(), sprites: normSprites(o?.sprites) }))
+      .map((o) => {
+        const desc = str(o?.description).trim();
+        return { outfit: str(o?.outfit).trim(), ...(desc ? { description: desc } : {}), sprites: normSprites(o?.sprites) };
+      })
       .filter((o) => o.outfit);
     return list.length ? list : undefined;
   };

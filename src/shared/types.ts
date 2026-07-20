@@ -125,6 +125,7 @@ export function emptyRelationship(): RelationshipStats {
 // сетка 11 эмоций. См. Batch 5.3.
 export interface OutfitSprites {
   outfit: string; // свободный тег наряда, задаёт юзер (regular/masked/suit/…)
+  description?: string; // когда его надевать — триггер для ИИ (напр. «в нижнем белье; когда персонаж раздет»)
   sprites: Partial<Record<Emotion, string>>;
 }
 

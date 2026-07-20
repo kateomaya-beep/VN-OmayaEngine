@@ -352,6 +352,15 @@ function SpriteBinder({ characterId }: { characterId: string }) {
     setTray((t) => t.filter((a) => a.id !== assetId));
   }
 
+  // Описание-триггер наряда (когда его надевать) — уходит в подсказку ИИ.
+  function setOutfitDesc(desc: string) {
+    update((p) => {
+      const c = p.characters.find((c) => c.id === characterId)!;
+      const o = c.outfits?.find((x) => x.outfit === effOutfit);
+      if (o) o.description = desc.trim() ? desc : undefined;
+    });
+  }
+
   // ---- Управление нарядами ----
   function addOutfit() {
     const tag = (window.prompt(L('Название наряда (тег), напр. suit, masked', 'Outfit tag, e.g. suit, masked')) || '').trim();
@@ -452,6 +461,23 @@ function SpriteBinder({ characterId }: { characterId: string }) {
           {isDefaultOutfit && ` · ${L('по умолчанию', 'default')}`}
         </span>
       </div>
+
+      {/* Триггер-описание наряда (только у доп. нарядов): подсказывает ИИ, КОГДА его
+          надевать. Дефолтный наряд — базовый облик, описание ему не нужно. */}
+      {!isDefaultOutfit && (
+        <div className="mb-3">
+          <label className="label">{L('Когда надевать (подсказка ИИ)', 'When to wear (AI hint)')}</label>
+          <input
+            className="input"
+            placeholder={L(
+              'напр. когда персонаж раздет / в нижнем белье',
+              'e.g. when the character is undressed / in underwear'
+            )}
+            value={char.outfits?.find((o) => o.outfit === effOutfit)?.description || ''}
+            onChange={(e) => setOutfitDesc(e.target.value)}
+          />
+        </div>
+      )}
 
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <div>
