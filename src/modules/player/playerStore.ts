@@ -50,6 +50,7 @@ interface PlayerStore {
   playthroughCreatedAt?: number;
   autosaveSlot: number; // числовой слот файла-курсора текущего прохождения
   currentCheckpointId?: string; // от какого чекпоинта форкнута текущая линия
+  autosnapRing: number[]; // кольцо слотов автоснимков (история последних N автосейвов)
 
   // Продолжить активное прохождение (последний автосейв). false — продолжать нечего.
   continuePlaythrough: (projectId: string) => Promise<boolean>;
@@ -84,6 +85,10 @@ interface PlayerStore {
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
   setAuthorNotes: (notes: AuthorNote[]) => void;
 }
+
+// Сколько последних автосейвов хранить в кольце (история для отката, если прогресс
+// слетел). Каждый ход пишется один автоснимок; старые вытесняются.
+const AUTOSNAP_MAX = 15;
 
 // Монотонный аллокатор числовых слотов для новых записей (курсоры новых прохождений,
 // чекпоинты). Строго возрастающий, не пересекается с легаси-слотами 0..10.
@@ -127,6 +132,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   playthroughCreatedAt: undefined,
   autosaveSlot: 0,
   currentCheckpointId: undefined,
+  autosnapRing: [],
 
   setDraft(t) {
     set({ draft: t });
@@ -187,6 +193,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       playthroughCreatedAt: createdAt,
       autosaveSlot: nextSlot(),
       currentCheckpointId: undefined,
+      autosnapRing: [],
     });
     // Seed the opening turn (макросы в стартовой сцене раскрываются).
     const opening = expandMacros(project.lore.openingScene, { project, state });
@@ -343,25 +350,51 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   async autosave(title) {
-    const { project, state, autosaveSlot, playthroughId, playthroughLabel, playthroughCreatedAt, currentCheckpointId } = get();
+    const { project, state, autosaveSlot, playthroughId, playthroughLabel, playthroughCreatedAt, currentCheckpointId, autosnapRing } = get();
     if (!project || !state) return;
     // Глубокий снимок на момент сохранения — чтобы последующие мутации живого
     // состояния (напр. списание стоимости выбора) не могли задним числом исказить
     // уже отданный на запись сейв.
     const snapshot: RuntimeState = JSON.parse(JSON.stringify(state));
-    const save: SaveSlot = {
-      slot: autosaveSlot,
+    const savedAt = Date.now();
+    const meta = {
       projectId: project.id,
-      savedAt: Date.now(),
-      title: title || `Автосейв · ход ${state.turnCount}`,
-      state: snapshot,
-      kind: 'autosave',
       playthroughId,
       playthroughLabel,
       playthroughCreatedAt,
       parentCheckpointId: currentCheckpointId,
     };
-    await putSave(save);
+    // 1) Курсор «последнее состояние» (для «Продолжить») — фиксированный слот.
+    const cursor: SaveSlot = {
+      slot: autosaveSlot,
+      savedAt,
+      title: title || `Автосейв · ход ${state.turnCount}`,
+      state: snapshot,
+      kind: 'autosave',
+      ...meta,
+    };
+    await putSave(cursor);
+    // 2) Автоснимок в кольцо последних N — чтобы можно было откатиться на несколько
+    // ходов назад, если прогресс слетел. Кольцо переиспользует самый старый слот.
+    let ring = [...autosnapRing];
+    let snapSlot: number;
+    if (ring.length < AUTOSNAP_MAX) {
+      snapSlot = nextSlot();
+      ring.push(snapSlot);
+    } else {
+      snapSlot = ring.shift()!; // самый старый слот — под перезапись новым снимком
+      ring.push(snapSlot);
+    }
+    set({ autosnapRing: ring });
+    const snap: SaveSlot = {
+      slot: snapSlot,
+      savedAt,
+      title: `Ход ${state.turnCount}`,
+      state: snapshot,
+      kind: 'autosnap',
+      ...meta,
+    };
+    await putSave(snap);
     const firstBeat = snapshot.lastTurn?.beats?.find((b) => 'text' in b && b.text)?.text || '';
     logEvent('debug', 'save', `Автосейв ход ${snapshot.turnCount}, beats: ${snapshot.lastTurn?.beats?.length ?? 0} · «${firstBeat.slice(0, 40)}»`);
   },
@@ -423,10 +456,16 @@ function applyResumedSave(
   const playthroughId = save.playthroughId || LEGACY_PLAYTHROUGH;
   const playthroughLabel = save.playthroughLabel || info?.label || '';
   const playthroughCreatedAt = save.playthroughCreatedAt ?? info?.createdAt;
-  // Куда писать курсор: если грузим чекпоинт — в существующий курсор прохождения
-  // (или новый слот, если курсора ещё нет); если автосейв — в его же слот.
-  const autosaveSlot = isCheckpoint ? info?.autosave?.slot ?? nextSlot() : save.slot;
+  // Куда писать курсор: только сам автосейв-курсор переиспользует свой слот. Чекпоинт
+  // и автоснимок грузятся В курсор прохождения (существующий или новый) — не в их слот.
+  const autosaveSlot = save.kind === 'autosave' ? save.slot : info?.autosave?.slot ?? nextSlot();
   const currentCheckpointId = isCheckpoint ? save.checkpointId : save.parentCheckpointId;
+  // Продолжаем то же кольцо автоснимков прохождения (последние N слотов).
+  const autosnapRing = (info?.autosnaps || [])
+    .slice()
+    .sort((a, b) => a.savedAt - b.savedAt)
+    .map((a) => a.slot)
+    .slice(-AUTOSNAP_MAX);
 
   set({
     playthroughId,
@@ -434,6 +473,7 @@ function applyResumedSave(
     playthroughCreatedAt,
     autosaveSlot,
     currentCheckpointId,
+    autosnapRing,
   });
   applyLoadedState(set, project, save.state);
 

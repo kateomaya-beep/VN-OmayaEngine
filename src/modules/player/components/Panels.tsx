@@ -65,13 +65,13 @@ export function SaveLoadPanel({ open, onClose }: { open: boolean; onClose: () =>
   const forkFrom = cpName(s.currentCheckpointId);
 
   return (
-    <Modal open={open} onClose={onClose} title={L('Чекпоинты и прохождения', 'Checkpoints & playthroughs')} wide>
+    <Modal open={open} onClose={onClose} title={L('Сохранения и прохождения', 'Saves & playthroughs')} wide>
       <div className="max-h-[68vh] overflow-y-auto scrollbar-thin space-y-4 pr-1">
-        {/* Создание чекпоинта */}
+        {/* Ручное сохранение (чекпоинт) */}
         <div className="card !bg-panel2 !p-3">
-          <div className="text-sm font-medium mb-1">{L('Создать чекпоинт', 'Create checkpoint')}</div>
+          <div className="text-sm font-medium mb-1">{L('Ручное сохранение', 'Manual save')}</div>
           <p className="text-xs text-gray-500 mb-2">
-            {L('Ручная точка-ветка: полная копия истории до текущего момента. Автосейв идёт сам, отдельно.', 'A manual branch point: a full copy of the story up to now. Autosave runs on its own, separately.')}
+            {L('Именованная точка-ветка: полная копия истории до текущего момента, её можно загрузить в любой момент. Автосохранение идёт само, отдельно (ниже).', 'A named branch point: a full copy of the story up to now that you can load anytime. Autosave runs on its own, separately (below).')}
           </p>
           {forkFrom && (
             <p className="text-xs text-gray-500 mb-2">
@@ -87,18 +87,58 @@ export function SaveLoadPanel({ open, onClose }: { open: boolean; onClose: () =>
               onKeyDown={(e) => e.key === 'Enter' && createCp()}
             />
             <button className="btn-primary shrink-0" onClick={createCp}>
-              + {L('Чекпоинт', 'Checkpoint')}
+              💾 {L('Сохранить', 'Save')}
             </button>
           </div>
         </div>
 
-        {/* Чекпоинты текущего прохождения */}
+        {/* Автосохранения (кольцо последних ходов) — откат, если прогресс слетел */}
         <div>
           <div className="text-xs uppercase tracking-wide text-gray-500 mb-2">
-            {current?.label || L('Текущее прохождение', 'Current playthrough')} · {L('чекпоинты', 'checkpoints')}
+            {L('Автосохранения', 'Autosaves')} · {L('последние ходы', 'recent turns')}
+          </div>
+          <p className="text-xs text-gray-500 mb-2">
+            {L('Сохраняются автоматически каждый ход. Если прогресс слетел — загрузите нужный ход.', 'Saved automatically every turn. If progress was lost, load the turn you need.')}
+          </p>
+          {(() => {
+            // Курсор «последнее» + кольцо автоснимков (без дубля самого свежего хода).
+            const cursor = current?.autosave || null;
+            const snaps = (current?.autosnaps || []).filter(
+              (a) => !cursor || a.state.turnCount !== cursor.state.turnCount
+            );
+            const items = cursor ? [cursor, ...snaps] : snaps;
+            if (items.length === 0)
+              return <p className="text-sm text-gray-600">{L('Пока нет автосохранений.', 'No autosaves yet.')}</p>;
+            return (
+              <div className="space-y-2">
+                {items.map((a) => (
+                  <div key={a.slot} className="card flex items-center justify-between !p-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm truncate">
+                        💾 {L('Ход', 'Turn')} {a.state.turnCount}
+                        {a === cursor && (
+                          <span className="text-accent2"> · {L('последнее', 'latest')}</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500">{formatDate(a.savedAt)}</div>
+                    </div>
+                    <button className="btn-primary !px-2 !py-1 text-xs shrink-0" onClick={() => switchTo(a)}>
+                      {L('Загрузить', 'Load')}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Ручные сохранения текущего прохождения */}
+        <div>
+          <div className="text-xs uppercase tracking-wide text-gray-500 mb-2">
+            {current?.label || L('Текущее прохождение', 'Current playthrough')} · {L('ручные сохранения', 'manual saves')}
           </div>
           {(!current || current.checkpoints.length === 0) && (
-            <p className="text-sm text-gray-600">{L('Пока нет чекпоинтов.', 'No checkpoints yet.')}</p>
+            <p className="text-sm text-gray-600">{L('Пока нет ручных сохранений.', 'No manual saves yet.')}</p>
           )}
           <div className="space-y-2">
             {current?.checkpoints.map((c) => (
