@@ -273,7 +273,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   async choose(choice) {
     const { state, project } = get();
     if (!state || !project) return;
-    // Deduct cost if any.
+    // Стоимость платного выбора списывает ДВИЖОК (авторитетно, оптимистично). Модели
+    // передаём пометку, что списание уже сделано — иначе она нередко списывает его
+    // повторно через statChanges (двойная оплата).
+    let move = `[CHOICE] ${choice.text}`;
     if (choice.cost) {
       const cur = state.statValues[choice.cost.statId] ?? 0;
       if (cur < choice.cost.amount) {
@@ -281,9 +284,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         return;
       }
       state.statValues[choice.cost.statId] = cur - choice.cost.amount;
+      const statName = project.stats.find((s) => s.id === choice.cost!.statId)?.name || choice.cost!.statId;
+      move += `\n[COST ALREADY CHARGED BY ENGINE: -${choice.cost.amount} ${statName} — do NOT include this in statChanges]`;
     }
     // Выбор кнопкой → ИИ разворачивает его в реплику/действие героя (Блок B.1).
-    await runAndApply(set, get, project, state, `[CHOICE] ${choice.text}`);
+    await runAndApply(set, get, project, state, move);
   },
 
   async continueStory() {
