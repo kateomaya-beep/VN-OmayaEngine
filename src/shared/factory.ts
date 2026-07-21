@@ -27,6 +27,7 @@ import {
   emptyGameMaster,
   normalizeTurnLength,
   normalizePlayerTheme,
+  normalizeImageGen,
 } from './types';
 import { uid, clamp } from './utils';
 
@@ -324,6 +325,7 @@ export function normalizeProject(raw: any): Project {
     },
     audioMoods,
     playerTheme: raw?.playerTheme ? normalizePlayerTheme(raw.playerTheme) : undefined,
+    imageGen: raw?.imageGen ? normalizeImageGen(raw.imageGen) : undefined,
   };
 }
 

@@ -58,7 +58,7 @@ async function ensureProxy(): Promise<void> {
 }
 
 // Универсальный fetch: через прокси, если он есть; иначе напрямую.
-async function netFetch(url: string, init: RequestInit): Promise<Response> {
+export async function netFetch(url: string, init: RequestInit): Promise<Response> {
   await ensureProxy();
   if (proxyState === 'on' && /^https?:\/\//i.test(url)) {
     const headers = { ...((init.headers as Record<string, string>) || {}), 'x-target-url': url };

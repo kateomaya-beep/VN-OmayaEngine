@@ -309,6 +309,63 @@ export interface Project {
   memoryConfig: MemoryConfig;
   audioMoods: string[]; // кастомные настроения сверх базовых 8 (см. CR v2 §N.2)
   playerTheme?: PlayerTheme; // пер-проектное оформление плеера (мини-мастерская)
+  imageGen?: ImageGenConfig; // CG-студия: генерация кат-сцен через image-API
+}
+
+// CG-студия — генерация кат-сцен по текущей сцене через image-API (Nano Banana/Gemini
+// или OpenAI-совместимый). Хранится в проекте: у каждой игры свой воркер-промпт,
+// стиль, референсы и галерея. Ключ image-API — только в localStorage (роль 'image').
+export interface ImageGenConfig {
+  providerKind: 'gemini' | 'openai'; // gemini — с рефами (generateContent); openai — /images/generations без рефов
+  baseUrl?: string; // пусто — дефолт под providerKind
+  model?: string; // пусто — дефолт под providerKind
+  systemPrompt: string; // редактируемый шаблон ВОРКЕРА: как превратить сцену в image-промпт
+  style: string; // текущий стиль изображения (независим от systemPrompt)
+  references: Record<string, string>; // charId → assetId переопределённого рефа; нет ⇒ авто (нейтральный базовый спрайт)
+  sendReferences: boolean; // отправлять ли референсы (для gemini)
+  gallery: string[]; // сохранённые в галерею CG (assetId), новые в конце
+}
+
+export const DEFAULT_IMAGE_SYSTEM_PROMPT = `You turn the CURRENT visual-novel scene into ONE image-generation prompt for a text-to-image model.
+Output ONLY the prompt text — a single vivid paragraph in English, no quotes, no headings, no explanations.
+Cover, when relevant:
+- WHO is in frame: use the exact character NAMES given, and describe their appearance faithfully (hair, eyes, build, current outfit) from their cards. If a reference image is provided for a character, keep them consistent with it.
+- WHAT is happening: the key dramatic beat right now — pose, expression, action, interaction — tell the story through the image.
+- WHERE: location, time of day, lighting, atmosphere.
+- Framing: a polished cinematic visual-novel CG illustration, tasteful composition.
+Do NOT add an art-style tag — the style is appended separately. Keep it under ~120 words.`;
+
+export function defaultImageGenConfig(): ImageGenConfig {
+  return {
+    providerKind: 'gemini',
+    systemPrompt: DEFAULT_IMAGE_SYSTEM_PROMPT,
+    style: '',
+    references: {},
+    sendReferences: true,
+    gallery: [],
+  };
+}
+
+// Санитизация ImageGenConfig (импорт/старые проекты) → полная конфигурация.
+export function normalizeImageGen(v: unknown): ImageGenConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const d = defaultImageGenConfig();
+  const refs: Record<string, string> = {};
+  if (o.references && typeof o.references === 'object') {
+    for (const [k, val] of Object.entries(o.references as Record<string, unknown>)) {
+      if (typeof val === 'string' && val) refs[k] = val;
+    }
+  }
+  return {
+    providerKind: o.providerKind === 'openai' ? 'openai' : 'gemini',
+    baseUrl: typeof o.baseUrl === 'string' && o.baseUrl.trim() ? o.baseUrl.trim() : undefined,
+    model: typeof o.model === 'string' && o.model.trim() ? o.model.trim() : undefined,
+    systemPrompt: typeof o.systemPrompt === 'string' && o.systemPrompt.trim() ? o.systemPrompt : d.systemPrompt,
+    style: typeof o.style === 'string' ? o.style : '',
+    references: refs,
+    sendReferences: typeof o.sendReferences === 'boolean' ? o.sendReferences : true,
+    gallery: Array.isArray(o.gallery) ? o.gallery.filter((x): x is string => typeof x === 'string') : [],
+  };
 }
 
 // Пер-проектное оформление ЭКРАНА ИГРЫ (мини-мастерская в бургер-меню плеера).

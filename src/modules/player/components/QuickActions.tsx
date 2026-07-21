@@ -4,7 +4,7 @@ import { composeImagePrompt } from '../../../ai/imagePrompt';
 import { generateImage } from '../../../ai/imageProvider';
 import { putAsset } from '../../../storage/db';
 import { uid, autoTagsFromName } from '../../../shared/utils';
-import type { AssetMeta } from '../../../shared/types';
+import { defaultImageGenConfig, type AssetMeta } from '../../../shared/types';
 
 // Панель быстрых действий: генерация фонов/CG по ходу игры (см. доработка §7).
 // Сгенерированный ассет попадает в манифест проекта (generated:true) → ИИ
@@ -26,7 +26,9 @@ export function QuickActions({ open, onClose }: { open: boolean; onClose: () => 
       const prompt = await composeImagePrompt(project, state, kind);
       setLastPrompt(prompt);
       setBusy('Рисую изображение…');
-      const blob = await generateImage(project.aiConfig, prompt, {
+      const cfg = project.imageGen ?? defaultImageGenConfig();
+      const blob = await generateImage(cfg, {
+        prompt: [prompt, cfg.style].filter(Boolean).join('\n\nStyle: '),
         size: kind === 'background' ? '1536x1024' : '1024x1024',
       });
       const blobKey = uid('blob');
@@ -80,9 +82,9 @@ export function QuickActions({ open, onClose }: { open: boolean; onClose: () => 
         <button className="btn-primary" disabled={!!busy} onClick={() => generate('background')}>
           Создать фон
         </button>
-        <button className="btn-ghost" disabled={!!busy} onClick={() => generate('cg')}>
-          Создать CG-сцену
-        </button>
+        <p className="text-[11px] text-gray-500">
+          CG-сцены с персонажами, стилями и референсами — в 🎬 CG-студии.
+        </p>
       </div>
       {busy && (
         <div className="mt-3 text-sm text-accent2 flex items-center gap-2">

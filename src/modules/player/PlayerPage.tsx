@@ -10,6 +10,7 @@ import { ChoiceMenu } from './components/ChoiceMenu';
 import { Console } from './components/Console';
 import { Mixer } from './components/Mixer';
 import { QuickActions } from './components/QuickActions';
+import { CgStudio } from './components/CgStudio';
 import { EditPanel } from './components/EditPanel';
 import { HistoryPanel } from './components/HistoryPanel';
 import { AuthorNotesPanel } from './components/AuthorNotesPanel';
@@ -29,6 +30,7 @@ export function PlayerPage() {
   const [panel, setPanel] = useState<null | 'saves' | 'edit' | 'history'>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
+  const [cgStudioOpen, setCgStudioOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [workshopOpen, setWorkshopOpen] = useState(false);
@@ -104,7 +106,8 @@ export function PlayerPage() {
                   <MenuItem icon="💾" label={t('player.saves')} onClick={() => setPanel('saves')} />
                   <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
                   <MenuItem icon="🎨" label="Оформление" onClick={() => setWorkshopOpen(true)} />
-                  <MenuItem icon="🖼" label="Генерация ассетов" onClick={() => setGenOpen((v) => !v)} />
+                  <MenuItem icon="🎬" label="CG-студия" onClick={() => setCgStudioOpen(true)} />
+                  <MenuItem icon="🖼" label="Генерация фонов" onClick={() => setGenOpen((v) => !v)} />
                   <MenuItem icon="✎" label="Правка в игре" onClick={() => setPanel('edit')} />
                   <MenuItem icon="↻" label={t('player.regen')} onClick={() => s.regenerate()} />
                 </div>
@@ -209,6 +212,7 @@ export function PlayerPage() {
       <HistoryPanel open={panel === 'history'} onClose={() => setPanel(null)} />
       <AuthorNotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} />
       <SaveLoadPanel open={panel === 'saves'} onClose={() => setPanel(null)} />
+      <CgStudio open={cgStudioOpen} onClose={() => setCgStudioOpen(false)} />
       <WorkshopPanel
         open={workshopOpen}
         onClose={() => setWorkshopOpen(false)}
