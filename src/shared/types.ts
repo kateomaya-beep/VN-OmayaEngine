@@ -392,6 +392,9 @@ export interface PlayerTheme {
   fontFamily: string; // CSS font-family, опц.
   fontScale: number; // множитель размера читаемого текста (0.8–1.6)
   nameScale: number; // множитель размера имени говорящего (0.8–1.6)
+  spriteScale: number; // множитель размера спрайта персонажа (0.5–1.6)
+  spriteOffsetX: number; // смещение спрайта по X, % (влево−/вправо+)
+  spriteOffsetY: number; // смещение спрайта по Y, % (вниз−/вверх+)
 }
 
 export const DEFAULT_PLAYER_THEME: PlayerTheme = {
@@ -411,6 +414,9 @@ export const DEFAULT_PLAYER_THEME: PlayerTheme = {
   fontFamily: '',
   fontScale: 1,
   nameScale: 1,
+  spriteScale: 1,
+  spriteOffsetX: 0,
+  spriteOffsetY: 0,
 };
 
 // Санитизация частичной/битой темы (импорт проекта, старый глобальный конфиг) → полная.
@@ -437,6 +443,9 @@ export function normalizePlayerTheme(p: unknown): PlayerTheme {
     fontFamily: strOr(o.fontFamily, ''),
     fontScale: numIn(o.fontScale, 1, 0.6, 2),
     nameScale: numIn(o.nameScale, 1, 0.6, 2),
+    spriteScale: numIn(o.spriteScale, 1, 0.3, 2),
+    spriteOffsetX: numIn(o.spriteOffsetX, 0, -100, 100),
+    spriteOffsetY: numIn(o.spriteOffsetY, 0, -100, 100),
   };
 }
 

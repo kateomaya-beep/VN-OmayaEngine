@@ -84,6 +84,10 @@ export function themeVars(t: PlayerTheme): CSSProperties {
     '--pl-cal': t.calendarColor,
     '--pl-font-scale': String(t.fontScale),
     '--pl-name-scale': String(t.nameScale),
+    // Спрайт: масштаб + смещение (Y положительный = вверх, поэтому знак инвертируем).
+    '--pl-sprite-scale': String(t.spriteScale),
+    '--pl-sprite-x': `${t.spriteOffsetX}%`,
+    '--pl-sprite-y': `${-t.spriteOffsetY}%`,
     ...(t.fontFamily ? { fontFamily: `'${t.fontFamily}', 'Inter', system-ui, sans-serif` } : {}),
   } as CSSProperties;
 }

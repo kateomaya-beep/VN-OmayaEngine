@@ -347,6 +347,55 @@ export function WorkshopPanel({
           className="w-full accent-[var(--pl-accent,#b18cff)]"
         />
 
+        {/* Спрайты персонажей: размер + положение */}
+        <label className="label mt-5">{L('Спрайты персонажей', 'Character sprites')}</label>
+        <div className="space-y-2">
+          <div>
+            <div className="text-xs text-gray-400 mb-1">
+              {L('Размер', 'Size')}: {Math.round(theme.spriteScale * 100)}%
+            </div>
+            <input
+              type="range"
+              min={0.5}
+              max={1.6}
+              step={0.02}
+              value={theme.spriteScale}
+              onChange={(e) => set({ spriteScale: Number(e.target.value) })}
+              className="w-full accent-[var(--pl-accent,#b18cff)]"
+            />
+          </div>
+          <div>
+            <div className="text-xs text-gray-400 mb-1">
+              {L('По горизонтали', 'Horizontal')}: {theme.spriteOffsetX > 0 ? '+' : ''}
+              {theme.spriteOffsetX}%
+            </div>
+            <input
+              type="range"
+              min={-50}
+              max={50}
+              step={1}
+              value={theme.spriteOffsetX}
+              onChange={(e) => set({ spriteOffsetX: Number(e.target.value) })}
+              className="w-full accent-[var(--pl-accent,#b18cff)]"
+            />
+          </div>
+          <div>
+            <div className="text-xs text-gray-400 mb-1">
+              {L('По вертикали (выше +)', 'Vertical (up +)')}: {theme.spriteOffsetY > 0 ? '+' : ''}
+              {theme.spriteOffsetY}%
+            </div>
+            <input
+              type="range"
+              min={-50}
+              max={50}
+              step={1}
+              value={theme.spriteOffsetY}
+              onChange={(e) => set({ spriteOffsetY: Number(e.target.value) })}
+              className="w-full accent-[var(--pl-accent,#b18cff)]"
+            />
+          </div>
+        </div>
+
         {/* Живой предпросмотр (реплика + обычный и премиум выборы) */}
         <div className="label mt-5">{L('Предпросмотр', 'Preview')}</div>
         <div className="rounded-xl overflow-hidden border border-white/10">

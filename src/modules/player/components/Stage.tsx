@@ -169,6 +169,13 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
             src={l.url}
             alt=""
             className="object-contain object-bottom h-[118%] -mb-[60%] max-w-[130%] sm:h-[88%] sm:mb-[2%] sm:max-w-[46%]"
+            style={{
+              // Пер-проектная подгонка спрайта (мастерская оформления): масштаб от
+              // нижнего центра + смещение по X/Y.
+              transform:
+                'translate(var(--pl-sprite-x, 0), var(--pl-sprite-y, 0)) scale(var(--pl-sprite-scale, 1))',
+              transformOrigin: 'bottom center',
+            }}
           />
         </div>
       ))}
