@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { Modal } from '../../shared/ui';
 import { ApiConnectionField } from '../constructor/editors/ApiConnectionField';
 import { useConnection } from '../../ai/connection';
+import { useConnectionPresets } from '../../ai/connectionPresets';
 import { isProxyActive } from '../../ai/providers';
 
 // Глобальное основное подключение к LLM (Batch 3 §2): единый источник истины для
 // всей игровой генерации, не на проект. Живёт в верхней панели везде.
 export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { connection, setConnection } = useConnection();
+  const { presets, activeId, saveCurrent, apply, remove } = useConnectionPresets();
   const [proxy, setProxy] = useState<boolean | null>(null);
   useEffect(() => {
     if (open) isProxyActive().then(setProxy);
@@ -30,9 +32,58 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
         </div>
       )}
       <p className="text-xs text-gray-500 mb-4">
-        Одно подключение на всё приложение — используется всеми проектами. Ключ хранится только в
-        этом браузере. Отдельные подключения для саммари/эмбеддингов/картинок — в «Расширениях».
+        Одно активное подключение на всё приложение. Несколько провайдеров можно держать
+        пресетами и переключаться. Ключ хранится только в этом браузере. Отдельные
+        подключения для саммари/эмбеддингов/картинок — в «Расширениях».
       </p>
+
+      {/* Пресеты подключения: быстрое переключение между провайдерами. */}
+      <div className="card !bg-panel2 !p-3 mb-4">
+        <label className="label">Пресеты подключения</label>
+        <div className="flex gap-2 flex-wrap items-center">
+          <select
+            className="input flex-1 min-w-[10rem]"
+            value={activeId || ''}
+            onChange={(e) => e.target.value && apply(e.target.value)}
+          >
+            <option value="">— выбрать пресет —</option>
+            {presets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} · {p.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} · {p.model || '—'}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn-ghost !px-3 text-xs shrink-0"
+            onClick={() => {
+              const name = window.prompt(
+                'Имя пресета (напр. «DeepSeek», «Claude»). Сохранит текущий провайдер, URL, модель и ключ.',
+                presets.find((p) => p.id === activeId)?.name || ''
+              );
+              if (name && name.trim()) saveCurrent(name.trim());
+            }}
+          >
+            💾 Сохранить
+          </button>
+          {activeId && (
+            <button
+              className="btn-ghost !px-2 text-xs text-red-300 shrink-0"
+              title="Удалить активный пресет"
+              onClick={() => {
+                const p = presets.find((x) => x.id === activeId);
+                if (p && window.confirm(`Удалить пресет «${p.name}»?`)) remove(p.id);
+              }}
+            >
+              🗑
+            </button>
+          )}
+        </div>
+        <p className="text-[11px] text-gray-500 mt-1">
+          «Сохранить» запоминает текущие настройки под именем (со своим ключом). Выбор из списка —
+          мгновенно переключает провайдера.
+        </p>
+      </div>
+
       <ApiConnectionField
         conn={connection}
         keyRole={connection.provider}
