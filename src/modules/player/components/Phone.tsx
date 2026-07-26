@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../playerStore';
 import { AssetImage } from '../../../shared/ui';
@@ -124,6 +124,7 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
   const { cfg } = useCfg();
   const s = usePlayerStore();
   const [app, setApp] = useState<App>('home');
+  const [chatWith, setChatWith] = useState<string | null>(null);
   if (!open || !cfg.enabled || !s.project || !s.state) return null;
   const project = s.project;
   const phone = s.state.phone;
@@ -131,6 +132,10 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
   const wallpaperKey = project.assets.find((a) => a.id === cfg.wallpaperAssetId)?.blobKey;
 
   const contactName = (id: string) => project.characters.find((c) => c.id === id)?.name || id;
+  const openChat = (id: string) => {
+    setChatWith(id);
+    s.markPhoneRead(id);
+  };
   const soon = (
     <div className="text-center text-white/60 text-sm py-8">Появится в следующем обновлении телефона.</div>
   );
@@ -178,7 +183,7 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
                 ['shop', 'Магазин'],
                 ['camera', 'Камера'],
               ] as [App, string][]).map(([id, label]) => (
-                <button key={id} className="flex flex-col items-center gap-1" onClick={() => setApp(id)}>
+                <button key={id} className="flex flex-col items-center gap-1" onClick={() => { setChatWith(null); setApp(id); }}>
                   <AppIcon kind={id} />
                   <span className="text-[11px] text-white/90">{label}</span>
                 </button>
@@ -221,7 +226,7 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
           </Screen>
         )}
 
-        {app === 'messages' && (
+        {app === 'messages' && !chatWith && (
           <Screen title="Сообщения">
             {!phone?.contacts.filter((c) => !c.hidden).length ? (
               <div className="text-sm text-white/50">Контактов пока нет — они появятся, когда встретишь персонажей.</div>
@@ -234,8 +239,12 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
                     const last = msgs[msgs.length - 1];
                     const unread = phone.unreadFrom.includes(c.characterId);
                     return (
-                      <div key={c.characterId} className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2.5">
-                        <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-sm">
+                      <button
+                        key={c.characterId}
+                        className="w-full flex items-center gap-3 rounded-xl bg-white/5 hover:bg-white/10 px-3 py-2.5 text-left"
+                        onClick={() => openChat(c.characterId)}
+                      >
+                        <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-sm shrink-0">
                           {contactName(c.characterId)[0]}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -245,13 +254,21 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
                           </div>
                           <div className="text-xs text-white/60 truncate">{last ? last.text : 'Нет сообщений'}</div>
                         </div>
-                      </div>
+                        <span className="text-white/30 text-lg">›</span>
+                      </button>
                     );
                   })}
               </div>
             )}
-            <div className="mt-3">{soon}</div>
           </Screen>
+        )}
+
+        {app === 'messages' && chatWith && (
+          <ChatThread
+            characterId={chatWith}
+            name={contactName(chatWith)}
+            onBack={() => setChatWith(null)}
+          />
         )}
 
         {app === 'shop' && (
@@ -287,5 +304,88 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
       </div>
     </div>,
     document.body
+  );
+}
+
+// ---- Тред переписки с персонажем (мессенджер + ответы ИИ) ----
+function ChatThread({ characterId, name, onBack }: { characterId: string; name: string; onBack: () => void }) {
+  const s = usePlayerStore();
+  const [draft, setDraft] = useState('');
+  const endRef = useRef<HTMLDivElement>(null);
+  const msgs = s.state?.phone?.conversations[characterId] || [];
+  const typing = s.phoneTypingFrom === characterId;
+
+  // Автопрокрутка вниз при новых сообщениях / индикаторе печати.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [msgs.length, typing]);
+
+  const send = () => {
+    const t = draft.trim();
+    if (!t || typing) return;
+    setDraft('');
+    void s.sendPhoneMessage(characterId, t);
+  };
+
+  return (
+    <div className="absolute inset-0 flex flex-col">
+      <div className="flex items-center gap-2 px-3 py-3 bg-black/40 backdrop-blur-md">
+        <button className="text-white/90 text-xl leading-none" onClick={onBack}>‹</button>
+        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm">{name[0]}</div>
+        <div className="font-semibold text-white">{name}</div>
+      </div>
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-2">
+        {!msgs.length && (
+          <div className="text-center text-white/40 text-sm py-6">Напишите первым — {name} ответит.</div>
+        )}
+        {msgs.map((m, i) => (
+          <div key={i} className={`flex ${m.from === 'protagonist' ? 'justify-end' : 'justify-start'}`}>
+            <div
+              className={`max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap break-words ${
+                m.from === 'protagonist'
+                  ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white rounded-br-md'
+                  : 'bg-white/12 text-white rounded-bl-md'
+              }`}
+            >
+              {m.text}
+            </div>
+          </div>
+        ))}
+        {typing && (
+          <div className="flex justify-start">
+            <div className="px-3 py-2.5 rounded-2xl rounded-bl-md bg-white/12">
+              <span className="flex gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce [animation-delay:-0.3s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce [animation-delay:-0.15s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce" />
+              </span>
+            </div>
+          </div>
+        )}
+        <div ref={endRef} />
+      </div>
+      <div className="flex items-center gap-2 p-2.5 bg-black/40 backdrop-blur-md">
+        <input
+          className="flex-1 rounded-full bg-white/10 border border-white/15 px-4 py-2 text-sm text-white placeholder-white/40 outline-none focus:border-emerald-400/50"
+          placeholder="Сообщение…"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
+        />
+        <button
+          className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center disabled:opacity-40"
+          onClick={send}
+          disabled={!draft.trim() || typing}
+          title="Отправить"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 12l16-8-6 8 6 8-16-8Z" fill="#fff" /></svg>
+        </button>
+      </div>
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 import type { Project, RuntimeState, LlmMessage } from '../shared/types';
-import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN } from '../shared/types';
+import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, PHONE_BALANCE_STAT } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { getPresetSettings } from './presetSettings';
@@ -262,6 +262,32 @@ function gameMasterBlock(state: RuntimeState): string {
     : '(no game-master state yet — establish it via worldState this turn)';
 }
 
+// Контекст телефона (Batch 7 §7.3): даём модели знать про баланс, валюту и
+// управляющие биты (money_change / sms_incoming / contact_added), плюс правило
+// нулевого баланса. Возвращаем '' если расширение выключено.
+function phoneBlock(project: Project, state: RuntimeState): string {
+  const cfg = project.phone;
+  if (!cfg?.enabled) return '';
+  const bal = state.statValues[PHONE_BALANCE_STAT] ?? 0;
+  const cur = cfg.currencyName || '$';
+  const contacts = (state.phone?.contacts || [])
+    .filter((c) => !c.hidden)
+    .map((c) => {
+      const nm = project.characters.find((x) => x.id === c.characterId)?.name || c.characterId;
+      return `${nm} (${c.characterId})`;
+    });
+  const parts = [
+    `The hero carries a smartphone. Current wallet balance: ${bal} ${cur}.`,
+    `You may drive the phone through control beats (they carry NO display text and are removed from the visible flow):`,
+    `  - {"type":"money_change","amount":<+/- number>,"reason":"<short>"} — hero earns or spends money. Use for salaries, gifts, purchases, fines, etc. Never let the balance go below 0 in fiction.`,
+    `  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero off-screen (weave it naturally; it appears in the Messages app).`,
+    `  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone's number (any character who appears is auto-added, so only use this for someone met off-screen).`,
+    `ZERO-BALANCE RULE: if balance is 0 and the hero tries to buy or pay for something, they cannot afford it — reflect that in the story (declined card, no cash) instead of emitting a negative money_change.`,
+  ];
+  if (contacts.length) parts.push(`Saved phone contacts: ${contacts.join(', ')}.`);
+  return `== PHONE ==\n${parts.join('\n')}`;
+}
+
 export interface BuiltRequest {
   system: string;
   messages: LlmMessage[];
@@ -361,6 +387,9 @@ export async function buildRequest(
   systemParts.push(
     `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts, character dialogue and choice texts — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate JSON keys, character ids, emotion keys, outfit tags, music moods or background ids — those stay exactly as given.`
   );
+  // Телефон (Batch 7) — контекст только если расширение включено.
+  const phoneCtx = phoneBlock(project, state);
+  if (phoneCtx) systemParts.push(phoneCtx);
   const system = systemParts.join('\n\n');
 
   // Live window of history. Прошлые ходы ассистента храним сырым JSON (для реплея),

@@ -95,6 +95,23 @@ export function repairBeat(project: Project, b: any): Beat {
     if (ch && canon) return { type: 'outfit_change', characterId: ch.id, outfit: canon };
     return { type: 'narration', text: '' }; // невалидно → пустой нарратив (движок отфильтрует)
   }
+  // Телефон (Batch 7 §7.2): money_change / sms_incoming / contact_added.
+  if (b?.type === 'money_change') {
+    const amount = typeof b.amount === 'number' && Number.isFinite(b.amount) ? Math.round(b.amount) : 0;
+    if (amount === 0) return { type: 'narration', text: '' };
+    return { type: 'money_change', amount, reason: typeof b.reason === 'string' ? b.reason : undefined };
+  }
+  if (b?.type === 'sms_incoming') {
+    const ch = b.characterId ? charById.get(b.characterId) : undefined;
+    const text = txt(b.text);
+    if (ch && text.trim()) return { type: 'sms_incoming', characterId: ch.id, text };
+    return { type: 'narration', text: '' };
+  }
+  if (b?.type === 'contact_added') {
+    const ch = b.characterId ? charById.get(b.characterId) : undefined;
+    if (ch) return { type: 'contact_added', characterId: ch.id };
+    return { type: 'narration', text: '' };
+  }
 
   if (!b || b.type !== 'dialogue') {
     if (b?.type === 'thought') return { type: 'thought', text: txt(b.text), bg, mood };

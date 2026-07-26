@@ -449,7 +449,8 @@ export type RandomEventType =
   | 'new_location'
   | 'secret_reveal'
   | 'dramatic_event'
-  | 'unexpected_twist';
+  | 'unexpected_twist'
+  | 'incoming_sms';
 
 export interface RandomEventTypeConfig {
   id: RandomEventType;
@@ -471,6 +472,7 @@ export const RANDOM_EVENT_TYPES: RandomEventType[] = [
   'secret_reveal',
   'dramatic_event',
   'unexpected_twist',
+  'incoming_sms',
 ];
 
 export const RANDOM_EVENT_LABELS: Record<RandomEventType, { ru: string; en: string }> = {
@@ -479,6 +481,7 @@ export const RANDOM_EVENT_LABELS: Record<RandomEventType, { ru: string; en: stri
   secret_reveal: { ru: 'Раскрытие секрета', en: 'Secret revealed' },
   dramatic_event: { ru: 'Драматичное событие', en: 'Dramatic event' },
   unexpected_twist: { ru: 'Неожиданный поворот', en: 'Unexpected twist' },
+  incoming_sms: { ru: 'Входящее СМС (телефон)', en: 'Incoming SMS (phone)' },
 };
 
 export function defaultRandomEvents(): RandomEventConfig {
@@ -681,7 +684,11 @@ export type Beat =
       mood?: string;
     }
   | { type: 'scene_change'; bg?: string; musicMood?: string } // смена фона/музыки в потоке
-  | { type: 'outfit_change'; characterId: string; outfit: string }; // переодевание персонажа
+  | { type: 'outfit_change'; characterId: string; outfit: string } // переодевание персонажа
+  // Телефон (Batch 7 §7.2) — управляющие биты состояния телефона (не отображают текст).
+  | { type: 'money_change'; amount: number; reason?: string }
+  | { type: 'sms_incoming'; characterId: string; text: string }
+  | { type: 'contact_added'; characterId: string };
 
 export interface SceneDirective {
   backgroundId: string | null;

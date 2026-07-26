@@ -3,6 +3,7 @@ import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, Me
 import { initialPhoneState } from '../../shared/types';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
+import { generatePhoneReply } from '../../ai/phoneChat';
 import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, saveProject, deleteSave } from '../../storage/db';
 import {
@@ -99,6 +100,10 @@ interface PlayerStore {
   // runtime и автосохраняется.
   patchGm: (mutator: (gm: GameMasterState) => void) => void;
   patchPhone: (mutator: (p: PhoneState) => void) => void;
+  // Мессенджер телефона (Batch 7 §7.2): отправить СМС персонажу и получить ответ ИИ.
+  phoneTypingFrom: string | null; // characterId, от кого сейчас «печатается» ответ
+  sendPhoneMessage: (characterId: string, text: string) => Promise<void>;
+  markPhoneRead: (characterId: string) => void;
   // Правка памяти (список свёрток/саммари) прямо в игре.
   patchMemory: (mutator: (m: MemoryState) => void) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
@@ -152,6 +157,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   autosaveSlot: 0,
   currentCheckpointId: undefined,
   autosnapRing: [],
+  phoneTypingFrom: null,
 
   setDraft(t) {
     set({ draft: t });
@@ -458,6 +464,46 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     mutator(phone);
     set({ state: { ...st.state, phone } });
     void get().autosave();
+  },
+
+  markPhoneRead(characterId) {
+    const st = get();
+    if (!st.state?.phone) return;
+    if (!st.state.phone.unreadFrom.includes(characterId)) return;
+    get().patchPhone((p) => {
+      p.unreadFrom = p.unreadFrom.filter((id) => id !== characterId);
+    });
+  },
+
+  async sendPhoneMessage(characterId, text) {
+    const st = get();
+    const trimmed = text.trim();
+    if (!st.project || !st.state || !trimmed || st.phoneTypingFrom) return;
+    // Кладём сообщение игрока сразу (оптимистично) и чистим непрочитанное.
+    get().patchPhone((p) => {
+      (p.conversations[characterId] ||= []).push({ from: 'protagonist', text: trimmed, at: Date.now() });
+      p.unreadFrom = p.unreadFrom.filter((id) => id !== characterId);
+    });
+    set({ phoneTypingFrom: characterId });
+    try {
+      const cur = get();
+      const convo = cur.state?.phone?.conversations[characterId] || [];
+      const reply = await generatePhoneReply(cur.project!, cur.state!, characterId, convo);
+      get().patchPhone((p) => {
+        (p.conversations[characterId] ||= []).push({ from: 'contact', text: reply, at: Date.now() });
+      });
+    } catch (e) {
+      logEvent('error', 'phone', e instanceof Error ? e.message : String(e));
+      get().patchPhone((p) => {
+        (p.conversations[characterId] ||= []).push({
+          from: 'contact',
+          text: '…(нет связи)',
+          at: Date.now(),
+        });
+      });
+    } finally {
+      set({ phoneTypingFrom: null });
+    }
   },
 
   patchMemory(mutator) {

@@ -30,6 +30,10 @@ export const beatSchema = z.union([
     characterId: z.string(),
     outfit: z.string(),
   }),
+  // Телефон (Batch 7 §7.2).
+  z.object({ type: z.literal('money_change'), amount: z.number(), reason: z.string().nullish() }),
+  z.object({ type: z.literal('sms_incoming'), characterId: z.string(), text: z.string() }),
+  z.object({ type: z.literal('contact_added'), characterId: z.string() }),
 ]);
 
 export const sceneSchema = z.object({

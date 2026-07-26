@@ -1,5 +1,6 @@
-import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry } from '../shared/types';
-import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH } from '../shared/types';
+import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry, PhoneState } from '../shared/types';
+import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhoneState } from '../shared/types';
+import { pushToast } from '../shared/toast';
 import { buildRequest } from './promptBuilder';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
@@ -66,6 +67,12 @@ export async function applyTurn(
 
   // Apply stat changes (clamped) and collect canonical facts (turn-indexed, not chapter-indexed).
   const { values, effective } = applyStatChanges(project, state.statValues, turn.statChanges);
+  // Баланс телефона — виртуальный стат (не в project.stats), applyStatChanges его
+  // пропускает; если ИИ прислал дельту на него — применяем вручную (учтётся ниже,
+  // после подготовки phone-состояния).
+  const balanceDeltas = project.phone?.enabled
+    ? turn.statChanges.filter((ch) => ch.statId === PHONE_BALANCE_STAT)
+    : [];
   const rel = applyRelationshipChanges(project, state.relationship, turn.statChanges);
   // Гарантируем запись отношений для КАЖДОГО персонажа проекта — чтобы персонажи,
   // добавленные по ходу игры, сразу отслеживались, эволюционировали и сохранялись
@@ -120,6 +127,24 @@ export async function applyTurn(
   for (const os of state.onScreen) outfitByChar.set(os.characterId, os.outfit);
   const onScreenMap = new Map(state.onScreen.map((s) => [s.characterId, s]));
 
+  // Телефон (Batch 7): состояние правится управляющими битами. Мутируем копию только
+  // если расширение включено.
+  const phoneOn = !!project.phone?.enabled;
+  const phone: PhoneState = JSON.parse(JSON.stringify(state.phone ?? initialPhoneState()));
+  const addContact = (cid: string) => {
+    if (!phoneOn) return;
+    if (!phone.contacts.some((c) => c.characterId === cid)) phone.contacts.push({ characterId: cid });
+  };
+  // Дельты баланса из statChanges (money_change-биты обрабатываются в цикле ниже).
+  for (const ch of balanceDeltas) {
+    const before = values[PHONE_BALANCE_STAT] ?? 0;
+    const after = Math.max(0, before + ch.delta);
+    if (after !== before) {
+      values[PHONE_BALANCE_STAT] = after;
+      phone.transactions.push({ amount: after - before, reason: ch.reason || '', at: Date.now() });
+    }
+  }
+
   let runBg: string | null = turn.scene.backgroundId ?? state.currentBackgroundId;
   let runMood: string | null = turn.scene.musicMood ?? state.currentMusicMood;
 
@@ -136,6 +161,32 @@ export async function applyTurn(
       if (cur) onScreenMap.set(b.characterId, { ...cur, outfit: b.outfit });
       continue;
     }
+    // Телефон: money_change / sms_incoming / contact_added — управляющие, текста нет.
+    if (b.type === 'money_change') {
+      if (phoneOn) {
+        const before = values[PHONE_BALANCE_STAT] ?? 0;
+        const after = Math.max(0, before + b.amount);
+        values[PHONE_BALANCE_STAT] = after;
+        if (after !== before) phone.transactions.push({ amount: after - before, reason: b.reason || '', at: Date.now() });
+      }
+      continue;
+    }
+    if (b.type === 'sms_incoming') {
+      if (phoneOn) {
+        addContact(b.characterId);
+        (phone.conversations[b.characterId] ||= []).push({ from: 'contact', text: b.text, at: Date.now() });
+        if (!phone.unreadFrom.includes(b.characterId)) phone.unreadFrom.push(b.characterId);
+        if (project.phone?.popupNotifications) {
+          const nm = project.characters.find((c) => c.id === b.characterId)?.name || 'Сообщение';
+          pushToast('info', `💬 ${nm}: ${b.text.slice(0, 60)}`);
+        }
+      }
+      continue;
+    }
+    if (b.type === 'contact_added') {
+      addContact(b.characterId);
+      continue;
+    }
     // Пустой нарратив (артефакт невалидного управляющего бита) — тоже отбрасываем.
     if (b.type === 'narration' && !b.text.trim() && !b.bg && !b.mood) continue;
 
@@ -146,6 +197,8 @@ export async function applyTurn(
     else if (runMood) b.mood = runMood;
 
     if (b.type === 'dialogue' && b.characterId) {
+      // Встреченный персонаж → авто-контакт в телефоне (Batch 7 §3.1).
+      addContact(b.characterId);
       // Наряд бита приоритетнее; иначе — текущий наряд персонажа из состояния.
       if (b.outfit) outfitByChar.set(b.characterId, b.outfit);
       else if (outfitByChar.get(b.characterId)) b.outfit = outfitByChar.get(b.characterId);
@@ -192,6 +245,7 @@ export async function applyTurn(
     onScreen,
     history,
     gm,
+    phone: phoneOn ? phone : state.phone,
     lastTurn: turn,
     turnCount: nextTurnNumber,
     lastChoiceTurn,
