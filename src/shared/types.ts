@@ -397,6 +397,11 @@ export interface PhoneState {
 }
 
 const DEFAULT_CAMERA_PROMPT =
+  'semi-realistic front-camera selfie of {protagonist_name}, {user_prompt}, painterly semi-realism art style, soft cinematic lighting, natural skin texture, subtle bokeh background, shot at arm’s length on a smartphone, high detail, tasteful composition';
+
+// Прежний дефолт — чтобы при загрузке старых проектов молча обновить его на новый
+// (семи-реализм), не затирая пользовательские правки.
+const LEGACY_CAMERA_PROMPT =
   'selfie photo of {protagonist_name}, {user_prompt}, casual phone camera quality, natural lighting';
 
 export const DEFAULT_PRICE_GUIDE =
@@ -488,7 +493,9 @@ export function normalizePhoneConfig(v: unknown): PhoneConfig {
     wallpaperAssetId: typeof o.wallpaperAssetId === 'string' ? o.wallpaperAssetId : undefined,
     cameraPromptTemplate:
       typeof o.cameraPromptTemplate === 'string' && o.cameraPromptTemplate.trim()
-        ? o.cameraPromptTemplate
+        ? o.cameraPromptTemplate.trim() === LEGACY_CAMERA_PROMPT
+          ? d.cameraPromptTemplate // молча апгрейдим прежний дефолт до семи-реализма
+          : o.cameraPromptTemplate
         : d.cameraPromptTemplate,
     popupNotifications: typeof o.popupNotifications === 'boolean' ? o.popupNotifications : true,
     currencyName: typeof o.currencyName === 'string' && o.currencyName.trim() ? o.currencyName : '$',

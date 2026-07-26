@@ -13,6 +13,8 @@ export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () =>
   const s = usePlayerStore();
   const project = s.project;
   const [newCat, setNewCat] = useState('');
+  // Результат теста image-API: null — не запускали; 'testing'; 'ok'; {error}.
+  const [imgTest, setImgTest] = useState<null | 'testing' | 'ok' | { error: string }>(null);
   if (!open || !project) return null;
 
   const cfg = project.phone ?? defaultPhoneConfig();
@@ -101,12 +103,34 @@ export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () =>
           <div>
             <label className="label">Шаблон промпта камеры</label>
             <textarea
-              className="input h-16 text-xs font-mono"
+              className="input h-20 text-xs font-mono"
               value={cfg.cameraPromptTemplate}
               onChange={(e) => patch({ cameraPromptTemplate: e.target.value })}
             />
             <p className="text-[11px] text-gray-500 mt-1">
-              Плейсхолдеры: <code>{'{protagonist_name}'}</code>, <code>{'{user_prompt}'}</code>.
+              Плейсхолдеры: <code>{'{protagonist_name}'}</code>, <code>{'{user_prompt}'}</code>. Дефолт — семи-реализм, фронталка смартфона.
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                className="btn-ghost text-xs shrink-0"
+                disabled={imgTest === 'testing'}
+                onClick={async () => {
+                  setImgTest('testing');
+                  const err = await s.testImageApi();
+                  setImgTest(err ? { error: err } : 'ok');
+                }}
+              >
+                {imgTest === 'testing' ? '⏳ Проверяю…' : '🔌 Тест генерации изображений'}
+              </button>
+              {imgTest === 'ok' && <span className="text-xs text-green-400">✓ Подключение работает</span>}
+              {imgTest && typeof imgTest === 'object' && (
+                <span className="text-xs text-red-400 truncate" title={imgTest.error}>
+                  ⚠️ {imgTest.error}
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Тест генерирует одну маленькую картинку через настроенное image-API (расходует токены/кредиты). Настройка ключа — в 🎬 CG-студии.
             </p>
           </div>
 

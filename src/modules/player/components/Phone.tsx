@@ -78,18 +78,25 @@ export function PhoneFloatingIcon({ onOpen }: { onOpen: () => void }) {
   const { cfg, patch } = useCfg();
   const s = usePlayerStore();
   const [pos, setPos] = useState(cfg.iconPosition);
-  const drag = useRef<{ moved: boolean } | null>(null);
+  // Порог движения: тап с микро-дрожанием (частый на тач/мыши) НЕ считается
+  // перетаскиванием — иначе onUp уходил в ветку drag и телефон не открывался.
+  const drag = useRef<{ moved: boolean; sx: number; sy: number } | null>(null);
   const unread = s.state?.phone?.unreadFrom?.length ?? 0;
+  const DRAG_THRESHOLD = 6; // px
 
   if (!cfg.enabled || !cfg.showFloatingIcon) return null;
 
   function onDown(e: React.PointerEvent) {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { moved: false };
+    drag.current = { moved: false, sx: e.clientX, sy: e.clientY };
   }
   function onMove(e: React.PointerEvent) {
     if (!drag.current) return;
-    drag.current.moved = true;
+    if (!drag.current.moved) {
+      const dist = Math.hypot(e.clientX - drag.current.sx, e.clientY - drag.current.sy);
+      if (dist < DRAG_THRESHOLD) return; // ещё считается тапом
+      drag.current.moved = true;
+    }
     const x = Math.max(4, Math.min(96, (e.clientX / window.innerWidth) * 100));
     const y = Math.max(8, Math.min(94, (e.clientY / window.innerHeight) * 100));
     setPos({ x, y });

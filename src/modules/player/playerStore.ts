@@ -116,6 +116,8 @@ interface PlayerStore {
   cameraBusy: boolean;
   takeSelfie: (userPrompt: string) => Promise<void>;
   sendPhoto: (characterId: string, assetId: string) => Promise<void>;
+  // Тест подключения image-API (для камеры/CG). '' = успех, иначе текст ошибки.
+  testImageApi: () => Promise<string>;
   // Правка памяти (список свёрток/саммари) прямо в игре.
   patchMemory: (mutator: (m: MemoryState) => void) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
@@ -651,6 +653,23 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       set({ error: 'Не удалось сделать фото. Проверьте настройки генерации изображений.' });
     } finally {
       set({ cameraBusy: false });
+    }
+  },
+
+  async testImageApi() {
+    const st = get();
+    if (!st.project) return 'Проект не загружен.';
+    if (!getApiKey('image')) return 'Не задан ключ image-API (🎬 CG-студия → подключение).';
+    try {
+      const ig = st.project.imageGen ?? defaultImageGenConfig();
+      // Минимальная генерация — проверяем, что ключ/URL/модель отвечают.
+      const blob = await generateImage(ig, {
+        prompt: 'a tiny simple test image of a single red apple on a plain white background',
+      });
+      if (!blob || blob.size === 0) return 'Пустой ответ от image-API.';
+      return '';
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
     }
   },
 
