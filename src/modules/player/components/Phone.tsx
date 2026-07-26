@@ -29,6 +29,16 @@ function money(n: number, currency: string): string {
   return currency === '$' ? `$${n}` : `${n} ${currency}`;
 }
 
+// Время сообщения ЧЧ:ММ из timestamp.
+function fmtTime(at: number): string {
+  try {
+    const d = new Date(at);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  } catch {
+    return '';
+  }
+}
+
 // ---- SVG-иконки приложений (оригинальные) ----
 const AppIcon = ({ kind }: { kind: App | 'settings' }) => {
   const p: Record<string, ReactNode> = {
@@ -252,55 +262,97 @@ function ChatThread({ characterId, name, onBack }: { characterId: string; name: 
     void s.sendPhoneMessage(characterId, t);
   };
 
+  // Инициалы для аватара.
+  const initial = name.trim()[0]?.toUpperCase() || '?';
+
   return (
-    <div className="absolute inset-0 flex flex-col">
-      <div className="flex items-center gap-2 px-3 py-3 bg-black/40 backdrop-blur-md">
-        <button className="text-white/90 text-xl leading-none" onClick={onBack}>‹</button>
-        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm">{name[0]}</div>
-        <div className="font-semibold text-white">{name}</div>
+    <div className="absolute inset-0 flex flex-col bg-[#0b141a]">
+      {/* Шапка чата — аватар, имя, статус «печатает…» / «в сети» */}
+      <div className="flex items-center gap-2.5 px-2.5 py-2 bg-[#1f2c34] border-b border-black/30 shadow-sm z-10">
+        <button className="text-white/90 text-2xl leading-none px-1 -mr-1" onClick={onBack}>‹</button>
+        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-sm font-semibold text-white shrink-0">
+          {initial}
+        </div>
+        <div className="min-w-0 flex-1 leading-tight">
+          <div className="font-semibold text-white text-[15px] truncate">{name}</div>
+          <div className="text-[11px] h-3.5">
+            {typing ? (
+              <span className="text-emerald-400 flex items-center gap-1">
+                печатает
+                <span className="inline-flex gap-0.5">
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.3s]" />
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:-0.15s]" />
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce" />
+                </span>
+              </span>
+            ) : (
+              <span className="text-white/45">в сети</span>
+            )}
+          </div>
+        </div>
       </div>
-      <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-2">
-        {!msgs.length && (
-          <div className="text-center text-white/40 text-sm py-6">Напишите первым — {name} ответит.</div>
+
+      {/* Лента сообщений на «обоях» мессенджера */}
+      <div
+        className="flex-1 overflow-y-auto scrollbar-thin px-2.5 py-3 space-y-1"
+        style={{
+          background:
+            'radial-gradient(1200px 600px at 50% -10%, rgba(60,90,80,0.18), transparent), linear-gradient(180deg,#0b141a,#0d171e)',
+        }}
+      >
+        {!msgs.length && !typing && (
+          <div className="text-center text-white/40 text-sm py-8">Напишите первым — {name} ответит.</div>
         )}
         {msgs.map((m, i) => {
+          const mine = m.from === 'protagonist';
           const photoKey = m.attachedAssetId
             ? s.project?.assets.find((a) => a.id === m.attachedAssetId)?.blobKey
             : undefined;
+          // Хвостик пузыря только у последнего в серии от одного отправителя.
+          const nextSame = msgs[i + 1]?.from === m.from;
           return (
-            <div key={i} className={`flex ${m.from === 'protagonist' ? 'justify-end' : 'justify-start'}`}>
+            <div key={i} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
               <div
-                className={`max-w-[78%] rounded-2xl text-sm whitespace-pre-wrap break-words overflow-hidden ${
-                  m.from === 'protagonist'
-                    ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white rounded-br-md'
-                    : 'bg-white/12 text-white rounded-bl-md'
+                className={`relative max-w-[80%] text-[14px] leading-snug whitespace-pre-wrap break-words overflow-hidden shadow-sm ${
+                  mine ? 'bg-[#005c4b] text-white' : 'bg-[#202c33] text-white'
+                } ${
+                  mine
+                    ? nextSame ? 'rounded-2xl rounded-tr-md' : 'rounded-2xl rounded-br-md'
+                    : nextSame ? 'rounded-2xl rounded-tl-md' : 'rounded-2xl rounded-bl-md'
                 }`}
               >
-                {photoKey && (
-                  <AssetImage blobKey={photoKey} className="w-44 max-w-full object-cover" />
-                )}
-                {m.text && <div className="px-3 py-2">{m.text}</div>}
+                {photoKey && <AssetImage blobKey={photoKey} className="w-52 max-w-full object-cover block" />}
+                <div className="px-2.5 py-1.5">
+                  {m.text && <span>{m.text}</span>}
+                  <span className={`float-right ml-2 mt-1.5 text-[10px] leading-none ${mine ? 'text-white/60' : 'text-white/40'}`}>
+                    {fmtTime(m.at)}
+                    {mine && <span className="ml-0.5 text-[#53bdeb]">✓✓</span>}
+                  </span>
+                </div>
               </div>
             </div>
           );
         })}
         {typing && (
           <div className="flex justify-start">
-            <div className="px-3 py-2.5 rounded-2xl rounded-bl-md bg-white/12">
+            <div className="px-3 py-2.5 rounded-2xl rounded-bl-md bg-[#202c33]">
               <span className="flex gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce [animation-delay:-0.3s]" />
-                <span className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce [animation-delay:-0.15s]" />
-                <span className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce" />
+                <span className="w-1.5 h-1.5 rounded-full bg-white/60 animate-bounce [animation-delay:-0.3s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-white/60 animate-bounce [animation-delay:-0.15s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-white/60 animate-bounce" />
               </span>
             </div>
           </div>
         )}
         <div ref={endRef} />
       </div>
-      <div className="flex items-center gap-2 p-2.5 bg-black/40 backdrop-blur-md">
-        <input
-          className="flex-1 rounded-full bg-white/10 border border-white/15 px-4 py-2 text-sm text-white placeholder-white/40 outline-none focus:border-emerald-400/50"
-          placeholder="Сообщение…"
+
+      {/* Панель ввода */}
+      <div className="flex items-end gap-2 p-2 bg-[#1f2c34]">
+        <textarea
+          rows={1}
+          className="flex-1 resize-none max-h-24 rounded-2xl bg-[#2a3942] px-4 py-2.5 text-sm text-white placeholder-white/40 outline-none scrollbar-thin"
+          placeholder="Сообщение"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -311,12 +363,12 @@ function ChatThread({ characterId, name, onBack }: { characterId: string; name: 
           }}
         />
         <button
-          className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center disabled:opacity-40"
+          className="w-11 h-11 rounded-full bg-[#00a884] flex items-center justify-center shrink-0 disabled:opacity-40 active:scale-95 transition-transform"
           onClick={send}
           disabled={!draft.trim() || typing}
           title="Отправить"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 12l16-8-6 8 6 8-16-8Z" fill="#fff" /></svg>
+          <svg width="20" height="20" viewBox="0 0 24 24"><path d="M3 11.5 21 3l-8.5 18-2.2-7.3L3 11.5Z" fill="#fff" /></svg>
         </button>
       </div>
     </div>
