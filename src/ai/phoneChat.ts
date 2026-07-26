@@ -52,14 +52,16 @@ export async function generatePhoneReply(
   const ps = getPresetSettings();
   const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
 
+  const charName = project.characters.find((c) => c.id === characterId)?.name || 'the character';
   const system = [
     characterProfile(project, state, characterId),
     worldContext(project, state),
-    `TEXTING RULES:`,
-    `- Reply as ${project.characters.find((c) => c.id === characterId)?.name || 'the character'} would in a text chat: short, natural, in-character.`,
-    `- Write in ${narr}. Use casual messenger tone (may use short sentences, occasional emoji if it fits the character — do not overdo it).`,
-    `- Output ONLY the message text. No name prefix, no quotation marks, no narration, no JSON, no stage directions.`,
-    `- Keep it to 1–3 short messages worth of text (a few sentences at most). React to the hero's last message.`,
+    `TEXTING RULES (this is a plain text-message chat, NOT the visual-novel narration engine):`,
+    `- Reply as ${charName} would type in a messenger: short, natural, in-character. React to the hero's last message.`,
+    `- Write in ${narr}. Casual messenger tone; occasional emoji if it fits — do not overdo it.`,
+    `- Output ONLY the literal words ${charName} types. NOTHING else.`,
+    `- ABSOLUTELY FORBIDDEN: mood/tone labels or emotion tags of any kind (e.g. "(Defensive/Playful):", "[teasing]", "Amused:"), asterisk actions or roleplay markup (e.g. *smiles*, *rolls eyes*), narration, stage directions, character name prefixes, quotation marks around the whole message, JSON, or any commentary about the message. Just the message text itself.`,
+    `- Keep it to 1–3 short messages worth of text (a few sentences at most). Finish your thought — do not cut off mid-sentence.`,
   ].join('\n');
 
   const messages: LlmMessage[] = conversation.slice(-MAX_HISTORY).map((m) => ({
@@ -76,21 +78,55 @@ export async function generatePhoneReply(
     system,
     messages,
     temperature: Math.min(ps.temperature ?? 0.8, 1),
-    maxTokens: 400,
+    // Больше запаса, чтобы reasoning-модели не обрезали короткую реплику на полуслове.
+    maxTokens: 800,
     reasoningEffort: 'none',
     signal,
   });
 
-  // Чистим возможную обвязку (кавычки, префикс имени, случайный JSON).
-  let text = raw.trim();
-  // Срезаем ведущий "Имя:" если модель всё же добавила.
-  const name = project.characters.find((c) => c.id === characterId)?.name;
-  if (name && text.toLowerCase().startsWith(name.toLowerCase() + ':')) {
-    text = text.slice(name.length + 1).trim();
+  return cleanReply(raw, charName);
+}
+
+// Убирает артефакты «режиссёрского» формата, если модель их всё же добавила:
+// метки тона «(Defensive/Playful):», префикс имени, звёздочки-действия, кавычки, JSON.
+export function cleanReply(raw: string, charName: string): string {
+  let text = (raw || '').trim();
+
+  // Если пришёл JSON — пытаемся достать текст реплики.
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      const obj = JSON.parse(text);
+      const cand = obj?.text ?? obj?.message ?? obj?.reply ?? (Array.isArray(obj) ? obj[0]?.text : '');
+      if (typeof cand === 'string' && cand.trim()) text = cand.trim();
+    } catch {
+      /* оставляем как есть */
+    }
   }
-  // Снимаем обрамляющие кавычки.
-  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith('«') && text.endsWith('»'))) {
-    text = text.slice(1, -1).trim();
+
+  // Срезаем ведущую метку тона/эмоции в скобках или до двоеточия:
+  //   "(Defensive/Playful):", "[teasing]", "Amused:" — но НЕ реальную реплику с «:».
+  text = text.replace(/^\s*[([][^)\]\n]{0,40}[)\]]\s*[:—-]?\s*/, '');
+  const colon = text.match(/^\s*([A-Za-zА-Яа-яЁё/ ]{1,24}):\s+(?=\S)/);
+  if (colon && /^[A-Z]/.test(colon[1].trim()) && !colon[1].includes(' ')) {
+    // одно слово-метка с заглавной (Amused, Defensive…) — режем
+    text = text.slice(colon[0].length);
   }
+
+  // Ведущий префикс имени персонажа.
+  if (charName && text.toLowerCase().startsWith(charName.toLowerCase())) {
+    const rest = text.slice(charName.length).trimStart();
+    if (rest.startsWith(':')) text = rest.slice(1).trimStart();
+  }
+
+  // Снимаем обрамляющие кавычки/звёздочки, если обёрнута вся реплика.
+  const pairs: [string, string][] = [['"', '"'], ['«', '»'], ['*', '*'], ['“', '”']];
+  for (const [l, r] of pairs) {
+    if (text.length > 1 && text.startsWith(l) && text.endsWith(r)) {
+      text = text.slice(l.length, -r.length).trim();
+    }
+  }
+  // Одиночная висячая звёздочка в начале (незакрытое действие).
+  text = text.replace(/^\*+\s*/, '').replace(/\s*\*+$/, '').trim();
+
   return text || '…';
 }
