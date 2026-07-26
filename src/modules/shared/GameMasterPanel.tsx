@@ -18,7 +18,7 @@ import type {
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
 // отношений, календарь (день/месяц/год/время/локация + кастомные месяцы), адженда,
 // список саммари (свёрток) и векторизация. Двуязычно (по глобальному языку UI).
-type Tab = 'characters' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'summary' | 'vector' | 'selector';
+type Tab = 'characters' | 'inventory' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'summary' | 'vector' | 'selector';
 type Lf = (ru: string, en: string) => string;
 type GM = GameMasterState;
 type PatchGm = (m: (gm: GM) => void) => void;
@@ -41,6 +41,7 @@ export function GameMasterPanel({
 
   const TABS: { id: Tab; label: string; icon: string }[] = [
     { id: 'characters', label: L('Персонажи', 'Characters'), icon: '👥' },
+    { id: 'inventory', label: L('Инвентарь', 'Inventory'), icon: '🎒' },
     { id: 'events', label: L('События', 'Events'), icon: '🎬' },
     { id: 'relations', label: L('Взаимоотношения', 'Relationships'), icon: '🕸' },
     { id: 'locations', label: L('Локации', 'Locations'), icon: '📍' },
@@ -72,6 +73,7 @@ export function GameMasterPanel({
       </div>
 
       {tab === 'characters' && (gm ? <CharactersTab gm={gm} patchGm={s.patchGm} L={L} project={project} relationship={s.state?.relationship ?? {}} /> : noGame)}
+      {tab === 'inventory' && (s.state ? <InventoryTab L={L} /> : noGame)}
       {tab === 'events' && (gm ? <EventsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'relations' && (gm ? <RelationsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'locations' && (gm ? <LocationsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
@@ -316,25 +318,139 @@ function EventsTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) {
   );
 }
 
-function RelationsTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) {
+const INV_CATEGORIES = ['одежда', 'еда', 'ценности', 'ключевые', 'прочее'];
+
+function InventoryTab({ L }: { L: Lf }) {
+  const s = usePlayerStore();
+  const inv = s.state?.inventory ?? [];
+  const patch = s.patchInventory;
+  const add = () =>
+    patch((list) =>
+      list.push({
+        id: uid('inv'),
+        name: L('Новый предмет', 'New item'),
+        emoji: '📦',
+        quantity: 1,
+        category: 'прочее',
+        manualEntry: true,
+      })
+    );
+
   return (
     <div className="space-y-2">
       <div className="flex justify-between items-center">
-        <p className="text-xs text-gray-500">{L('Связи между персонажами.', 'Ties between characters.')}</p>
-        <button className="btn-ghost !px-3 !py-1 text-xs" onClick={() => patchGm((g) => g.relations.push({ from: '', to: '', label: '' }))}>
-          + {L('Связь', 'Edge')}
-        </button>
+        <p className="text-xs text-gray-500">
+          {L('Вещи протагониста. ИИ не даёт использовать то, чего здесь нет; расходники убывают.', "The hero's belongings. The AI won't let them use what's not here; consumables deplete.")}
+        </p>
+        <button className="btn-ghost !px-3 !py-1 text-xs" onClick={add}>+ {L('Предмет', 'Item')}</button>
       </div>
-      {gm.relations.length === 0 && <p className="text-gray-600 text-sm">—</p>}
-      {gm.relations.map((r, i) => (
-        <div key={i} className="flex gap-2 items-center">
-          <input className="input !py-1 text-sm w-28" placeholder={L('от', 'from')} value={r.from} onChange={(e) => patchGm((g) => (g.relations[i].from = e.target.value))} />
-          <span className="text-gray-500">→</span>
-          <input className="input !py-1 text-sm w-28" placeholder={L('к', 'to')} value={r.to} onChange={(e) => patchGm((g) => (g.relations[i].to = e.target.value))} />
-          <input className="input !py-1 text-sm flex-1" placeholder={L('характер связи', 'relationship')} value={r.label} onChange={(e) => patchGm((g) => (g.relations[i].label = e.target.value))} />
-          <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => patchGm((g) => g.relations.splice(i, 1))}>✕</button>
+      {inv.length === 0 && <p className="text-gray-600 text-sm">{L('Пусто.', 'Empty.')}</p>}
+      <div className="space-y-1.5">
+        {inv.map((it, i) => (
+          <div key={it.id} className="flex items-center gap-2 rounded-lg bg-panel2 px-2 py-1.5">
+            <input
+              className="input !py-1 !px-1 text-center w-10"
+              value={it.emoji}
+              maxLength={4}
+              onChange={(e) => patch((l) => (l[i].emoji = [...e.target.value.trim()][0] || '📦'))}
+              title={L('Эмодзи', 'Emoji')}
+            />
+            <input
+              className="input !py-1 text-sm flex-1"
+              value={it.name}
+              onChange={(e) => patch((l) => (l[i].name = e.target.value))}
+            />
+            <input
+              className="input !py-1 text-sm w-14"
+              type="number"
+              min={1}
+              value={it.quantity}
+              onChange={(e) => patch((l) => (l[i].quantity = Math.max(1, Math.round(Number(e.target.value) || 1))))}
+              title={L('Количество', 'Quantity')}
+            />
+            <select
+              className="input !py-1 text-xs w-24"
+              value={it.category || 'прочее'}
+              onChange={(e) => patch((l) => (l[i].category = e.target.value))}
+            >
+              {INV_CATEGORIES.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+              {it.category && !INV_CATEGORIES.includes(it.category) && <option value={it.category}>{it.category}</option>}
+            </select>
+            <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => patch((l) => l.splice(i, 1))}>✕</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RelationsTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) {
+  const s = usePlayerStore();
+  const project = s.project;
+  const rel = s.state?.relationship ?? {};
+  // Значимые пары с протагонистом: персонажи (не протагонист) с числовыми статами.
+  const heroPairs = (project?.characters || []).filter((c) => c.role !== 'protagonist' && rel[c.id]);
+
+  return (
+    <div className="space-y-4">
+      {/* Пары с протагонистом — числа ❤️🔥🍀 + текстовая динамика (досье GM). */}
+      {heroPairs.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs uppercase tracking-wide text-gray-500">
+            {L('С протагонистом', 'With the protagonist')}
+          </div>
+          {heroPairs.map((c) => {
+            const r = rel[c.id];
+            const gc = gm.characters.find((x) => x.charId === c.id);
+            return (
+              <div key={c.id} className="rounded-lg bg-panel2 p-2.5">
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="font-medium flex-1">{c.name}</span>
+                  <span className="text-pink-400">❤️{r.affection}</span>
+                  <span className="text-orange-400">🔥{r.passion_stat}</span>
+                  <span className="text-green-400">🍀{r.friendship}</span>
+                  <span className="text-sky-400">🎖{r.respect}</span>
+                </div>
+                {gc && (
+                  <input
+                    className="input !py-1 text-xs mt-1.5 w-full"
+                    placeholder={L('динамика (кто он герою, как меняется)', 'dynamic (who they are to the hero, how it shifts)')}
+                    value={gc.roleToHero}
+                    onChange={(e) =>
+                      patchGm((g) => {
+                        const t = g.characters.find((x) => x.charId === c.id);
+                        if (t) t.roleToHero = e.target.value;
+                      })
+                    }
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
-      ))}
+      )}
+
+      {/* Связи между персонажами (NPC↔NPC) — только текст. */}
+      <div className="space-y-2">
+        <div className="flex justify-between items-center">
+          <div className="text-xs uppercase tracking-wide text-gray-500">{L('Между персонажами', 'Between characters')}</div>
+          <button className="btn-ghost !px-3 !py-1 text-xs" onClick={() => patchGm((g) => g.relations.push({ from: '', to: '', label: '' }))}>
+            + {L('Связь', 'Edge')}
+          </button>
+        </div>
+        {gm.relations.length === 0 && <p className="text-gray-600 text-sm">—</p>}
+        {gm.relations.map((r, i) => (
+          <div key={i} className="flex gap-2 items-center">
+            <input className="input !py-1 text-sm w-28" placeholder={L('от', 'from')} value={r.from} onChange={(e) => patchGm((g) => (g.relations[i].from = e.target.value))} />
+            <span className="text-gray-500">↔</span>
+            <input className="input !py-1 text-sm w-28" placeholder={L('к', 'to')} value={r.to} onChange={(e) => patchGm((g) => (g.relations[i].to = e.target.value))} />
+            <input className="input !py-1 text-sm flex-1" placeholder={L('характер связи', 'relationship')} value={r.label} onChange={(e) => patchGm((g) => (g.relations[i].label = e.target.value))} />
+            <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => patchGm((g) => g.relations.splice(i, 1))}>✕</button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

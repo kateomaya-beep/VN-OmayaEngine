@@ -309,6 +309,15 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
     parts.push('Inventory: (empty)');
   }
 
+  // Когда протагонист последний раз виделся с персонажами (Batch 8 §VI) — чтобы ИИ
+  // отражал разлуку («давно не виделись»). Только для тех, у кого дата известна.
+  if (hasDate) {
+    const seen = state.gm.characters
+      .filter((c) => c.lastSeenDate)
+      .map((c) => `${c.name}: ${c.lastSeenDate}`);
+    if (seen.length) parts.push(`Last seen (today is ${clock.date}): ${seen.join('; ')}`);
+  }
+
   // Правила.
   const rules: string[] = [
     'This state is AUTHORITATIVE — do not contradict it. Reflect it: characters notice the hero\'s clothing, remember when they last met, react to wealth or debt. Never let the hero use an item they do not have.',

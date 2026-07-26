@@ -941,6 +941,7 @@ export interface GmCharacter {
   status: string; // текущий статус (ранен, присутствует, ушёл…)
   location: string;
   tags: string[]; // вся инфа тегами (для ИИ)
+  lastSeenDate?: string; // когда протагонист виделся с ним в последний раз (ДД/ММ/ГГГГ, Batch 8)
 }
 
 export interface GmRelationEdge {

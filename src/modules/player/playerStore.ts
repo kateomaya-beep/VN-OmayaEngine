@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, AssetMeta } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, AssetMeta, InventoryItem } from '../../shared/types';
 import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig } from '../../shared/types';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
@@ -104,6 +104,8 @@ interface PlayerStore {
   // runtime и автосохраняется.
   patchGm: (mutator: (gm: GameMasterState) => void) => void;
   patchPhone: (mutator: (p: PhoneState) => void) => void;
+  // Правка инвентаря (Batch 8 §IV) прямо в игре — добавить/переименовать/кол-во/эмодзи/удалить.
+  patchInventory: (mutator: (inv: InventoryItem[]) => void) => void;
   // Мессенджер телефона (Batch 7 §7.2): отправить СМС персонажу и получить ответ ИИ.
   phoneTypingFrom: string | null; // characterId, от кого сейчас «печатается» ответ
   sendPhoneMessage: (characterId: string, text: string) => Promise<void>;
@@ -724,6 +726,15 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     } finally {
       set({ phoneTypingFrom: null });
     }
+  },
+
+  patchInventory(mutator) {
+    const st = get();
+    if (!st.state) return;
+    const inventory: InventoryItem[] = JSON.parse(JSON.stringify(st.state.inventory ?? []));
+    mutator(inventory);
+    set({ state: { ...st.state, inventory } });
+    void get().autosave();
   },
 
   patchMemory(mutator) {

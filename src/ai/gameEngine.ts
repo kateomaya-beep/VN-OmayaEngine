@@ -355,6 +355,33 @@ export async function applyTurn(
     }
   }
 
+  // lastSeenDate (Batch 8 §VI): персонажи в кадре «увидены» текущей внутриигровой датой.
+  if (newDate) {
+    for (const os of onScreen) {
+      let gc = gm.characters.find((c) => c.charId === os.characterId);
+      if (!gc) {
+        const proj = project.characters.find((c) => c.id === os.characterId);
+        if (proj) {
+          gc = {
+            charId: proj.id,
+            name: proj.name,
+            dossier: '',
+            appearance: '',
+            personality: '',
+            roleToHero: '',
+            outfit: '',
+            mood: '',
+            status: '',
+            location: '',
+            tags: [],
+          };
+          gm.characters.push(gc);
+        }
+      }
+      if (gc) gc.lastSeenDate = newDate;
+    }
+  }
+
   let nextState: RuntimeState = {
     ...state,
     statValues: values,
