@@ -79,8 +79,10 @@ export async function generatePhoneReply(
     system,
     messages,
     temperature: Math.min(ps.temperature ?? 0.8, 1),
-    // Больше запаса, чтобы reasoning-модели не обрезали короткую реплику на полуслове.
-    maxTokens: 900,
+    // Щедрый потолок: reasoning-модели (Gemini 3 и т.п.) тратят токены на «мысли»,
+    // и при низком лимите короткая реплика обрывается на полуслове. Ответ всё равно
+    // короткий — лишнее не тратится, но места хватает и на скрытое размышление.
+    maxTokens: 2400,
     reasoningEffort: 'none',
     signal,
   });
@@ -133,12 +135,13 @@ export function cleanReply(raw: string, charName: string): string {
     }
   }
 
-  // Срезаем ведущую метку тона/эмоции в скобках или до двоеточия:
-  //   "(Defensive/Playful):", "[teasing]", "Amused:" — но НЕ реальную реплику с «:».
-  text = text.replace(/^\s*[([][^)\]\n]{0,40}[)\]]\s*[:—-]?\s*/, '');
-  const colon = text.match(/^\s*([A-Za-zА-Яа-яЁё/ ]{1,24}):\s+(?=\S)/);
-  if (colon && /^[A-Z]/.test(colon[1].trim()) && !colon[1].includes(' ')) {
-    // одно слово-метка с заглавной (Amused, Defensive…) — режем
+  // Срезаем ведущую метку тона/эмоции в скобках ТОЛЬКО если за ней двоеточие:
+  //   "(Defensive/Playful):" / "[teasing]:" — режем; но "(наконец-то дозвонилась))"
+  //   как реальный текст/смайлик НЕ трогаем.
+  text = text.replace(/^\s*[([][^)\]\n]{0,40}[)\]]\s*:\s*/, '');
+  // Одно слово-метка с заглавной перед двоеточием (Amused: / Defensive:) — режем.
+  const colon = text.match(/^\s*([A-Za-zА-ЯЁ][A-Za-zА-Яа-яЁё]{1,20}):\s+(?=\S)/);
+  if (colon && !colon[1].includes(' ')) {
     text = text.slice(colon[0].length);
   }
 
