@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../playerStore';
 import { AssetImage } from '../../../shared/ui';
 import { defaultPhoneConfig, PHONE_BALANCE_STAT, type PhoneConfig } from '../../../shared/types';
+import { resolveSprite } from '../../../shared/outfits';
+import { getApiKey } from '../../../ai/keys';
 
 // Расширение «Телефон» (Batch 7). ФАЗА 1 — каркас: перетаскиваемая иконка + окно
 // (рабочий стол с сеткой приложений) + читаемые экраны Банк/Сообщения/Магазин +
@@ -138,9 +140,6 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
     setChatWith(id);
     s.markPhoneRead(id);
   };
-  const soon = (
-    <div className="text-center text-white/60 text-sm py-8">Появится в следующем обновлении телефона.</div>
-  );
 
   const Screen = ({ title, children }: { title: string; children: ReactNode }) => (
     <div className="absolute inset-0 flex flex-col">
@@ -287,9 +286,7 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
           <DeliveryScreen onBack={() => setApp('home')} />
         )}
 
-        {app === 'camera' && (
-          <Screen title="Камера">{soon}</Screen>
-        )}
+        {app === 'camera' && <CameraScreen onBack={() => setApp('home')} />}
       </div>
     </div>,
     document.body
@@ -327,19 +324,27 @@ function ChatThread({ characterId, name, onBack }: { characterId: string; name: 
         {!msgs.length && (
           <div className="text-center text-white/40 text-sm py-6">Напишите первым — {name} ответит.</div>
         )}
-        {msgs.map((m, i) => (
-          <div key={i} className={`flex ${m.from === 'protagonist' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className={`max-w-[78%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap break-words ${
-                m.from === 'protagonist'
-                  ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white rounded-br-md'
-                  : 'bg-white/12 text-white rounded-bl-md'
-              }`}
-            >
-              {m.text}
+        {msgs.map((m, i) => {
+          const photoKey = m.attachedAssetId
+            ? s.project?.assets.find((a) => a.id === m.attachedAssetId)?.blobKey
+            : undefined;
+          return (
+            <div key={i} className={`flex ${m.from === 'protagonist' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                className={`max-w-[78%] rounded-2xl text-sm whitespace-pre-wrap break-words overflow-hidden ${
+                  m.from === 'protagonist'
+                    ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white rounded-br-md'
+                    : 'bg-white/12 text-white rounded-bl-md'
+                }`}
+              >
+                {photoKey && (
+                  <AssetImage blobKey={photoKey} className="w-44 max-w-full object-cover" />
+                )}
+                {m.text && <div className="px-3 py-2">{m.text}</div>}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {typing && (
           <div className="flex justify-start">
             <div className="px-3 py-2.5 rounded-2xl rounded-bl-md bg-white/12">
@@ -467,6 +472,123 @@ function DeliveryScreen({ onBack }: { onBack: () => void }) {
           )}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ---- Приложение «Камера» (Batch 7 §5): генерация селфи протагониста ----
+function CameraScreen({ onBack }: { onBack: () => void }) {
+  const s = usePlayerStore();
+  const project = s.project;
+  const [prompt, setPrompt] = useState('');
+  const [pickFor, setPickFor] = useState<string | null>(null); // assetId, который отправляем
+  const busy = s.cameraBusy;
+  const gallery = s.state?.phone?.gallery || [];
+  const contacts = (s.state?.phone?.contacts || []).filter((c) => !c.hidden);
+
+  // Fallback: нет спрайта протагониста или не настроено image-API → камера отключена.
+  const protagonist = project?.characters.find((c) => c.role === 'protagonist');
+  const hasSprite = !!protagonist && !!resolveSprite(protagonist, undefined, 'neutral');
+  const hasKey = !!getApiKey('image');
+  const ready = hasSprite && hasKey;
+
+  const shoot = () => {
+    if (!ready || busy) return;
+    void s.takeSelfie(prompt);
+    setPrompt('');
+  };
+
+  return (
+    <div className="absolute inset-0 flex flex-col">
+      <div className="flex items-center gap-2 px-3 py-3 bg-black/30 backdrop-blur-md">
+        <button className="text-white/90 text-xl leading-none" onClick={onBack}>‹</button>
+        <div className="font-semibold text-white">Камера</div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-3 text-white">
+        {!ready ? (
+          <div className="rounded-xl bg-amber-500/12 border border-amber-400/30 px-3 py-3 text-sm text-amber-100">
+            Настройте генерацию изображений (🎬 CG-студия → подключение) и загрузите нейтральный спрайт протагониста — тогда камера заработает.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <textarea
+              className="w-full rounded-xl bg-white/10 border border-white/15 px-3 py-2 text-sm text-white placeholder-white/40 outline-none focus:border-fuchsia-400/50 h-16"
+              placeholder="Что на фото? напр.: на фоне заката, улыбаюсь, в кафе"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+            />
+            <button
+              className="w-full py-2.5 rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 text-white font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+              onClick={shoot}
+              disabled={busy}
+            >
+              {busy ? (
+                <>
+                  <span className="inline-block w-4 h-4 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
+                  Снимаю…
+                </>
+              ) : (
+                '📸 Сделать селфи'
+              )}
+            </button>
+          </div>
+        )}
+
+        <div className="mt-4 text-xs uppercase tracking-wide text-white/50 mb-2">Галерея · {gallery.length}</div>
+        {gallery.length === 0 ? (
+          <div className="text-sm text-white/40">Пока нет фото.</div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {[...gallery].reverse().map((assetId) => {
+              const blobKey = project?.assets.find((a) => a.id === assetId)?.blobKey;
+              return (
+                <div key={assetId} className="rounded-xl overflow-hidden border border-white/10 bg-black/40 relative group">
+                  <AssetImage blobKey={blobKey} className="w-full aspect-square object-cover" />
+                  {contacts.length > 0 && (
+                    <button
+                      className="absolute bottom-1.5 right-1.5 text-[11px] px-2 py-1 rounded-lg bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => setPickFor(assetId)}
+                    >
+                      Отправить
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Выбор контакта для отправки фото */}
+      {pickFor && (
+        <div className="absolute inset-0 z-10 bg-black/70 flex items-end" onClick={() => setPickFor(null)}>
+          <div
+            className="w-full rounded-t-2xl bg-[#141019] border-t border-white/10 p-3 max-h-[70%] overflow-y-auto scrollbar-thin"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-sm font-semibold text-white mb-2">Кому отправить фото?</div>
+            <div className="space-y-1.5">
+              {contacts.map((c) => {
+                const nm = project?.characters.find((x) => x.id === c.characterId)?.name || c.characterId;
+                return (
+                  <button
+                    key={c.characterId}
+                    className="w-full flex items-center gap-3 rounded-xl bg-white/5 hover:bg-white/10 px-3 py-2.5 text-left text-white"
+                    onClick={() => {
+                      void s.sendPhoto(c.characterId, pickFor);
+                      setPickFor(null);
+                    }}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm">{nm[0]}</div>
+                    <span className="text-sm">{nm}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

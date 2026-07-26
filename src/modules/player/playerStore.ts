@@ -1,12 +1,15 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem } from '../../shared/types';
-import { initialPhoneState, PHONE_BALANCE_STAT } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, AssetMeta } from '../../shared/types';
+import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig } from '../../shared/types';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { generatePhoneReply } from '../../ai/phoneChat';
 import { generateDeliveryItems } from '../../ai/deliveryGen';
+import { generateImage, blobToRef, type ImageRef } from '../../ai/imageProvider';
+import { getApiKey } from '../../ai/keys';
+import { resolveSprite } from '../../shared/outfits';
 import { expandMacros } from '../../ai/macros';
-import { getProject, putSave, saveProject, deleteSave } from '../../storage/db';
+import { getProject, putSave, saveProject, deleteSave, getAssetBlob, putAsset } from '../../storage/db';
 import {
   listPlaythroughs,
   activePlaythrough,
@@ -109,6 +112,10 @@ interface PlayerStore {
   deliveryLoadingCat: string | null; // categoryName, для которой сейчас генерится каталог
   generateDelivery: (categoryName: string) => Promise<void>;
   orderDelivery: (item: PhoneShopItem) => void;
+  // Камера (Batch 7 §5): генерация селфи протагониста через image-API + отправка фото.
+  cameraBusy: boolean;
+  takeSelfie: (userPrompt: string) => Promise<void>;
+  sendPhoto: (characterId: string, assetId: string) => Promise<void>;
   // Правка памяти (список свёрток/саммари) прямо в игре.
   patchMemory: (mutator: (m: MemoryState) => void) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
@@ -164,6 +171,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   autosnapRing: [],
   phoneTypingFrom: null,
   deliveryLoadingCat: null,
+  cameraBusy: false,
 
   setDraft(t) {
     set({ draft: t });
@@ -588,6 +596,89 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     nextState.phone = phone;
     set({ state: nextState });
     void get().autosave();
+  },
+
+  async takeSelfie(userPrompt) {
+    const st = get();
+    if (!st.project || !st.state || st.cameraBusy) return;
+    const project = st.project;
+    const state = st.state;
+    const protagonist = project.characters.find((c) => c.role === 'protagonist');
+    const spriteAssetId = protagonist ? resolveSprite(protagonist, undefined, 'neutral') : undefined;
+    // Fallback (Batch 7 §5.5): нет спрайта протагониста ИЛИ нет ключа image-API — мягкий отказ.
+    if (!protagonist || !spriteAssetId || !getApiKey('image')) {
+      set({ error: 'Настройте генерацию изображений и загрузите спрайт протагониста.' });
+      return;
+    }
+    set({ cameraBusy: true, error: null });
+    try {
+      const ig = project.imageGen ?? defaultImageGenConfig();
+      const heroName = state.protagonistName || protagonist.name;
+      const tmpl = project.phone?.cameraPromptTemplate || 'selfie photo of {protagonist_name}, {user_prompt}';
+      const basePrompt = tmpl
+        .replace(/\{protagonist_name\}/g, heroName)
+        .replace(/\{user_prompt\}/g, userPrompt.trim() || 'casual selfie');
+      const finalPrompt = [basePrompt, ig.style.trim()].filter(Boolean).join('\n\nStyle: ');
+      // Референс — спрайт протагониста (neutral в текущем наряде), только для gemini.
+      const refs: ImageRef[] = [];
+      if (ig.providerKind === 'gemini' && ig.sendReferences) {
+        const blobKey = project.assets.find((a) => a.id === spriteAssetId)?.blobKey;
+        if (blobKey) {
+          const b = await getAssetBlob(blobKey);
+          if (b) refs.push(await blobToRef(b));
+        }
+      }
+      const blob = await generateImage(ig, { prompt: finalPrompt, references: refs });
+      const blobKey = uid('blob');
+      await putAsset(blobKey, blob);
+      const asset: AssetMeta = {
+        id: uid('cg'),
+        type: 'cg',
+        name: `Селфи: ${(userPrompt.trim() || 'фото').slice(0, 24)}`,
+        generated: true,
+        blobKey,
+        mime: blob.type || 'image/png',
+      };
+      // В манифест проекта (переиспользуемо) + в галерею телефона.
+      await get().patchProject((p) => {
+        if (!p.assets.some((a) => a.id === asset.id)) p.assets.push(asset);
+      });
+      get().patchPhone((p) => {
+        p.gallery = [...p.gallery, asset.id];
+      });
+    } catch (e) {
+      logEvent('error', 'camera', e instanceof Error ? e.message : String(e));
+      set({ error: 'Не удалось сделать фото. Проверьте настройки генерации изображений.' });
+    } finally {
+      set({ cameraBusy: false });
+    }
+  },
+
+  async sendPhoto(characterId, assetId) {
+    const st = get();
+    if (!st.project || !st.state || st.phoneTypingFrom) return;
+    get().patchPhone((p) => {
+      (p.conversations[characterId] ||= []).push({
+        from: 'protagonist',
+        text: '',
+        attachedAssetId: assetId,
+        at: Date.now(),
+      });
+      p.unreadFrom = p.unreadFrom.filter((id) => id !== characterId);
+    });
+    set({ phoneTypingFrom: characterId });
+    try {
+      const cur = get();
+      const convo = cur.state?.phone?.conversations[characterId] || [];
+      const reply = await generatePhoneReply(cur.project!, cur.state!, characterId, convo);
+      get().patchPhone((p) => {
+        (p.conversations[characterId] ||= []).push({ from: 'contact', text: reply, at: Date.now() });
+      });
+    } catch (e) {
+      logEvent('error', 'phone', e instanceof Error ? e.message : String(e));
+    } finally {
+      set({ phoneTypingFrom: null });
+    }
   },
 
   patchMemory(mutator) {

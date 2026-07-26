@@ -64,7 +64,8 @@ export async function generatePhoneReply(
 
   const messages: LlmMessage[] = conversation.slice(-MAX_HISTORY).map((m) => ({
     role: m.from === 'protagonist' ? ('user' as const) : ('assistant' as const),
-    content: m.text,
+    // Фото без текста (селфи из камеры) — модель vision не видит, даём словесную пометку.
+    content: m.text || (m.attachedAssetId ? '[the hero sent you a photo]' : '…'),
   }));
   // Гарантируем, что последнее сообщение — от игрока (иначе модели нечего отвечать).
   if (!messages.length || messages[messages.length - 1].role !== 'user') {
