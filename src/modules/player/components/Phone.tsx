@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../playerStore';
 import { AssetImage } from '../../../shared/ui';
-import { defaultPhoneConfig, PHONE_BALANCE_STAT, type PhoneConfig } from '../../../shared/types';
+import { defaultPhoneConfig, defaultFinanceConfig, PHONE_BALANCE_STAT, type PhoneConfig, type RecurringEntry } from '../../../shared/types';
 import { resolveSprite } from '../../../shared/outfits';
 import { getApiKey } from '../../../ai/keys';
 
@@ -209,40 +209,7 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
           </div>
         )}
 
-        {app === 'bank' && (
-          <Screen title="Банк">
-            <div className="rounded-2xl bg-gradient-to-br from-sky-500/30 to-indigo-600/30 border border-white/10 p-4 mb-4">
-              <div className="text-xs text-white/70">Баланс</div>
-              <div className="text-3xl font-bold">{money(balance, cfg.currencyName)}</div>
-            </div>
-            <div className="text-xs uppercase tracking-wide text-white/50 mb-2">История</div>
-            {!phone?.transactions.length ? (
-              <div className="text-sm text-white/50">Транзакций пока нет.</div>
-            ) : (
-              <div className="space-y-1.5">
-                {[...phone.transactions].reverse().map((t, i) => {
-                  // Выписка: где (vendor), что (item), когда (time). Легаси — reason.
-                  const title = t.vendor || t.reason || '—';
-                  const sub = [t.item && t.item !== t.vendor ? t.item : '', t.time]
-                    .filter(Boolean)
-                    .join(' · ');
-                  return (
-                    <div key={i} className="flex justify-between items-start gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-white/85 truncate">{title}</div>
-                        {sub && <div className="text-[11px] text-white/45 truncate">{sub}</div>}
-                      </div>
-                      <span className={`shrink-0 ${t.amount >= 0 ? 'text-green-400' : 'text-red-300'}`}>
-                        {t.amount >= 0 ? '+' : ''}
-                        {money(t.amount, cfg.currencyName)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Screen>
-        )}
+        {app === 'bank' && <BankScreen onBack={() => setApp('home')} />}
 
         {app === 'messages' && !chatWith && (
           <Screen title="Сообщения">
@@ -596,6 +563,161 @@ function CameraScreen({ onBack }: { onBack: () => void }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---- Приложение «Банк» (Batch 8 §III): баланс, ручная правка, регулярные статьи, выписка ----
+function BankScreen({ onBack }: { onBack: () => void }) {
+  const s = usePlayerStore();
+  const { cfg } = useCfg();
+  const project = s.project;
+  const balance = s.state?.statValues[PHONE_BALANCE_STAT] ?? 0;
+  const phone = s.state?.phone;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  const fin = project?.finance ?? defaultFinanceConfig();
+  const patchFin = (mut: (f: { startingBalance: number; startDate?: string; recurringEntries: RecurringEntry[] }) => void) =>
+    s.patchProject((p) => {
+      const f = p.finance ?? defaultFinanceConfig();
+      mut(f);
+      p.finance = f;
+    });
+  const addRecurring = () =>
+    patchFin((f) => {
+      f.recurringEntries.push({
+        id: `rec_${Math.random().toString(36).slice(2, 8)}`,
+        name: 'Новая статья',
+        amount: 0,
+        kind: 'expense',
+        periodDays: 30,
+        nextChargeDate: s.state?.gm.clock.date || '',
+        enabled: true,
+      });
+    });
+
+  const commitBalance = () => {
+    const n = Number(draft.replace(',', '.'));
+    if (Number.isFinite(n)) s.setBalance(n);
+    setEditing(false);
+  };
+
+  return (
+    <div className="absolute inset-0 flex flex-col">
+      <div className="flex items-center gap-2 px-3 py-3 bg-black/30 backdrop-blur-md">
+        <button className="text-white/90 text-xl leading-none" onClick={onBack}>‹</button>
+        <div className="font-semibold text-white">Банк</div>
+      </div>
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-3 text-white">
+        <div className={`rounded-2xl border p-4 mb-4 ${balance < 0 ? 'bg-red-600/20 border-red-500/40' : 'bg-gradient-to-br from-sky-500/30 to-indigo-600/30 border-white/10'}`}>
+          <div className="text-xs text-white/70 flex items-center justify-between">
+            <span>Баланс {balance < 0 && '· долг'}</span>
+            <button className="text-[11px] underline text-white/70" onClick={() => { setDraft(String(balance)); setEditing((v) => !v); }}>
+              изменить
+            </button>
+          </div>
+          {editing ? (
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                className="flex-1 rounded-lg bg-black/30 border border-white/20 px-3 py-1.5 text-lg text-white outline-none"
+                type="number"
+                value={draft}
+                autoFocus
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && commitBalance()}
+              />
+              <button className="px-3 py-1.5 rounded-lg bg-sky-500 text-white text-sm" onClick={commitBalance}>OK</button>
+            </div>
+          ) : (
+            <div className="text-3xl font-bold">{money(balance, cfg.currencyName)}</div>
+          )}
+        </div>
+
+        {/* Регулярные статьи */}
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="text-xs uppercase tracking-wide text-white/50">Регулярные статьи</div>
+          <button className="text-[11px] text-sky-300" onClick={addRecurring}>+ добавить</button>
+        </div>
+        {fin.recurringEntries.length === 0 ? (
+          <div className="text-sm text-white/40 mb-4">Нет статей. Зарплата/аренда начисляются по внутриигровым датам.</div>
+        ) : (
+          <div className="space-y-2 mb-4">
+            {fin.recurringEntries.map((e, i) => (
+              <div key={e.id} className="rounded-xl bg-white/5 border border-white/10 p-2.5 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    className="flex-1 bg-transparent border-b border-white/15 text-sm outline-none"
+                    value={e.name}
+                    onChange={(ev) => patchFin((f) => { f.recurringEntries[i].name = ev.target.value; })}
+                  />
+                  <label className="flex items-center gap-1 text-[11px] text-white/60">
+                    <input type="checkbox" checked={e.enabled} onChange={(ev) => patchFin((f) => { f.recurringEntries[i].enabled = ev.target.checked; })} />
+                    вкл
+                  </label>
+                  <button className="text-red-300 text-xs" onClick={() => patchFin((f) => { f.recurringEntries.splice(i, 1); })}>🗑</button>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <select
+                    className="bg-black/30 border border-white/15 rounded px-1.5 py-1"
+                    value={e.kind}
+                    onChange={(ev) => patchFin((f) => { f.recurringEntries[i].kind = ev.target.value as 'income' | 'expense'; })}
+                  >
+                    <option value="income">доход</option>
+                    <option value="expense">расход</option>
+                  </select>
+                  <input
+                    className="w-20 bg-black/30 border border-white/15 rounded px-1.5 py-1"
+                    type="number"
+                    value={e.amount}
+                    onChange={(ev) => patchFin((f) => { f.recurringEntries[i].amount = Math.abs(Math.round(Number(ev.target.value) || 0)); })}
+                    placeholder="сумма"
+                  />
+                  <span className="text-white/40">кажд.</span>
+                  <input
+                    className="w-14 bg-black/30 border border-white/15 rounded px-1.5 py-1"
+                    type="number"
+                    value={e.periodDays}
+                    onChange={(ev) => patchFin((f) => { f.recurringEntries[i].periodDays = Math.max(1, Math.round(Number(ev.target.value) || 30)); })}
+                  />
+                  <span className="text-white/40">дн.</span>
+                </div>
+                <input
+                  className="w-full bg-black/30 border border-white/15 rounded px-1.5 py-1 text-xs"
+                  value={e.nextChargeDate}
+                  onChange={(ev) => patchFin((f) => { f.recurringEntries[i].nextChargeDate = ev.target.value; })}
+                  placeholder="Следующее начисление ДД/ММ/ГГГГ"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Выписка */}
+        <div className="text-xs uppercase tracking-wide text-white/50 mb-2">Выписка</div>
+        {!phone?.transactions.length ? (
+          <div className="text-sm text-white/50">Транзакций пока нет.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {[...phone.transactions].reverse().map((t, i) => {
+              const title = t.vendor || t.reason || '—';
+              const sub = [t.item && t.item !== t.vendor ? t.item : '', t.date, t.time].filter(Boolean).join(' · ');
+              return (
+                <div key={i} className="flex justify-between items-start gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-white/85 truncate">{title}</div>
+                    {sub && <div className="text-[11px] text-white/45 truncate">{sub}</div>}
+                  </div>
+                  <span className={`shrink-0 ${t.amount >= 0 ? 'text-green-400' : 'text-red-300'}`}>
+                    {t.amount >= 0 ? '+' : ''}
+                    {money(t.amount, cfg.currencyName)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

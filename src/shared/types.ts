@@ -313,6 +313,7 @@ export interface Project {
   imageGen?: ImageGenConfig; // CG-студия: генерация кат-сцен через image-API
   randomEvents?: RandomEventConfig; // случайные сюжетные события (Batch 6 §3)
   phone?: PhoneConfig; // расширение «Телефон» (Batch 7)
+  finance?: ProjectFinanceConfig; // стартовый капитал + регулярные статьи (Batch 8 §III)
 }
 
 // ---- Телефон (Batch 7) ----
@@ -320,6 +321,76 @@ export interface Project {
 // PhoneConfig — авторская настройка (в проекте); PhoneState — рантайм (в RuntimeState/сейве).
 // Баланс — глобальный «стат» под зарезервированным id (участвует в statChanges/контексте).
 export const PHONE_BALANCE_STAT = 'phone_balance';
+
+// ---- Инвентарь (Batch 8, Часть IV) — вещи протагониста. Живёт в RuntimeState
+// (не в телефоне): существует даже при выключенном расширении «Телефон».
+export interface InventoryItem {
+  id: string;
+  name: string;
+  emoji: string;
+  quantity: number;
+  category?: string; // одежда|еда|ценности|ключевые|прочее|своё
+  acquiredDate?: string; // ДД/ММ/ГГГГ
+  source?: string; // «куплено» | «получено» | «найдено» | …
+  manualEntry?: boolean;
+}
+
+// ---- Финансы проекта (Batch 8, Часть III): стартовый капитал + регулярные статьи.
+export interface RecurringEntry {
+  id: string;
+  name: string;
+  amount: number; // всегда положительное
+  kind: 'income' | 'expense';
+  periodDays: number;
+  nextChargeDate: string; // ДД/ММ/ГГГГ
+  enabled: boolean;
+}
+
+export interface ProjectFinanceConfig {
+  startingBalance: number;
+  startDate?: string; // стартовая внутриигровая дата ДД/ММ/ГГГГ (Batch 8 §II.2)
+  recurringEntries: RecurringEntry[];
+}
+
+export function defaultFinanceConfig(): ProjectFinanceConfig {
+  return { startingBalance: 0, recurringEntries: [] };
+}
+
+export function normalizeFinanceConfig(v: unknown): ProjectFinanceConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const items = Array.isArray(o.recurringEntries) ? (o.recurringEntries as any[]) : [];
+  return {
+    startingBalance: typeof o.startingBalance === 'number' ? Math.round(o.startingBalance) : 0,
+    startDate: typeof o.startDate === 'string' ? o.startDate : undefined,
+    recurringEntries: items
+      .filter((e) => e && typeof e.name === 'string' && typeof e.amount === 'number')
+      .map((e) => ({
+        id: typeof e.id === 'string' ? e.id : `rec_${Math.random().toString(36).slice(2, 8)}`,
+        name: e.name,
+        amount: Math.abs(Math.round(e.amount)),
+        kind: e.kind === 'expense' ? 'expense' : 'income',
+        periodDays: typeof e.periodDays === 'number' && e.periodDays > 0 ? Math.round(e.periodDays) : 30,
+        nextChargeDate: typeof e.nextChargeDate === 'string' ? e.nextChargeDate : '',
+        enabled: typeof e.enabled === 'boolean' ? e.enabled : true,
+      })),
+  };
+}
+
+export function normalizeInventory(v: unknown): InventoryItem[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((it) => it && typeof it.name === 'string')
+    .map((it) => ({
+      id: typeof it.id === 'string' ? it.id : `inv_${Math.random().toString(36).slice(2, 8)}`,
+      name: it.name,
+      emoji: typeof it.emoji === 'string' && it.emoji.trim() ? it.emoji : '📦',
+      quantity: typeof it.quantity === 'number' && it.quantity > 0 ? Math.round(it.quantity) : 1,
+      category: typeof it.category === 'string' ? it.category : undefined,
+      acquiredDate: typeof it.acquiredDate === 'string' ? it.acquiredDate : undefined,
+      source: typeof it.source === 'string' ? it.source : undefined,
+      manualEntry: typeof it.manualEntry === 'boolean' ? it.manualEntry : undefined,
+    }));
+}
 
 export interface PhoneShopItem {
   id: string;
@@ -367,6 +438,7 @@ export interface PhoneTransaction {
   vendor?: string; // где / от кого (выписка)
   item?: string; // что куплено / за что
   time?: string; // внутриигровое время
+  date?: string; // внутриигровая дата ДД/ММ/ГГГГ (Batch 8 — для датированной выписки)
   at: number;
 }
 export interface PhoneContact {
@@ -754,7 +826,11 @@ export type Beat =
   | { type: 'transaction'; amount: number; vendor?: string; item?: string; time?: string }
   | { type: 'money_change'; amount: number; reason?: string }
   | { type: 'sms_incoming'; characterId: string; text: string }
-  | { type: 'contact_added'; characterId: string };
+  | { type: 'contact_added'; characterId: string }
+  // Симулятор жизни (Batch 8): продвижение времени и инвентарь. Все — управляющие.
+  | { type: 'time_advance'; newDate?: string; newTime?: string }
+  | { type: 'inventory_add'; name: string; emoji?: string; quantity?: number; category?: string; source?: string }
+  | { type: 'inventory_remove'; name: string; quantity?: number; reason?: string };
 
 export interface SceneDirective {
   backgroundId: string | null;
@@ -904,6 +980,9 @@ export interface GmLocation {
 // Внутриигровые часы/календарь. День/месяц/год + время + локация. Месяцы
 // настраиваемые (для фэнтези-сеттинга; по умолчанию — земные 12).
 export interface GmClock {
+  // Каноническая дата — строго "ДД/ММ/ГГГГ" (Batch 8, Часть II). Источник правды для
+  // финансов/времени. day/month/year остаются для легаси-отображения (фэнтези-месяцы).
+  date?: string;
   day: string; // число/день, напр. "3"
   month: string; // название месяца (из calendar.months либо своё)
   year: string; // год, напр. "1024"
@@ -978,6 +1057,8 @@ export interface RuntimeState {
   turnsSinceLastEvent?: number;
   // Состояние телефона (Batch 7) — контакты, переписки, транзакции, инвентарь. В сейве.
   phone?: PhoneState;
+  // Инвентарь протагониста (Batch 8 §IV) — не в телефоне: работает и без него. В сейве.
+  inventory?: InventoryItem[];
 }
 
 export interface AuthorNote {

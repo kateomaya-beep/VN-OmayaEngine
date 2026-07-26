@@ -3,6 +3,7 @@ import { EMOTIONS, AUDIO_MOODS, RELATIONSHIP_FIELDS } from '../shared/types';
 import { aiTurnSchema } from './schema';
 import { characterOutfits, defaultOutfitTag } from '../shared/outfits';
 import { clamp } from '../shared/utils';
+import { isValidDate, parseTime } from '../shared/gameDate';
 
 // Статы отношений адресуются как statId = `rel:<charId>:<field>` (см. CR v2 §C.3).
 const REL_FIELD_SET = new Set<string>(RELATIONSHIP_FIELDS);
@@ -117,6 +118,27 @@ export function repairBeat(project: Project, b: any): Beat {
     const ch = b.characterId ? charById.get(b.characterId) : undefined;
     if (ch) return { type: 'contact_added', characterId: ch.id };
     return { type: 'narration', text: '' };
+  }
+  // Симулятор жизни (Batch 8): time_advance / inventory_add / inventory_remove.
+  if (b?.type === 'time_advance') {
+    const nd = isValidDate(b.newDate) ? (b.newDate as string) : undefined;
+    const nt = parseTime(b.newTime) || undefined;
+    if (!nd && !nt) return { type: 'narration', text: '' };
+    return { type: 'time_advance', newDate: nd, newTime: nt };
+  }
+  if (b?.type === 'inventory_add') {
+    const name = txt(b.name).trim();
+    if (!name) return { type: 'narration', text: '' };
+    const qty = typeof b.quantity === 'number' && b.quantity > 0 ? Math.round(b.quantity) : 1;
+    const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    return { type: 'inventory_add', name, emoji: s(b.emoji), quantity: qty, category: s(b.category), source: s(b.source) };
+  }
+  if (b?.type === 'inventory_remove') {
+    const name = txt(b.name).trim();
+    if (!name) return { type: 'narration', text: '' };
+    const qty = typeof b.quantity === 'number' && b.quantity > 0 ? Math.round(b.quantity) : 1;
+    const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    return { type: 'inventory_remove', name, quantity: qty, reason: s(b.reason) };
   }
 
   if (!b || b.type !== 'dialogue') {

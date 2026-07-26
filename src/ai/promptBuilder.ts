@@ -262,14 +262,75 @@ function gameMasterBlock(state: RuntimeState): string {
     : '(no game-master state yet — establish it via worldState this turn)';
 }
 
-// Контекст телефона (Batch 7 §7.3 + ревизия блока 6): баланс, валюта, прайс-гайд,
-// управляющие биты (transaction / sms_incoming / contact_added), правило нулевого
-// баланса и активные заказы доставки. Возвращаем '' если расширение выключено.
+// Единый WORLD STATE (Batch 8): дата/время/локация, экономика (баланс+долг+прайс-гайд
+// +регулярные статьи), инвентарь и правила для управляющих битов времени/денег/вещей.
+// Показываем, если есть хоть одна из подсистем (финансы/телефон/инвентарь/дата).
+function worldStateBlock(project: Project, state: RuntimeState): string {
+  const financeOn = !!project.finance;
+  const phoneOn = !!project.phone?.enabled;
+  const inv = state.inventory || [];
+  const clock = state.gm.clock;
+  const hasDate = !!clock.date;
+  if (!financeOn && !phoneOn && !inv.length && !hasDate) return '';
+
+  const cur = project.phone?.currencyName || '$';
+  const bal = state.statValues[PHONE_BALANCE_STAT];
+  const hasEconomy = financeOn || phoneOn;
+  const parts: string[] = [];
+
+  // Время/место.
+  const when = [clock.date, clock.time].filter(Boolean).join(', ');
+  if (when) parts.push(`Date/time: ${when}`);
+  if (clock.location) parts.push(`Location: ${clock.location}`);
+
+  // Экономика.
+  if (hasEconomy && typeof bal === 'number') {
+    const debt = bal < 0 ? ' — THE HERO IS IN DEBT (negative balance): weave this into the story as a real pressure.' : '';
+    parts.push(`Balance: ${bal} ${cur}.${debt}`);
+    const pg = project.phone?.priceGuide?.trim();
+    if (pg) parts.push(`Price guide (keep all amounts in this order of magnitude, consistent between turns): ${pg}`);
+    // Регулярные статьи — чтобы ИИ упоминал зарплату/аренду по датам.
+    const rec = project.finance?.recurringEntries.filter((e) => e.enabled) || [];
+    if (rec.length) {
+      parts.push(
+        `Recurring: ${rec
+          .map((e) => `${e.name} ${e.kind === 'income' ? '+' : '-'}${e.amount} (every ${e.periodDays}d, next ${e.nextChargeDate})`)
+          .join('; ')}`
+      );
+    }
+  }
+
+  // Инвентарь.
+  if (inv.length) {
+    parts.push(
+      `Inventory: ${inv.map((it) => `${it.emoji} ${it.name}${it.quantity > 1 ? ` (${it.quantity})` : ''}`).join(', ')}`
+    );
+  } else {
+    parts.push('Inventory: (empty)');
+  }
+
+  // Правила.
+  const rules: string[] = [
+    'This state is AUTHORITATIVE — do not contradict it. Reflect it: characters notice the hero\'s clothing, remember when they last met, react to wealth or debt. Never let the hero use an item they do not have.',
+    'TIME: the in-story date is always DD/MM/YYYY. When time passes (a night, "a week later", a jump), emit {"type":"time_advance","newDate":"DD/MM/YYYY","newTime":"HH:MM"}. Never write a date in any other format.',
+    'INVENTORY: emit {"type":"inventory_add","name":...,"emoji":"<one emoji>","quantity":1,"category":...,"source":"куплено|получено|найдено"} when the hero acquires something meaningful, and {"type":"inventory_remove","name":...,"quantity":1} when they consume/lose/give it away. Consumables are really spent.',
+  ];
+  if (hasEconomy) {
+    rules.push(
+      'MONEY: when the hero spends or receives money, emit {"type":"transaction","amount":<neg to spend / pos to receive>,"vendor":"<where/from whom>","item":"<what for>","time":"HH:MM"} — vendor/item/time are required (they form the bank statement). Do NOT also mirror it in statChanges.',
+      'ZERO/LOW BALANCE: check the balance before a purchase. If the hero cannot afford it, do NOT emit a negative transaction for that purchase — write the scene with the shortfall (declined card, no cash). Recurring bills may still push the balance negative into debt.'
+    );
+  }
+  parts.push('RULES:\n- ' + rules.join('\n- '));
+
+  return `== CURRENT WORLD STATE ==\n${parts.join('\n')}`;
+}
+
+// Телефон-коммуникации (Batch 7): контакты, входящие СМС, заказы доставки. Деньги/
+// прайс-гайд теперь в WORLD STATE. Возвращаем '' если телефон выключен.
 function phoneBlock(project: Project, state: RuntimeState): string {
   const cfg = project.phone;
   if (!cfg?.enabled) return '';
-  const bal = state.statValues[PHONE_BALANCE_STAT] ?? 0;
-  const cur = cfg.currencyName || '$';
   const contacts = (state.phone?.contacts || [])
     .filter((c) => !c.hidden)
     .map((c) => {
@@ -277,22 +338,15 @@ function phoneBlock(project: Project, state: RuntimeState): string {
       return `${nm} (${c.characterId})`;
     });
   const parts = [
-    `The hero carries a smartphone. Current wallet balance: ${bal} ${cur}.`,
-    cfg.priceGuide?.trim()
-      ? `PRICE GUIDE (setting's price levels — keep every amount in this order of magnitude, stay consistent between turns, never invent prices outside this scale):\n${cfg.priceGuide.trim()}`
-      : '',
-    `MONEY RULE: whenever the hero spends or receives money in the narrative, emit a "transaction" control beat: {"type":"transaction","amount":<negative to spend / positive to receive>,"vendor":"<where or from whom>","item":"<what for>","time":"<in-story time>"}. vendor, item and time are required — together they form the hero's bank statement. Do NOT also mirror the same amount in statChanges (the engine already applies it).`,
-    `Other phone control beats (no display text, removed from the visible flow):`,
-    `  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero off-screen (appears in the Messages app).`,
-    `  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone's number (characters who appear are auto-added; use only for someone met off-screen).`,
-    `ZERO-BALANCE RULE: check the balance before letting the hero buy anything. If they cannot afford it, do NOT emit a negative transaction — write the scene accordingly (declined card, no cash, has to skip it).`,
+    'The hero carries a smartphone. Phone control beats (no display text):',
+    '  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero off-screen (appears in Messages).',
+    '  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone\'s number (characters who appear are auto-added; use only for someone met off-screen).',
   ];
   if (contacts.length) parts.push(`Saved phone contacts: ${contacts.join(', ')}.`);
-  // Активные заказы доставки — ИИ должен ввести их в сцену (еда приезжает, вещь пришла).
   const orders = state.phone?.activeOrders || [];
   if (orders.length) {
     parts.push(
-      `PENDING DELIVERIES (the hero ordered these via a delivery app — have them arrive in the story naturally, then move on): ${orders
+      `PENDING DELIVERIES (ordered via a delivery app — have them arrive in the story naturally, then move on): ${orders
         .map((o) => `${o.name} (${o.category})`)
         .join(', ')}.`
     );
@@ -399,7 +453,10 @@ export async function buildRequest(
   systemParts.push(
     `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts, character dialogue and choice texts — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate JSON keys, character ids, emotion keys, outfit tags, music moods or background ids — those stay exactly as given.`
   );
-  // Телефон (Batch 7) — контекст только если расширение включено.
+  // Единый WORLD STATE (Batch 8) — дата/деньги/долг/инвентарь + правила.
+  const worldCtx = worldStateBlock(project, state);
+  if (worldCtx) systemParts.push(worldCtx);
+  // Телефон-коммуникации (Batch 7) — только если расширение включено.
   const phoneCtx = phoneBlock(project, state);
   if (phoneCtx) systemParts.push(phoneCtx);
   const system = systemParts.join('\n\n');

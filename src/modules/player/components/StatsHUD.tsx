@@ -45,7 +45,8 @@ export function StatsHUD({
   // Календарь/локация — единая плашка (заменяет прежний отдельный чип часов).
   const c = state.gm?.clock;
   const showCal = state.gm?.showClockInGame;
-  const dateStr = c ? [c.day, c.month, c.year].filter(Boolean).join(' ') : '';
+  // Batch 8: каноническая дата ДД/ММ/ГГГГ приоритетна; иначе — легаси day/month/year.
+  const dateStr = c ? c.date || [c.day, c.month, c.year].filter(Boolean).join(' ') : '';
   const leftText = [dateStr, c?.time].filter(Boolean).join(' · ');
   const loc = c?.location || '';
   const hasCal = !!showCal && (!!leftText || !!loc);

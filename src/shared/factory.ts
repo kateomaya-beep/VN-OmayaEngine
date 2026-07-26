@@ -32,6 +32,9 @@ import {
   normalizeRandomEvents,
   normalizePhoneConfig,
   initialPhoneState,
+  normalizeFinanceConfig,
+  normalizeInventory,
+  PHONE_BALANCE_STAT,
 } from './types';
 import { uid, clamp } from './utils';
 
@@ -334,6 +337,7 @@ export function normalizeProject(raw: any): Project {
     imageGen: raw?.imageGen ? normalizeImageGen(raw.imageGen) : undefined,
     randomEvents: raw?.randomEvents ? normalizeRandomEvents(raw.randomEvents) : undefined,
     phone: raw?.phone ? normalizePhoneConfig(raw.phone) : undefined,
+    finance: raw?.finance ? normalizeFinanceConfig(raw.finance) : undefined,
   };
 }
 
@@ -352,6 +356,8 @@ export function initialMemory(): MemoryState {
 export function initialRuntimeState(project: Project, protagonistName?: string): RuntimeState {
   const statValues: Record<string, number> = {};
   for (const s of project.stats) statValues[s.id] = s.initial;
+  // Стартовый капитал телефона/финансов (Batch 8 §III.1): баланс — виртуальный стат.
+  if (project.finance) statValues[PHONE_BALANCE_STAT] = project.finance.startingBalance;
 
   // Живые значения отношений — из стартовых значений персонажей.
   const relationship: Record<string, RelationshipStats> = {};
@@ -360,6 +366,10 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
   // Имя героя берём из карточки протагониста (CR v2 §B.5) — отдельного экрана нет.
   const protagonist = project.characters.find((c) => c.role === 'protagonist');
   const name = protagonistName ?? protagonist?.name ?? '';
+
+  const gm = initialGameMaster(project);
+  // Стартовая внутриигровая дата (Batch 8 §II.2) — источник для начислений финансов.
+  if (project.finance?.startDate) gm.clock.date = project.finance.startDate;
 
   return {
     protagonistName: name,
@@ -378,6 +388,7 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     authorNotes: [],
     turnsSinceLastEvent: 999, // «давно не было» → случайное событие может сработать сразу
     phone: initialPhoneState(),
+    inventory: [],
   };
 }
 
@@ -470,6 +481,10 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
     turnsSinceLastEvent: num(raw.turnsSinceLastEvent, fresh.turnsSinceLastEvent ?? 999),
     // Телефон (Batch 7): сохраняем контакты/переписки/транзакции/заказы при загрузке.
     phone: normalizePhoneState(raw.phone),
+    // Инвентарь (Batch 8): из RuntimeState.inventory; миграция со старого phone.inventory.
+    inventory: normalizeInventory(
+      Array.isArray(raw.inventory) ? raw.inventory : raw?.phone?.inventory
+    ),
   };
 }
 

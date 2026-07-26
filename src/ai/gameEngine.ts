@@ -1,6 +1,8 @@
-import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry, PhoneState } from '../shared/types';
+import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry, PhoneState, InventoryItem } from '../shared/types';
 import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhoneState } from '../shared/types';
 import { pushToast } from '../shared/toast';
+import { resolveEmoji } from '../shared/emojiDict';
+import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
 import { buildRequest } from './promptBuilder';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
@@ -41,6 +43,44 @@ export function pickTrackForMood(
   return pickFrom[Math.floor(Math.random() * pickFrom.length)].id;
 }
 
+// Регулярные начисления за прошедший период (Batch 8 §III.3). Без сохранения
+// состояния: считаем, сколько дат вида anchor + k*period попадают в (oldDate, newDate].
+// Каждая — отдельная транзакция со своей датой. Долг (баланс < 0) не блокируется.
+export interface Accrual {
+  amount: number; // со знаком (доход +, расход −)
+  name: string;
+  date: string; // ДД/ММ/ГГГГ
+}
+export function computeAccruals(project: Project, oldDate: string, newDate: string): Accrual[] {
+  const fin = project.finance;
+  if (!fin) return [];
+  const oldY = parseDate(oldDate);
+  const newY = parseDate(newDate);
+  if (!oldY || !newY) return [];
+  if (diffDays(oldY, newY) <= 0) return []; // время не шло вперёд
+  const out: Accrual[] = [];
+  for (const e of fin.recurringEntries) {
+    if (!e.enabled) continue;
+    const anchor = parseDate(e.nextChargeDate);
+    const p = e.periodDays;
+    if (!anchor || !p || p <= 0) continue;
+    const dOld = diffDays(anchor, oldY);
+    const dNew = diffDays(anchor, newY);
+    // k*p ∈ (dOld, dNew], k ≥ 0
+    const kMin = Math.max(0, Math.floor(dOld / p) + 1);
+    const kMax = Math.floor(dNew / p);
+    for (let k = kMin; k <= kMax; k++) {
+      const when = addDays(anchor, k * p);
+      out.push({
+        amount: e.kind === 'expense' ? -e.amount : e.amount,
+        name: e.name,
+        date: formatDate(when),
+      });
+    }
+  }
+  return out;
+}
+
 // Применяет разобранный ход к state: статы, отношения, канон-факты, меморибук,
 // спрайты на сцене, музыку, историю, память. Общая часть для обычного и
 // потокового пути (см. Batch 3 §7). `raw` — сырой ответ ИИ для истории.
@@ -70,7 +110,8 @@ export async function applyTurn(
   // Баланс телефона — виртуальный стат (не в project.stats), applyStatChanges его
   // пропускает; если ИИ прислал дельту на него — применяем вручную (учтётся ниже,
   // после подготовки phone-состояния).
-  const balanceDeltas = project.phone?.enabled
+  const economyOn = !!project.phone?.enabled || !!project.finance;
+  const balanceDeltas = economyOn
     ? turn.statChanges.filter((ch) => ch.statId === PHONE_BALANCE_STAT)
     : [];
   const rel = applyRelationshipChanges(project, state.relationship, turn.statChanges);
@@ -135,15 +176,62 @@ export async function applyTurn(
     if (!phoneOn) return;
     if (!phone.contacts.some((c) => c.characterId === cid)) phone.contacts.push({ characterId: cid });
   };
-  // Дельты баланса из statChanges (money_change-биты обрабатываются в цикле ниже).
-  for (const ch of balanceDeltas) {
-    const before = values[PHONE_BALANCE_STAT] ?? 0;
-    const after = Math.max(0, before + ch.delta);
-    if (after !== before) {
-      values[PHONE_BALANCE_STAT] = after;
-      phone.transactions.push({ amount: after - before, reason: ch.reason || '', at: Date.now() });
+
+  // Инвентарь (Batch 8 §IV) — работает и без телефона. Мутируем копию.
+  const inventory: InventoryItem[] = JSON.parse(JSON.stringify(state.inventory ?? []));
+  const curDateStr = state.gm.clock.date || '';
+  const addItem = (name: string, opts: { emoji?: string; quantity?: number; category?: string; source?: string }) => {
+    const qty = opts.quantity && opts.quantity > 0 ? opts.quantity : 1;
+    const exist = inventory.find((it) => it.name.toLowerCase() === name.toLowerCase());
+    if (exist) {
+      exist.quantity += qty;
+      return;
     }
-  }
+    inventory.push({
+      id: uid('inv'),
+      name,
+      emoji: resolveEmoji(name, opts.emoji),
+      quantity: qty,
+      category: opts.category,
+      acquiredDate: curDateStr || undefined,
+      source: opts.source,
+    });
+  };
+  const removeItem = (name: string, qty: number) => {
+    const idx = inventory.findIndex((it) => it.name.toLowerCase() === name.toLowerCase());
+    if (idx < 0) return;
+    const it = inventory[idx];
+    if (qty >= it.quantity) inventory.splice(idx, 1);
+    else it.quantity -= qty;
+  };
+
+  // Баланс (Batch 8): долг разрешён (без клампа ≥0). Запись в выписку — только при
+  // включённом телефоне; сам баланс меняется всегда.
+  const recordMoney = (
+    amount: number,
+    meta: { vendor?: string; item?: string; time?: string; reason?: string; date?: string }
+  ) => {
+    if (!amount) return;
+    values[PHONE_BALANCE_STAT] = (values[PHONE_BALANCE_STAT] ?? 0) + amount;
+    if (phoneOn) {
+      phone.transactions.push({
+        amount,
+        reason: meta.reason || [meta.vendor, meta.item].filter(Boolean).join(' — ') || 'Транзакция',
+        vendor: meta.vendor,
+        item: meta.item,
+        time: meta.time,
+        date: meta.date || curDateStr || undefined,
+        at: Date.now(),
+      });
+    }
+  };
+
+  // Дельты баланса из statChanges (transaction/money_change-биты — в цикле ниже).
+  for (const ch of balanceDeltas) recordMoney(ch.delta, { reason: ch.reason || '' });
+
+  // Продвижение времени (Batch 8 §II): собираем целевую дату/время из time_advance-битов.
+  let pendingDate: string | undefined;
+  let pendingTime: string | undefined;
 
   let runBg: string | null = turn.scene.backgroundId ?? state.currentBackgroundId;
   let runMood: string | null = turn.scene.musicMood ?? state.currentMusicMood;
@@ -161,34 +249,28 @@ export async function applyTurn(
       if (cur) onScreenMap.set(b.characterId, { ...cur, outfit: b.outfit });
       continue;
     }
-    // Телефон: transaction / money_change / sms_incoming / contact_added — текста нет.
-    // transaction (ревизия блока 6) — трата/поступление из повествования с выпиской.
+    // Телефон/финансы: transaction / money_change — движение денег (долг разрешён).
     if (b.type === 'transaction') {
-      if (phoneOn) {
-        const before = values[PHONE_BALANCE_STAT] ?? 0;
-        const after = Math.max(0, before + b.amount);
-        values[PHONE_BALANCE_STAT] = after;
-        if (after !== before) {
-          const reason = [b.vendor, b.item].filter(Boolean).join(' — ') || 'Транзакция';
-          phone.transactions.push({
-            amount: after - before,
-            reason,
-            vendor: b.vendor,
-            item: b.item,
-            time: b.time,
-            at: Date.now(),
-          });
-        }
-      }
+      recordMoney(b.amount, { vendor: b.vendor, item: b.item, time: b.time });
       continue;
     }
     if (b.type === 'money_change') {
-      if (phoneOn) {
-        const before = values[PHONE_BALANCE_STAT] ?? 0;
-        const after = Math.max(0, before + b.amount);
-        values[PHONE_BALANCE_STAT] = after;
-        if (after !== before) phone.transactions.push({ amount: after - before, reason: b.reason || '', at: Date.now() });
-      }
+      recordMoney(b.amount, { reason: b.reason });
+      continue;
+    }
+    // Время (Batch 8 §II): последняя дата/время в потоке — целевые. Начисления — после цикла.
+    if (b.type === 'time_advance') {
+      if (b.newDate) pendingDate = b.newDate;
+      if (b.newTime) pendingTime = b.newTime;
+      continue;
+    }
+    // Инвентарь (Batch 8 §IV): расходники реально расходуются.
+    if (b.type === 'inventory_add') {
+      addItem(b.name, { emoji: b.emoji, quantity: b.quantity, category: b.category, source: b.source });
+      continue;
+    }
+    if (b.type === 'inventory_remove') {
+      removeItem(b.name, b.quantity ?? 1);
       continue;
     }
     if (b.type === 'sms_incoming') {
@@ -261,6 +343,18 @@ export async function applyTurn(
   // Game Master: мержим дельту мира от ИИ (досье/статусы/часы/отношения/адженда).
   const gm = mergeWorldState(state.gm, turn.worldState, nextTurnNumber);
 
+  // Продвижение времени (Batch 8 §II): time_advance-биты — авторитетны для даты/времени.
+  const oldDate = state.gm.clock.date || '';
+  if (pendingDate) gm.clock.date = pendingDate;
+  if (pendingTime) gm.clock.time = pendingTime;
+  const newDate = gm.clock.date || '';
+  // Регулярные начисления за прошедшие периоды (Batch 8 §III.3) — датированные транзакции.
+  if (pendingDate && oldDate) {
+    for (const a of computeAccruals(project, oldDate, newDate)) {
+      recordMoney(a.amount, { vendor: a.name, reason: a.name, date: a.date });
+    }
+  }
+
   let nextState: RuntimeState = {
     ...state,
     statValues: values,
@@ -272,6 +366,7 @@ export async function applyTurn(
     history,
     gm,
     phone: phoneOn ? phone : state.phone,
+    inventory,
     lastTurn: turn,
     turnCount: nextTurnNumber,
     lastChoiceTurn,

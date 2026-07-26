@@ -118,6 +118,8 @@ interface PlayerStore {
   sendPhoto: (characterId: string, assetId: string) => Promise<void>;
   // Тест подключения image-API (для камеры/CG). '' = успех, иначе текст ошибки.
   testImageApi: () => Promise<string>;
+  // Ручная правка баланса в «Банке» (Batch 8 §III.1) — записывает корректировку в выписку.
+  setBalance: (value: number) => void;
   // Правка памяти (список свёрток/саммари) прямо в игре.
   patchMemory: (mutator: (m: MemoryState) => void) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
@@ -654,6 +656,30 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     } finally {
       set({ cameraBusy: false });
     }
+  },
+
+  setBalance(value) {
+    const st = get();
+    if (!st.state) return;
+    const target = Math.round(value);
+    const cur = st.state.statValues[PHONE_BALANCE_STAT] ?? 0;
+    const delta = target - cur;
+    if (delta === 0) return;
+    const nextState: RuntimeState = JSON.parse(JSON.stringify(st.state));
+    nextState.statValues[PHONE_BALANCE_STAT] = target;
+    if (st.project?.phone?.enabled) {
+      const phone = nextState.phone ?? initialPhoneState();
+      phone.transactions.push({
+        amount: delta,
+        reason: 'Корректировка',
+        vendor: 'Корректировка',
+        date: nextState.gm.clock.date || undefined,
+        at: Date.now(),
+      });
+      nextState.phone = phone;
+    }
+    set({ state: nextState });
+    void get().autosave();
   },
 
   async testImageApi() {
