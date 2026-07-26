@@ -65,7 +65,7 @@ export function PlayerPage() {
   const moreBeatsQueued = s.queue.length > 0;
   const currentBeat = s.visibleBeats[s.visibleBeats.length - 1] || null;
   // Динамический фон: фон текущего бита (движок протянул его вперёд), иначе — фон хода.
-  const bgId = currentBeat?.bg ?? s.state.currentBackgroundId;
+  const bgId = (currentBeat && 'bg' in currentBeat ? currentBeat.bg : undefined) ?? s.state.currentBackgroundId;
   // Активный говорящий на сцене — только текущий dialogue-beat с characterId (Блок A.1).
   // На нарративе/мыслях спрайта нет (плавно гаснет кроссфейдом).
   const active: ActiveSprite | null =

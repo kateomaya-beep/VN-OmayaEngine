@@ -265,12 +265,13 @@ export type VectorizationMode = 'builtin' | 'custom' | 'off';
 export interface MemoryConfig {
   summaryEveryN: number; // частота свёртки (20/30/40/…) по счётчику сообщений
   summaryPrompt?: string; // кастомный промпт саммарайзера, иначе дефолт
+  minorEventsLimit?: number; // лимит MINOR EVENTS в саммари (Batch 6 §2), дефолт 10
   vectorization: VectorizationMode;
   embeddingsConnection?: ApiConnection; // для 'custom'
 }
 
 export function defaultMemoryConfig(): MemoryConfig {
-  return { summaryEveryN: 30, vectorization: 'off' };
+  return { summaryEveryN: 30, minorEventsLimit: 10, vectorization: 'off' };
 }
 
 // Длина хода (слов). Ползунок/ввод ограничены этими границами; дефолт совпадает с
@@ -454,9 +455,13 @@ export function normalizePlayerTheme(p: unknown): PlayerTheme {
 // bg — динамическая смена фона на этом бите (id ассета-фона), как emotion у реплик.
 // ИИ ставит его на бите, где меняется место/обстановка; движок при сборке хода
 // «протягивает» эффективный фон вперёд, поэтому у каждого бита bg заполнен.
+// bg/mood — эффективные фон/муз-настроение на момент бита (движок протягивает их
+// вперёд, в т.ч. от управляющих битов scene_change). scene_change/outfit_change —
+// УПРАВЛЯЮЩИЕ биты (Batch 6 §1): текста не несут, движок применяет их как команду
+// смены визуального состояния в точке появления в потоке.
 export type Beat =
-  | { type: 'narration'; text: string; bg?: string }
-  | { type: 'thought'; text: string; bg?: string }
+  | { type: 'narration'; text: string; bg?: string; mood?: string }
+  | { type: 'thought'; text: string; bg?: string; mood?: string }
   | {
       type: 'dialogue';
       characterId?: string; // для персонажей из списка
@@ -468,7 +473,10 @@ export type Beat =
       position: 'left' | 'center' | 'right';
       text: string;
       bg?: string;
-    };
+      mood?: string;
+    }
+  | { type: 'scene_change'; bg?: string; musicMood?: string } // смена фона/музыки в потоке
+  | { type: 'outfit_change'; characterId: string; outfit: string }; // переодевание персонажа
 
 export interface SceneDirective {
   backgroundId: string | null;

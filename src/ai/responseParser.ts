@@ -76,10 +76,29 @@ export function repairBeat(project: Project, b: any): Beat {
   const txt = (v: unknown) => stripMoveTag(String(v ?? ''));
   // Динамический фон бита: оставляем только валидный id фона, иначе — undefined
   // (движок протянет прежний). Всегда undefined на невалидном — без крашей.
-  const bg = typeof b?.bg === 'string' && bgIds.has(b.bg) ? b.bg : undefined;
+  const bgOf = (v: unknown) => (typeof v === 'string' && bgIds.has(v) ? v : undefined);
+  const bg = bgOf(b?.bg);
+  const mood = typeof b?.mood === 'string' && b.mood.trim() ? b.mood.trim() : undefined;
+
+  // Управляющие биты (Batch 6 §1). scene_change: фон (backgroundId|bg) и/или muz-настроение.
+  if (b?.type === 'scene_change') {
+    const scBg = bgOf(b.backgroundId) ?? bgOf(b.bg);
+    const scMood = typeof b.musicMood === 'string' && b.musicMood.trim() ? b.musicMood.trim() : undefined;
+    // Полностью пустой scene_change бесполезен — сворачиваем в пустой нарратив (движок отфильтрует).
+    return { type: 'scene_change', ...(scBg ? { bg: scBg } : {}), ...(scMood ? { musicMood: scMood } : {}) };
+  }
+  // outfit_change: валидный персонаж + каноничный (по регистру) наряд, иначе — игнор.
+  if (b?.type === 'outfit_change') {
+    const ch = b.characterId ? charById.get(b.characterId) : undefined;
+    const raw = typeof b.outfit === 'string' ? b.outfit.trim() : '';
+    const canon = ch && raw ? characterOutfits(ch).find((o) => o.toLowerCase() === raw.toLowerCase()) : undefined;
+    if (ch && canon) return { type: 'outfit_change', characterId: ch.id, outfit: canon };
+    return { type: 'narration', text: '' }; // невалидно → пустой нарратив (движок отфильтрует)
+  }
+
   if (!b || b.type !== 'dialogue') {
-    if (b?.type === 'thought') return { type: 'thought', text: txt(b.text), bg };
-    return { type: 'narration', text: txt(b?.text), bg };
+    if (b?.type === 'thought') return { type: 'thought', text: txt(b.text), bg, mood };
+    return { type: 'narration', text: txt(b?.text), bg, mood };
   }
   const position = ['left', 'center', 'right'].includes(b.position) ? b.position : 'center';
   const cid = b.characterId || undefined;
@@ -97,14 +116,14 @@ export function repairBeat(project: Project, b: any): Beat {
     const raw = typeof b.outfit === 'string' ? b.outfit.trim() : '';
     const canon = raw ? outfits.find((o) => o.toLowerCase() === raw.toLowerCase()) : undefined;
     const outfit = canon && canon !== defaultOutfitTag(ch) ? canon : undefined;
-    return { type: 'dialogue', characterId: ch.id, emotion, ...(outfit ? { outfit } : {}), position, text: txt(b.text), bg };
+    return { type: 'dialogue', characterId: ch.id, emotion, ...(outfit ? { outfit } : {}), position, text: txt(b.text), bg, mood };
   }
   const name = (b.name || '').trim();
   if (name) {
     const emotion = EMOTION_SET.has(b.emotion) ? b.emotion : 'neutral';
-    return { type: 'dialogue', name, emotion, position, text: txt(b.text), bg };
+    return { type: 'dialogue', name, emotion, position, text: txt(b.text), bg, mood };
   }
-  return { type: 'narration', text: txt(b.text), bg };
+  return { type: 'narration', text: txt(b.text), bg, mood };
 }
 
 // Чинит объект scene против манифеста.

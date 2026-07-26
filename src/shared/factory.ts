@@ -320,6 +320,8 @@ export function normalizeProject(raw: any): Project {
     memoryConfig: {
       summaryEveryN: num(mem.summaryEveryN, 30),
       summaryPrompt: typeof mem.summaryPrompt === 'string' ? mem.summaryPrompt : undefined,
+      minorEventsLimit:
+        typeof mem.minorEventsLimit === 'number' ? clamp(Math.round(mem.minorEventsLimit), 3, 40) : 10,
       vectorization: vecSet.has(mem.vectorization) ? mem.vectorization : 'off',
       embeddingsConnection: normConnection(mem.embeddingsConnection),
     },

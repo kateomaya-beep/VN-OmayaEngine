@@ -109,10 +109,44 @@ export async function applyTurn(
     });
   }
 
-  // On-screen sprites: только персонажи из списка (с characterId). NPC/name — без слота.
+  // Единый проход по beats (Batch 6 §1): управляющие биты scene_change/outfit_change
+  // применяются В ТОЧКЕ появления в потоке, их эффект «протягивается» на последующие
+  // content-биты (эффективные bg/mood), а сами управляющие биты убираются из потока
+  // (текста не несут). Наряд персонажа — СОСТОЯНИЕ: сеем из onScreen, обновляем сменами,
+  // сохраняем вперёд (персонаж остаётся в новом наряде и на следующие ходы).
+  const outfitByChar = new Map<string, string | undefined>();
+  for (const os of state.onScreen) outfitByChar.set(os.characterId, os.outfit);
   const onScreenMap = new Map(state.onScreen.map((s) => [s.characterId, s]));
+
+  let runBg: string | null = turn.scene.backgroundId ?? state.currentBackgroundId;
+  let runMood: string | null = turn.scene.musicMood ?? state.currentMusicMood;
+
+  const contentBeats: typeof turn.beats = [];
   for (const b of turn.beats) {
+    if (b.type === 'scene_change') {
+      if (b.bg) runBg = b.bg;
+      if (b.musicMood) runMood = b.musicMood;
+      continue;
+    }
+    if (b.type === 'outfit_change') {
+      outfitByChar.set(b.characterId, b.outfit);
+      const cur = onScreenMap.get(b.characterId);
+      if (cur) onScreenMap.set(b.characterId, { ...cur, outfit: b.outfit });
+      continue;
+    }
+    // Пустой нарратив (артефакт невалидного управляющего бита) — тоже отбрасываем.
+    if (b.type === 'narration' && !b.text.trim() && !b.bg && !b.mood) continue;
+
+    // Content-бит: печём эффективные фон и настроение на его момент.
+    if (b.bg) runBg = b.bg;
+    else b.bg = runBg ?? undefined;
+    if (b.mood) runMood = b.mood;
+    else if (runMood) b.mood = runMood;
+
     if (b.type === 'dialogue' && b.characterId) {
+      // Наряд бита приоритетнее; иначе — текущий наряд персонажа из состояния.
+      if (b.outfit) outfitByChar.set(b.characterId, b.outfit);
+      else if (outfitByChar.get(b.characterId)) b.outfit = outfitByChar.get(b.characterId);
       onScreenMap.set(b.characterId, {
         characterId: b.characterId,
         emotion: b.emotion,
@@ -120,22 +154,14 @@ export async function applyTurn(
         position: b.position,
       });
     }
+    contentBeats.push(b);
   }
+  turn.beats = contentBeats;
   const onScreen = [...onScreenMap.values()].slice(-3);
-
-  // Динамический фон (CR: смена фона в ходе, как эмоции): протягиваем эффективный
-  // фон по битам вперёд от стартового (scene.backgroundId ?? прежний). Каждый бит
-  // получает актуальный на его момент фон, поэтому плеер меняет его при пролистывании,
-  // а финальный фон уходит в currentBackgroundId для следующего хода/перезагрузки.
-  let runBg: string | null = turn.scene.backgroundId ?? state.currentBackgroundId;
-  for (const b of turn.beats) {
-    if (b.bg) runBg = b.bg;
-    else b.bg = runBg ?? undefined;
-  }
   const finalBackgroundId = runBg ?? state.currentBackgroundId;
 
-  // Музыка: настроение -> конкретный трек (движок сам выбирает).
-  const nextMood = turn.scene.musicMood ?? state.currentMusicMood;
+  // Музыка: финальное настроение хода -> конкретный трек (мид-турн смены играет плеер).
+  const nextMood = runMood ?? state.currentMusicMood;
   const nextTrack =
     nextMood === state.currentMusicMood
       ? state.currentMusicAssetId

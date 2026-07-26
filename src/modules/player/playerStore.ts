@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote } from '../../shared/types';
 import { initialRuntimeState } from '../../shared/factory';
-import { runTurn } from '../../ai/gameEngine';
+import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, saveProject, deleteSave } from '../../storage/db';
 import {
@@ -20,6 +20,23 @@ import { uid } from '../../shared/utils';
 function trackBlobKey(project: Project, assetId: string | null): string | null {
   if (!assetId) return null;
   return project.assets.find((a) => a.id === assetId)?.blobKey || null;
+}
+
+// Транзиентное «что сейчас играет» — для мид-турн смены музыки (Batch 6 §1). Не сейв:
+// при загрузке пересевается из состояния. Позволяет переключать трек по мере
+// показа битов с новым настроением, не дёргая один и тот же трек лишний раз.
+let playingMood: string | null = null;
+let playingAssetId: string | null = null;
+function seedPlaying(mood: string | null, assetId: string | null): void {
+  playingMood = mood;
+  playingAssetId = assetId;
+}
+function switchMood(project: Project, mood: string | null | undefined): void {
+  if (!mood || mood === playingMood) return;
+  const t = pickTrackForMood(project, mood, playingAssetId);
+  playingMood = mood;
+  playingAssetId = t;
+  void playMusic(trackBlobKey(project, t));
 }
 
 interface PlayerStore {
@@ -268,6 +285,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
     const [next, ...rest] = queue;
     set({ queue: rest, visibleBeats: [...visibleBeats, next] });
+    // Мид-турн смена музыки: этот бит принёс новое настроение (Batch 6 §1).
+    const proj = get().project;
+    if (proj && 'mood' in next && next.mood) switchMood(proj, next.mood);
   },
 
   async choose(choice) {
@@ -400,7 +420,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       ...meta,
     };
     await putSave(snap);
-    const firstBeat = snapshot.lastTurn?.beats?.find((b) => 'text' in b && b.text)?.text || '';
+    const firstBeat = snapshot.lastTurn?.beats?.map((b) => ('text' in b ? b.text : ''))?.find((t) => t) || '';
     logEvent('debug', 'save', `Автосейв ход ${snapshot.turnCount}, beats: ${snapshot.lastTurn?.beats?.length ?? 0} · «${firstBeat.slice(0, 40)}»`);
   },
 
@@ -506,8 +526,9 @@ function applyLoadedState(
   state: RuntimeState
 ) {
   const last = state.lastTurn;
-  const firstBeat = last?.beats?.find((b) => 'text' in b && b.text)?.text || '';
+  const firstBeat = last?.beats?.map((b) => ('text' in b ? b.text : ''))?.find((t) => t) || '';
   logEvent('info', 'load', `Загружен ход ${state.turnCount}, beats: ${last?.beats?.length ?? 0} · «${firstBeat.slice(0, 40)}»`);
+  seedPlaying(state.currentMusicMood, state.currentMusicAssetId);
   playMusic(trackBlobKey(project, state.currentMusicAssetId));
   set({
     project,
@@ -571,8 +592,12 @@ async function runAndApply(
       if (after !== before) flash.push({ statId: s.id, delta: after - before });
     }
 
-    // Scene fx: воспроизводим трек, подобранный движком под настроение.
-    void playMusic(trackBlobKey(project, state.currentMusicAssetId));
+    // Музыка: играем настроение ПЕРВОГО бита хода; мид-турн смены доиграет advance()
+    // (Batch 6 §1). Сеем «что играет» из состояния ДО хода — если настроение не
+    // сменилось, трек продолжается без рестарта.
+    seedPlaying(baseState.currentMusicMood, baseState.currentMusicAssetId);
+    const openMood = ('mood' in (turn.beats[0] || {}) ? (turn.beats[0] as { mood?: string }).mood : undefined) ?? state.currentMusicMood;
+    switchMood(project, openMood);
     if (turn.scene.sfxId) void playSfx(trackBlobKey(project, turn.scene.sfxId));
 
     const [first, ...rest] = turn.beats;

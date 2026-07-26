@@ -593,6 +593,16 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
           <input type="number" min={4} className="input w-24" value={mc.summaryEveryN} onChange={(e) => patchMem({ summaryEveryN: Number(e.target.value) })} />
         </div>
       </Field>
+      <Field label={L(`Лимит «мелких событий» в саммари: ${mc.minorEventsLimit ?? 10}`, `Minor-events limit in summary: ${mc.minorEventsLimit ?? 10}`)}>
+        <input
+          type="number"
+          min={3}
+          max={40}
+          className="input w-24"
+          value={mc.minorEventsLimit ?? 10}
+          onChange={(e) => patchMem({ minorEventsLimit: Math.max(3, Math.min(40, Number(e.target.value) || 10)) })}
+        />
+      </Field>
       <Field label={L('Кастомный промпт саммарайзера (опц.)', 'Custom summarizer prompt (opt.)')}>
         <textarea className="input h-20" value={mc.summaryPrompt || ''} onChange={(e) => patchMem({ summaryPrompt: e.target.value || undefined })} />
       </Field>

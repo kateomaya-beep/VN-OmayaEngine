@@ -60,7 +60,7 @@ export async function maybeCompress(
   const toastId = pushToast('info', tt('Сжимаю память…', 'Summarizing memory…'));
   logEvent('info', 'memory', `Саммаризация: сворачиваю ${stale.length} сообщений`);
   try {
-    const prompt = project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(12);
+    const prompt = project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(project.memoryConfig.minorEventsLimit ?? 10);
     const text = await summarize(project, prompt, transcript);
     updateToast(toastId, 'success', tt('Память обновлена', 'Memory updated'));
     logEvent('info', 'memory', 'Саммаризация выполнена');
@@ -112,7 +112,7 @@ async function recompactChronicle(
     const transcript = toFold.map((c, i) => `[${i + 1}] ${c.text}`).join('\n');
     const text = await summarize(
       project,
-      project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(15),
+      project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(project.memoryConfig.minorEventsLimit ?? 10),
       transcript
     );
     if (!text) return { ...memory, chronicle: rest };

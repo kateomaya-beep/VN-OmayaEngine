@@ -20,7 +20,7 @@ export function DialogueBox({
   const [shown, setShown] = useState('');
   const [done, setDone] = useState(false);
 
-  const fullText = beat?.text ?? '';
+  const fullText = beat && 'text' in beat ? beat.text : '';
 
   // Сброс СИНХРОННО при смене beat (паттерн «правка стейта во время рендера»). Без
   // этого первый кадр нового бита рендерится со СТАРЫМ done=true и на миллисекунду
