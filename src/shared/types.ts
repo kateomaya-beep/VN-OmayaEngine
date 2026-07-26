@@ -311,6 +311,83 @@ export interface Project {
   audioMoods: string[]; // кастомные настроения сверх базовых 8 (см. CR v2 §N.2)
   playerTheme?: PlayerTheme; // пер-проектное оформление плеера (мини-мастерская)
   imageGen?: ImageGenConfig; // CG-студия: генерация кат-сцен через image-API
+  randomEvents?: RandomEventConfig; // случайные сюжетные события (Batch 6 §3)
+}
+
+// Случайные события (Batch 6 §3): движок с заданной вероятностью подмешивает в ход
+// скрытую директиву-событие. Конфиг в проекте; счётчик кулдауна — в RuntimeState.
+export type RandomEventType =
+  | 'new_npc'
+  | 'new_location'
+  | 'secret_reveal'
+  | 'dramatic_event'
+  | 'unexpected_twist';
+
+export interface RandomEventTypeConfig {
+  id: RandomEventType;
+  enabled: boolean;
+  weight: number; // относительная частота (0 = не выпадает)
+}
+
+export interface RandomEventConfig {
+  enabled: boolean; // дефолт false
+  chancePercent: number; // шанс на ход, дефолт 10
+  cooldownTurns: number; // мин. ходов между событиями, дефолт 5
+  canInterruptTenseScenes: boolean; // дефолт false
+  types: RandomEventTypeConfig[];
+}
+
+export const RANDOM_EVENT_TYPES: RandomEventType[] = [
+  'new_npc',
+  'new_location',
+  'secret_reveal',
+  'dramatic_event',
+  'unexpected_twist',
+];
+
+export const RANDOM_EVENT_LABELS: Record<RandomEventType, { ru: string; en: string }> = {
+  new_npc: { ru: 'Новый персонаж', en: 'New character' },
+  new_location: { ru: 'Новая локация', en: 'New location' },
+  secret_reveal: { ru: 'Раскрытие секрета', en: 'Secret revealed' },
+  dramatic_event: { ru: 'Драматичное событие', en: 'Dramatic event' },
+  unexpected_twist: { ru: 'Неожиданный поворот', en: 'Unexpected twist' },
+};
+
+export function defaultRandomEvents(): RandomEventConfig {
+  return {
+    enabled: false,
+    chancePercent: 10,
+    cooldownTurns: 5,
+    canInterruptTenseScenes: false,
+    types: RANDOM_EVENT_TYPES.map((id) => ({ id, enabled: true, weight: 1 })),
+  };
+}
+
+export function normalizeRandomEvents(v: unknown): RandomEventConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const d = defaultRandomEvents();
+  const num = (x: unknown, def: number, lo: number, hi: number) =>
+    typeof x === 'number' && x >= lo && x <= hi ? x : def;
+  const byId = new Map<RandomEventType, RandomEventTypeConfig>();
+  if (Array.isArray(o.types)) {
+    for (const t of o.types as any[]) {
+      if (t && RANDOM_EVENT_TYPES.includes(t.id)) {
+        byId.set(t.id, {
+          id: t.id,
+          enabled: typeof t.enabled === 'boolean' ? t.enabled : true,
+          weight: num(t.weight, 1, 0, 100),
+        });
+      }
+    }
+  }
+  return {
+    enabled: typeof o.enabled === 'boolean' ? o.enabled : false,
+    chancePercent: num(o.chancePercent, 10, 0, 100),
+    cooldownTurns: num(o.cooldownTurns, 5, 0, 100),
+    canInterruptTenseScenes: typeof o.canInterruptTenseScenes === 'boolean' ? o.canInterruptTenseScenes : false,
+    // Гарантируем все 5 типов (новые версии могут добавить) в фиксированном порядке.
+    types: RANDOM_EVENT_TYPES.map((id) => byId.get(id) || d.types.find((t) => t.id === id)!),
+  };
 }
 
 // CG-студия — генерация кат-сцен по текущей сцене через image-API (Nano Banana/Gemini
@@ -696,6 +773,8 @@ export interface RuntimeState {
   // ходом игрока (глубина 0). Менеджер заметок в игре: создать/править/подтвердить/
   // удалить/копировать. Живут в сейве до ручного изменения.
   authorNotes: AuthorNote[];
+  // Ходов с последнего случайного события (Batch 6 §3) — для кулдауна. В сейве.
+  turnsSinceLastEvent?: number;
 }
 
 export interface AuthorNote {

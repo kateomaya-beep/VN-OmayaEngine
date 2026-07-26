@@ -7,6 +7,7 @@ import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './r
 import { mergeWorldState } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { maybeCompress } from './memoryEngine';
+import { rollRandomEvent } from './randomEvents';
 import { uid } from '../shared/utils';
 
 // Порог, с которого сдвиг отношений считается «заметным событием» и попадает
@@ -47,7 +48,8 @@ export async function applyTurn(
   state: RuntimeState,
   playerMove: string,
   turn: AiTurn,
-  raw: string
+  raw: string,
+  opts?: { eventFired?: boolean }
 ): Promise<RuntimeState> {
   const nextTurnNumber = state.turnCount + 1;
 
@@ -193,6 +195,8 @@ export async function applyTurn(
     lastTurn: turn,
     turnCount: nextTurnNumber,
     lastChoiceTurn,
+    // Кулдаун случайных событий (Batch 6 §3): сброс при срабатывании, иначе +1.
+    turnsSinceLastEvent: opts?.eventFired ? 0 : (state.turnsSinceLastEvent ?? 999) + 1,
     memory: {
       ...state.memory,
       facts,
@@ -216,7 +220,9 @@ export async function runTurn(
   playerMove: string,
   signal?: AbortSignal
 ): Promise<TurnResult> {
-  const req = await buildRequest(project, state, playerMove);
+  // Случайное событие (Batch 6 §3): скрытая директива в контекст этого хода.
+  const evt = rollRandomEvent(project, state);
+  const req = await buildRequest(project, state, playerMove, { extraDirective: evt.directive || undefined });
 
   // Потолок токенов — под верхнюю границу длины хода (слова→токены ≈ ×2.2 для
   // кириллицы) + запас на JSON-обвязку/worldState. Держим НЕ слишком большим,
@@ -263,6 +269,6 @@ export async function runTurn(
   // ('custom'/'local'), он переопределяет emotion/наряд/музыку из закрытых списков.
   // source==='main' или ошибка → ход без изменений (выбор Рассказчика).
   const turn = await selectAssets(project, state, parsed.turn);
-  const nextState = await applyTurn(project, state, playerMove, turn, raw);
+  const nextState = await applyTurn(project, state, playerMove, turn, raw, { eventFired: evt.fired });
   return { turn, state: nextState };
 }

@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Modal, Field } from '../../shared/ui';
 import { getApiKey, setApiKey } from '../../ai/keys';
-import type { Project } from '../../shared/types';
+import { defaultRandomEvents, RANDOM_EVENT_LABELS, type Project } from '../../shared/types';
 
-// Управление расширениями: Лорбук/Меморибук (справка) и Генерация изображений.
-// Память (саммари + векторизация) переехала в Game Master (см. правку по Horae).
-type Ext = 'lorebook' | 'image';
+// Управление расширениями: Лорбук/Меморибук (справка), Генерация изображений,
+// Случайные события. Память переехала в Game Master.
+type Ext = 'lorebook' | 'image' | 'events';
 
 export function ExtensionsPanel({
   open,
@@ -42,8 +42,20 @@ export function ExtensionsPanel({
 
   const TABS: { id: Ext; label: string; icon: string }[] = [
     { id: 'lorebook', label: 'Лорбук / Меморибук', icon: '📖' },
+    { id: 'events', label: 'Случайные события', icon: '🎲' },
     { id: 'image', label: 'Генерация картинок', icon: '🎨' },
   ];
+
+  const re = project.randomEvents ?? defaultRandomEvents();
+  const patchRE = (patch: Partial<typeof re>) =>
+    onPatch((p) => {
+      p.randomEvents = { ...(p.randomEvents ?? defaultRandomEvents()), ...patch };
+    });
+  const patchType = (id: string, patch: { enabled?: boolean; weight?: number }) =>
+    onPatch((p) => {
+      const cur = p.randomEvents ?? defaultRandomEvents();
+      p.randomEvents = { ...cur, types: cur.types.map((t) => (t.id === id ? { ...t, ...patch } : t)) };
+    });
 
   return (
     <Modal open={open} onClose={onClose} title="Управление расширениями" wide>
@@ -77,6 +89,80 @@ export function ExtensionsPanel({
               Динамическая память (досье персонажей, события, отношения, саммари, векторизация)
               теперь живёт в расширении <b>Game Master</b> (🎮) — она наполняется ИИ каждый ход.
             </p>
+          </div>
+        </div>
+      )}
+
+      {tab === 'events' && (
+        <div className="space-y-4">
+          <p className="text-xs text-gray-500">
+            Движок с заданной вероятностью подмешивает в ход сюжетное событие — скрытой директивой,
+            которую ИИ вплетает в обычный ответ (игрок её не видит). Мир становится менее предсказуемым.
+          </p>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={re.enabled} onChange={(e) => patchRE({ enabled: e.target.checked })} />
+            Включить случайные события
+          </label>
+
+          <div className={`space-y-4 ${re.enabled ? '' : 'opacity-50 pointer-events-none'}`}>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <Field label={`Шанс на ход: ${re.chancePercent}%`}>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={re.chancePercent}
+                  onChange={(e) => patchRE({ chancePercent: Number(e.target.value) })}
+                  className="w-full accent-accent2"
+                />
+              </Field>
+              <Field label="Кулдаун (мин. ходов между событиями)">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="input w-28"
+                  value={re.cooldownTurns}
+                  onChange={(e) => patchRE({ cooldownTurns: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                />
+              </Field>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={re.canInterruptTenseScenes}
+                onChange={(e) => patchRE({ canInterruptTenseScenes: e.target.checked })}
+              />
+              Может прерывать напряжённые/интимные сцены
+            </label>
+
+            <div>
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-2">Типы событий и веса</div>
+              <div className="space-y-2">
+                {re.types.map((t) => (
+                  <div key={t.id} className="card flex items-center gap-3 !p-2.5">
+                    <input type="checkbox" checked={t.enabled} onChange={(e) => patchType(t.id, { enabled: e.target.checked })} />
+                    <div className="flex-1 text-sm">{RANDOM_EVENT_LABELS[t.id].ru}</div>
+                    <span className="text-xs text-gray-500">вес</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      step={1}
+                      className="input w-16 !py-1"
+                      value={t.weight}
+                      disabled={!t.enabled}
+                      onChange={(e) => patchType(t.id, { weight: Math.max(0, Math.min(20, Number(e.target.value) || 0)) })}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-2">
+                «Раскрытие секрета» тянет нить из уже заложенных сюжетных крючков (саммари/лорбук), а не
+                выдумывает новую. Отключённые типы не выпадают; больший вес — чаще.
+              </p>
+            </div>
           </div>
         </div>
       )}

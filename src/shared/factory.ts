@@ -28,6 +28,7 @@ import {
   normalizeTurnLength,
   normalizePlayerTheme,
   normalizeImageGen,
+  normalizeRandomEvents,
 } from './types';
 import { uid, clamp } from './utils';
 
@@ -328,6 +329,7 @@ export function normalizeProject(raw: any): Project {
     audioMoods,
     playerTheme: raw?.playerTheme ? normalizePlayerTheme(raw.playerTheme) : undefined,
     imageGen: raw?.imageGen ? normalizeImageGen(raw.imageGen) : undefined,
+    randomEvents: raw?.randomEvents ? normalizeRandomEvents(raw.randomEvents) : undefined,
   };
 }
 
@@ -370,6 +372,7 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     turnCount: 0,
     lastChoiceTurn: -1e9,
     authorNotes: [],
+    turnsSinceLastEvent: 999, // «давно не было» → случайное событие может сработать сразу
   };
 }
 

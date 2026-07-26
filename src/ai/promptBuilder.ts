@@ -272,7 +272,7 @@ export async function buildRequest(
   project: Project,
   state: RuntimeState,
   playerMove: string,
-  opts?: { skipVector?: boolean }
+  opts?: { skipVector?: boolean; extraDirective?: string }
 ): Promise<BuiltRequest> {
   const cfg = project.aiConfig;
   const ps = getPresetSettings(); // ГЛОБАЛЬНЫЙ пресет/настройки генерации (не на проект)
@@ -390,6 +390,12 @@ export async function buildRequest(
     if (note.text.trim()) {
       withMove.push({ role: 'user', content: `[AUTHOR NOTE] ${expandMacros(note.text, ctx)}` });
     }
+  }
+
+  // Скрытая директива случайного события (Batch 6 §3) — игрок её не видит и она НЕ
+  // сохраняется в истории (buildRequest собирает сообщения заново каждый ход).
+  if (opts?.extraDirective?.trim()) {
+    withMove.push({ role: 'user', content: opts.extraDirective });
   }
 
   // Ремайндер формата + длины на глубине 0 (в самый конец) — модели сильнее
