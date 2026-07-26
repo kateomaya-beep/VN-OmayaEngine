@@ -9,6 +9,7 @@ import { extractJson } from './responseParser';
 import { formatClock } from './gameMaster';
 import { expandMacros, type MacroContext } from './macros';
 import { retrieveRelevant } from './vectorEngine';
+import { buildRegistryView, registryContextBlock } from './characterRegistry';
 import { estimateTokens } from '../shared/utils';
 
 // Builds the full request as a system string (layered core → style → jailbreak →
@@ -462,6 +463,19 @@ export async function buildRequest(
   systemParts.push(
     `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts, character dialogue and choice texts — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate JSON keys, character ids, emotion keys, outfit tags, music moods or background ids — those stay exactly as given.`
   );
+  // Реестр персонажей (patch character-registry) — идентичность по id + правило.
+  const regView = buildRegistryView(project, state.gm);
+  const regBlock = registryContextBlock(regView);
+  if (regBlock) {
+    systemParts.push(
+      `${regBlock}\n\nCHARACTER IDENTITY — CRITICAL:\n` +
+        `- The Character Registry above is the single source of truth for who exists.\n` +
+        `- Before introducing or describing anyone, check the registry. If the person already exists under ANY name or alias, reuse their existing id — do NOT invent a second character for the same person (names drift: "Дэмиан"/"Дэм"/"Блэк"/"парень из бара" are one person).\n` +
+        `- Emit {"type":"character_new","canonicalName":...,"aliases":[...],"role":...} ONLY for a genuinely new person absent from the registry. If they are already known under a new nickname, emit {"type":"character_alias_add","id":"<existing id>","alias":"<nickname>"} instead.\n` +
+        `- When a known character's situation changes, emit {"type":"character_update","id":"<id>","status":"..."} — never create a second entry for the same person.`
+    );
+  }
+
   // Единый WORLD STATE (Batch 8) — дата/деньги/долг/инвентарь + правила.
   const worldCtx = worldStateBlock(project, state);
   if (worldCtx) systemParts.push(worldCtx);

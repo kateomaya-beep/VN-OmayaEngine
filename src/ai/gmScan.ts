@@ -147,6 +147,9 @@ export async function generateCharacterSheet(state: RuntimeState, name: string):
     'You are a character-card writer for a visual-novel engine. Build a FULL character sheet for the ' +
     `character named "${name}", based strictly on what the transcript shows (infer tastefully where the ` +
     'transcript is silent, staying consistent). ALL VALUES IN ENGLISH regardless of the story language. ' +
+    'Gather EVERYTHING known about this character from the transcript (summary sections, canonical ' +
+    'facts, events) and produce ONE consistent sheet that preserves established facts and never ' +
+    'contradicts canon — this UPDATES the character, it does not invent a second version of them. ' +
     'Reply with ONLY a JSON object: {"name":string,"appearance":string,"personality":string,' +
     '"backstory":string,"speechStyle":string,"scenario":string,"greetings":[string]}. ' +
     'appearance/personality/backstory are a few sentences each; speechStyle describes how they talk; ' +

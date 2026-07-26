@@ -6,6 +6,7 @@ import { ApiConnectionField } from '../constructor/editors/ApiConnectionField';
 import { getConnection } from '../../ai/connection';
 import { formatClock } from '../../ai/gameMaster';
 import { scanCharacter, scanEvents, scanAgenda, generateCharacterSheet, type GeneratedSheet } from '../../ai/gmScan';
+import { buildRegistryView, findDuplicatePairs } from '../../ai/characterRegistry';
 import { pushToast, updateToast } from '../../shared/toast';
 import { uid } from '../../shared/utils';
 import { DEFAULT_MONTHS, RELATIONSHIP_FIELDS, RELATIONSHIP_META } from '../../shared/types';
@@ -388,6 +389,84 @@ function InventoryTab({ L }: { L: Lf }) {
   );
 }
 
+// Поиск и склейка дублей персонажей (patch character-registry §3.3).
+function MergeDuplicates({ L, project }: { L: Lf; project?: Project | null }) {
+  const s = usePlayerStore();
+  const [scanned, setScanned] = useState<null | [string, string][]>(null); // пары id
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+
+  const nameOf = (id: string) => {
+    const reg = s.state ? buildRegistryView(project!, s.state.gm) : [];
+    const e = reg.find((x) => x.id === id);
+    if (!e) return id;
+    const aka = e.aliases.filter((a) => a.toLowerCase() !== e.canonicalName.toLowerCase());
+    return `${e.canonicalName}${aka.length ? ` (${aka.join(', ')})` : ''}`;
+  };
+
+  const run = () => {
+    if (!s.state || !project) return;
+    const reg = buildRegistryView(project, s.state.gm);
+    const pairs = findDuplicatePairs(reg).map(([a, b]) => [a.id, b.id] as [string, string]);
+    setScanned(pairs);
+    setDismissed(new Set());
+  };
+
+  const visible = (scanned || []).filter(([a, b]) => !dismissed.has(`${a}|${b}`));
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-panel2 p-2.5 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-xs uppercase tracking-wide text-gray-500">
+          {L('Дубли персонажей', 'Duplicate characters')}
+        </div>
+        <button className="btn-ghost !px-3 !py-1 text-xs" onClick={run}>
+          🔗 {L('Найти дубли', 'Find duplicates')}
+        </button>
+      </div>
+      {scanned && visible.length === 0 && (
+        <p className="text-xs text-gray-500">{L('Подозрительных пар не найдено.', 'No suspicious pairs found.')}</p>
+      )}
+      {visible.map(([a, b]) => {
+        const key = `${a}|${b}`;
+        return (
+          <div key={key} className="rounded bg-black/20 p-2 text-sm">
+            <div className="text-white/90 mb-1.5">
+              {nameOf(a)} <span className="text-gray-500">↔</span> {nameOf(b)}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                className="btn-ghost !px-2 !py-1 text-xs"
+                onClick={() => { s.mergeCharacters(a, b); setDismissed((d) => new Set(d).add(key)); }}
+                title={L('Оставить первого, второго влить в него', 'Keep the first, merge the second into it')}
+              >
+                {L('Оставить', 'Keep')} «{nameOf(a).split(' (')[0]}»
+              </button>
+              <button
+                className="btn-ghost !px-2 !py-1 text-xs"
+                onClick={() => { s.mergeCharacters(b, a); setDismissed((d) => new Set(d).add(key)); }}
+              >
+                {L('Оставить', 'Keep')} «{nameOf(b).split(' (')[0]}»
+              </button>
+              <button
+                className="btn-ghost !px-2 !py-1 text-xs text-gray-400"
+                onClick={() => setDismissed((d) => new Set(d).add(key))}
+              >
+                {L('Не дубли', 'Not dupes')}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      {!scanned && (
+        <p className="text-[11px] text-gray-500">
+          {L('Ищет одинаковых персонажей под разными именами и сливает их (статы отношений — по максимуму, алиасы и контакты объединяются).',
+             'Finds the same character under different names and merges them (relationship stats take the max; aliases and contacts are combined).')}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // Анкеты (Batch 8 §VI.2-3): генерация полной карточки на английском → правка → экспорт.
 function SheetsTab({ L, project }: { L: Lf; project?: Project | null }) {
   const s = usePlayerStore();
@@ -428,6 +507,8 @@ function SheetsTab({ L, project }: { L: Lf; project?: Project | null }) {
 
   return (
     <div className="space-y-3">
+      <MergeDuplicates L={L} project={project} />
+
       <p className="text-xs text-gray-500">
         {L(
           'Полная анкета персонажа на английском (для совместимости с ST/Janitor) по имени из истории. Правьте перед добавлением в проект.',

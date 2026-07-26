@@ -140,6 +140,38 @@ export function repairBeat(project: Project, b: any): Beat {
     const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
     return { type: 'inventory_remove', name, quantity: qty, reason: s(b.reason) };
   }
+  // Реестр персонажей (patch character-registry).
+  if (b?.type === 'character_new') {
+    const canonicalName = txt(b.canonicalName).trim();
+    if (!canonicalName) return { type: 'narration', text: '' };
+    const roles = ['protagonist', 'love_interest', 'important_character', 'npc'];
+    const aliases = Array.isArray(b.aliases) ? b.aliases.filter((x: unknown): x is string => typeof x === 'string' && !!x.trim()) : undefined;
+    return {
+      type: 'character_new',
+      id: typeof b.id === 'string' && b.id.trim() ? b.id.trim() : undefined,
+      canonicalName,
+      aliases,
+      role: roles.includes(b.role) ? b.role : undefined,
+    };
+  }
+  if (b?.type === 'character_alias_add') {
+    const id = txt(b.id).trim();
+    const alias = txt(b.alias).trim();
+    if (!id || !alias) return { type: 'narration', text: '' };
+    return { type: 'character_alias_add', id, alias };
+  }
+  if (b?.type === 'character_update') {
+    const id = txt(b.id).trim();
+    if (!id) return { type: 'narration', text: '' };
+    const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    let sheetPatch: Record<string, string> | undefined;
+    if (b.sheetPatch && typeof b.sheetPatch === 'object') {
+      sheetPatch = {};
+      for (const [k, v] of Object.entries(b.sheetPatch)) if (typeof v === 'string') sheetPatch[k] = v;
+      if (!Object.keys(sheetPatch).length) sheetPatch = undefined;
+    }
+    return { type: 'character_update', id, status: s(b.status), canonicalName: s(b.canonicalName), sheetPatch };
+  }
 
   if (!b || b.type !== 'dialogue') {
     if (b?.type === 'thought') return { type: 'thought', text: txt(b.text), bg, mood };

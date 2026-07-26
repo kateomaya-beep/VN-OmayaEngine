@@ -57,6 +57,22 @@ export const beatSchema = z.union([
     quantity: z.number().nullish(),
     reason: z.string().nullish(),
   }),
+  // Реестр персонажей (patch character-registry).
+  z.object({
+    type: z.literal('character_new'),
+    id: z.string().nullish(),
+    canonicalName: z.string(),
+    aliases: z.array(z.string()).nullish(),
+    role: z.string().nullish(),
+  }),
+  z.object({ type: z.literal('character_alias_add'), id: z.string(), alias: z.string() }),
+  z.object({
+    type: z.literal('character_update'),
+    id: z.string(),
+    status: z.string().nullish(),
+    canonicalName: z.string().nullish(),
+    sheetPatch: z.record(z.string()).nullish(),
+  }),
 ]);
 
 export const sceneSchema = z.object({

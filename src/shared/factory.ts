@@ -585,6 +585,24 @@ function normalizeGameMaster(
         tags: strArr(l.tags),
         source: l.source === 'manual' ? 'manual' : 'auto',
       })),
+    // Реестр персонажей (patch character-registry) — из сейва; пустой строится в движке.
+    registry: arr<any>(raw.registry)
+      .filter((e) => e && typeof e.id === 'string' && typeof e.canonicalName === 'string')
+      .map((e) => ({
+        id: e.id,
+        canonicalName: e.canonicalName,
+        aliases: strArr(e.aliases).length ? strArr(e.aliases) : [e.canonicalName],
+        role: ['protagonist', 'love_interest', 'important_character', 'npc'].includes(e.role) ? e.role : 'npc',
+        status: str(e.status),
+        statusLog: arr<any>(e.statusLog)
+          .filter((s) => s && typeof s.status === 'string')
+          .map((s) => ({ status: s.status, date: str(s.date) || undefined })),
+        firstSeenDate: str(e.firstSeenDate) || undefined,
+        lastSeenDate: str(e.lastSeenDate) || undefined,
+        sheetId: str(e.sheetId) || undefined,
+        contactId: str(e.contactId) || undefined,
+        merged: strArr(e.merged),
+      })),
   };
 }
 

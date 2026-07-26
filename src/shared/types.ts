@@ -853,7 +853,11 @@ export type Beat =
   // Симулятор жизни (Batch 8): продвижение времени и инвентарь. Все — управляющие.
   | { type: 'time_advance'; newDate?: string; newTime?: string }
   | { type: 'inventory_add'; name: string; emoji?: string; quantity?: number; category?: string; source?: string }
-  | { type: 'inventory_remove'; name: string; quantity?: number; reason?: string };
+  | { type: 'inventory_remove'; name: string; quantity?: number; reason?: string }
+  // Реестр персонажей (patch character-registry) — идентичность по id, не по имени.
+  | { type: 'character_new'; id?: string; canonicalName: string; aliases?: string[]; role?: CharacterRole }
+  | { type: 'character_alias_add'; id: string; alias: string }
+  | { type: 'character_update'; id: string; status?: string; canonicalName?: string; sheetPatch?: Record<string, string> };
 
 export interface SceneDirective {
   backgroundId: string | null;
@@ -973,6 +977,27 @@ export interface GmRelationEdge {
   label: string; // характер связи между персонажами
 }
 
+// Реестр персонажей (patch character-registry) — единый источник правды «кто есть кто».
+// Один персонаж = одна запись = один стабильный id (совпадает с id персонажа проекта,
+// если он есть). Все ссылки (анкета, контакт, статы) идут на id, а не на имя.
+export interface CharacterStatusLog {
+  status: string;
+  date?: string; // ДД/ММ/ГГГГ
+}
+export interface CharacterRegistryEntry {
+  id: string; // стабильный, не меняется
+  canonicalName: string;
+  aliases: string[]; // как его называют
+  role: CharacterRole;
+  status: string; // краткий текущий статус
+  statusLog?: CharacterStatusLog[]; // история смен статуса
+  firstSeenDate?: string;
+  lastSeenDate?: string;
+  sheetId?: string; // id персонажа проекта (анкета), если создан
+  contactId?: string; // id контакта в телефоне (= id персонажа), если есть
+  merged?: string[]; // id поглощённых дублей
+}
+
 // Событие = запись «меморибука»: что произошло, когда (внутриигровая дата) и с кем.
 export interface GmEvent {
   id: string;
@@ -1032,6 +1057,7 @@ export interface GameMasterState {
   events: GmEvent[];
   agenda: GmTask[];
   locations: GmLocation[];
+  registry?: CharacterRegistryEntry[]; // реестр персонажей (patch character-registry)
 }
 
 export function emptyGameMaster(): GameMasterState {
@@ -1044,6 +1070,7 @@ export function emptyGameMaster(): GameMasterState {
     events: [],
     agenda: [],
     locations: [],
+    registry: [],
   };
 }
 

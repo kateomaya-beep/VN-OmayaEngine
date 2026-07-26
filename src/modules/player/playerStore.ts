@@ -131,6 +131,8 @@ interface PlayerStore {
   addScannedContacts: (names: string[]) => void;
   // Экспорт анкеты в проект (Batch 8 §VI.3): промоушен существующего npc по имени или новый.
   exportCharacterSheet: (sheet: GeneratedSheet, role: CharacterRole) => void;
+  // Склейка дублей персонажей (patch character-registry §3.3): survivor поглощает dup.
+  mergeCharacters: (survivorId: string, dupId: string) => void;
   // Правка памяти (список свёрток/саммари) прямо в игре.
   patchMemory: (mutator: (m: MemoryState) => void) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
@@ -779,6 +781,64 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           : s2.state,
       }));
     }
+  },
+
+  mergeCharacters(survivorId, dupId) {
+    const st = get();
+    if (!st.project || !st.state || survivorId === dupId) return;
+    // Обновляем состояние (отношения/gm/телефон) и проект (персонажи) согласованно.
+    const next: RuntimeState = JSON.parse(JSON.stringify(st.state));
+
+    // Статы отношений — берём максимум по каждому полю, дубль удаляем.
+    const rel = next.relationship;
+    if (rel[dupId]) {
+      const s = rel[survivorId] || emptyRelationship();
+      const d = rel[dupId];
+      rel[survivorId] = {
+        affection: Math.max(s.affection, d.affection),
+        passion_stat: Math.max(s.passion_stat, d.passion_stat),
+        friendship: Math.max(s.friendship, d.friendship),
+        respect: Math.max(s.respect, d.respect),
+      };
+      delete rel[dupId];
+    }
+
+    // Реестр: survivor поглощает алиасы/merged дубля; запись дубля убираем.
+    const reg = (next.gm.registry ||= []);
+    const surv = reg.find((e) => e.id === survivorId);
+    const dup = reg.find((e) => e.id === dupId);
+    if (surv && dup) {
+      for (const a of [dup.canonicalName, ...dup.aliases]) {
+        if (!surv.aliases.some((x) => x.toLowerCase() === a.toLowerCase())) surv.aliases.push(a);
+      }
+      surv.merged = [...(surv.merged || []), dupId, ...(dup.merged || [])];
+      surv.status = surv.status || dup.status;
+    }
+    next.gm.registry = reg.filter((e) => e.id !== dupId);
+    // GM-досье дубля убираем (survivor остаётся).
+    next.gm.characters = next.gm.characters.filter((c) => c.charId !== dupId);
+
+    // Телефон: контакты/переписки дубля → survivor.
+    if (next.phone) {
+      if (next.phone.conversations[dupId]) {
+        const merged = [...(next.phone.conversations[survivorId] || []), ...next.phone.conversations[dupId]].sort(
+          (a, b) => a.at - b.at
+        );
+        next.phone.conversations[survivorId] = merged;
+        delete next.phone.conversations[dupId];
+      }
+      next.phone.contacts = next.phone.contacts.filter((c) => c.characterId !== dupId);
+      next.phone.unreadFrom = next.phone.unreadFrom
+        .map((id) => (id === dupId ? survivorId : id))
+        .filter((id, i, a) => a.indexOf(id) === i);
+    }
+
+    set({ state: next });
+    // Проект: удаляем персонажа-дубль.
+    void get().patchProject((p) => {
+      p.characters = p.characters.filter((c) => c.id !== dupId);
+    });
+    void get().autosave();
   },
 
   async testImageApi() {

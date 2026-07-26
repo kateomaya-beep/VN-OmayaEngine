@@ -3,6 +3,7 @@ import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhon
 import { pushToast } from '../shared/toast';
 import { resolveEmoji } from '../shared/emojiDict';
 import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
+import { syncRegistry, findRegistryMatch, newRegistryId, normName } from './characterRegistry';
 import { buildRequest } from './promptBuilder';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
@@ -236,6 +237,10 @@ export async function applyTurn(
   let runBg: string | null = turn.scene.backgroundId ?? state.currentBackgroundId;
   let runMood: string | null = turn.scene.musicMood ?? state.currentMusicMood;
 
+  // Реестр персонажей (patch character-registry): собираем управляющие биты и
+  // применяем после сборки gm (реестр живёт в gm).
+  const charBeats: typeof turn.beats = [];
+
   const contentBeats: typeof turn.beats = [];
   for (const b of turn.beats) {
     if (b.type === 'scene_change') {
@@ -271,6 +276,10 @@ export async function applyTurn(
     }
     if (b.type === 'inventory_remove') {
       removeItem(b.name, b.quantity ?? 1);
+      continue;
+    }
+    if (b.type === 'character_new' || b.type === 'character_alias_add' || b.type === 'character_update') {
+      charBeats.push(b);
       continue;
     }
     if (b.type === 'sms_incoming') {
@@ -355,6 +364,61 @@ export async function applyTurn(
     }
   }
 
+  // Реестр персонажей (patch character-registry): синхронизируем с персонажами проекта
+  // (миграция + поддержание), затем применяем управляющие биты с защитой от дублей.
+  const registry = syncRegistry(project, gm);
+  for (const b of charBeats) {
+    if (b.type === 'character_new') {
+      // Дедуп на стороне движка: если имя совпадает (точно или частично) с существующим —
+      // не создаём дубль, а добавляем алиас к найденному (безопаснее склеить).
+      const match = findRegistryMatch(registry, b.canonicalName);
+      if (match) {
+        if (!match.entry.aliases.some((a) => normName(a) === normName(b.canonicalName))) {
+          match.entry.aliases.push(b.canonicalName);
+        }
+        for (const al of b.aliases || []) {
+          if (!match.entry.aliases.some((a) => normName(a) === normName(al))) match.entry.aliases.push(al);
+        }
+      } else {
+        registry.push({
+          id: b.id && !registry.some((e) => e.id === b.id) ? b.id : newRegistryId(),
+          canonicalName: b.canonicalName,
+          aliases: [b.canonicalName, ...(b.aliases || [])].filter((a, i, arr) => arr.findIndex((x) => normName(x) === normName(a)) === i),
+          role: b.role || 'npc',
+          status: '',
+          firstSeenDate: newDate || undefined,
+          lastSeenDate: newDate || undefined,
+        });
+      }
+      continue;
+    }
+    if (b.type === 'character_alias_add') {
+      const e = registry.find((x) => x.id === b.id);
+      if (e && !e.aliases.some((a) => normName(a) === normName(b.alias))) e.aliases.push(b.alias);
+      continue;
+    }
+    if (b.type === 'character_update') {
+      const e = registry.find((x) => x.id === b.id);
+      if (!e) continue;
+      if (b.canonicalName) e.canonicalName = b.canonicalName;
+      if (b.status && b.status !== e.status) {
+        e.status = b.status;
+        (e.statusLog ||= []).push({ status: b.status, date: newDate || undefined });
+      }
+      // sheetPatch — best-effort в досье GM (правку карточки проекта движок не пишет).
+      if (b.sheetPatch && e.sheetId) {
+        const gc = gm.characters.find((c) => c.charId === e.sheetId);
+        if (gc) {
+          for (const [k, v] of Object.entries(b.sheetPatch)) {
+            if (k in gc && typeof (gc as any)[k] === 'string') (gc as any)[k] = v;
+            else if (k === 'backstory' || k === 'dossier') gc.dossier = v;
+          }
+        }
+      }
+      continue;
+    }
+  }
+
   // lastSeenDate (Batch 8 §VI): персонажи в кадре «увидены» текущей внутриигровой датой.
   if (newDate) {
     for (const os of onScreen) {
@@ -379,6 +443,12 @@ export async function applyTurn(
         }
       }
       if (gc) gc.lastSeenDate = newDate;
+      // Реестр тоже отмечаем.
+      const re = registry.find((x) => x.id === os.characterId || x.sheetId === os.characterId);
+      if (re) {
+        re.lastSeenDate = newDate;
+        if (!re.firstSeenDate) re.firstSeenDate = newDate;
+      }
     }
   }
 
