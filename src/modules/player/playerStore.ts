@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, AssetMeta, InventoryItem } from '../../shared/types';
-import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, AssetMeta, InventoryItem, CharacterRole } from '../../shared/types';
+import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRelationship } from '../../shared/types';
+import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { generatePhoneReply } from '../../ai/phoneChat';
@@ -122,6 +123,10 @@ interface PlayerStore {
   testImageApi: () => Promise<string>;
   // Ручная правка баланса в «Банке» (Batch 8 §III.1) — записывает корректировку в выписку.
   setBalance: (value: number) => void;
+  // Контакты из сканирования (Batch 8 §V): создать минимальные npc-персонажи + контакты.
+  addScannedContacts: (names: string[]) => void;
+  // Экспорт анкеты в проект (Batch 8 §VI.3): промоушен существующего npc по имени или новый.
+  exportCharacterSheet: (sheet: GeneratedSheet, role: CharacterRole) => void;
   // Правка памяти (список свёрток/саммари) прямо в игре.
   patchMemory: (mutator: (m: MemoryState) => void) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
@@ -682,6 +687,90 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
     set({ state: nextState });
     void get().autosave();
+  },
+
+  addScannedContacts(names) {
+    const st = get();
+    if (!st.project || !st.state) return;
+    const project = st.project;
+    // Собираем новые npc-персонажи для имён без карточки; затем — контакты в телефон.
+    const created: { id: string; name: string }[] = [];
+    const resolveId = (name: string): string => {
+      const existing = project.characters.find((c) => c.name.toLowerCase() === name.toLowerCase());
+      if (existing) return existing.id;
+      const already = created.find((c) => c.name.toLowerCase() === name.toLowerCase());
+      if (already) return already.id;
+      const id = uid('char');
+      created.push({ id, name });
+      return id;
+    };
+    const contactIds = names.map((n) => ({ name: n, id: resolveId(n) }));
+    if (created.length) {
+      void get().patchProject((p) => {
+        for (const c of created) {
+          if (!p.characters.some((x) => x.id === c.id)) {
+            p.characters.push({
+              id: c.id,
+              name: c.name,
+              role: 'npc',
+              card: { appearance: '', personality: '', backstory: '', speechStyle: '' },
+              sprites: {},
+              relationship: emptyRelationship(),
+              importedFrom: 'scanned_contact',
+            });
+          }
+        }
+      });
+    }
+    // Добавляем контакты в телефон (только для включённого расширения).
+    if (project.phone?.enabled) {
+      get().patchPhone((ph) => {
+        for (const c of contactIds) {
+          if (!ph.contacts.some((x) => x.characterId === c.id)) ph.contacts.push({ characterId: c.id });
+        }
+      });
+    }
+  },
+
+  exportCharacterSheet(sheet, role) {
+    const st = get();
+    if (!st.project || !st.state) return;
+    const project = st.project;
+    const existing = project.characters.find((c) => c.name.toLowerCase() === sheet.name.toLowerCase());
+    const cid = existing?.id ?? uid('char');
+    void get().patchProject((p) => {
+      const card = {
+        appearance: sheet.appearance || '',
+        personality: sheet.personality || '',
+        backstory: sheet.backstory || '',
+        speechStyle: sheet.speechStyle || '',
+      };
+      const target = p.characters.find((c) => c.id === cid);
+      if (target) {
+        // Промоушен существующего (в т.ч. сканированного контакта) — без дубля.
+        target.role = role;
+        target.card = card;
+        if (!target.relationship) target.relationship = emptyRelationship();
+      } else {
+        p.characters.push({
+          id: cid,
+          name: sheet.name,
+          role,
+          card,
+          sprites: {},
+          relationship: emptyRelationship(),
+          importedFrom: 'gm_sheet',
+        });
+      }
+    });
+    // Сидим живые значения отношений, чтобы стат сразу работал в текущей игре.
+    if (role !== 'npc') {
+      usePlayerStore.setState((s2) => ({
+        state: s2.state
+          ? { ...s2.state, relationship: { ...s2.state.relationship, [cid]: s2.state.relationship[cid] ?? emptyRelationship() } }
+          : s2.state,
+      }));
+    }
   },
 
   async testImageApi() {

@@ -5,6 +5,8 @@ import { AssetImage } from '../../../shared/ui';
 import { defaultPhoneConfig, defaultFinanceConfig, PHONE_BALANCE_STAT, type PhoneConfig, type RecurringEntry } from '../../../shared/types';
 import { resolveSprite } from '../../../shared/outfits';
 import { getApiKey } from '../../../ai/keys';
+import { scanContacts } from '../../../ai/gmScan';
+import { pushToast } from '../../../shared/toast';
 
 // Расширение «Телефон» (Batch 7). ФАЗА 1 — каркас: перетаскиваемая иконка + окно
 // (рабочий стол с сеткой приложений) + читаемые экраны Банк/Сообщения/Магазин +
@@ -212,40 +214,7 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
         {app === 'bank' && <BankScreen onBack={() => setApp('home')} />}
 
         {app === 'messages' && !chatWith && (
-          <Screen title="Сообщения">
-            {!phone?.contacts.filter((c) => !c.hidden).length ? (
-              <div className="text-sm text-white/50">Контактов пока нет — они появятся, когда встретишь персонажей.</div>
-            ) : (
-              <div className="space-y-1.5">
-                {phone.contacts
-                  .filter((c) => !c.hidden)
-                  .map((c) => {
-                    const msgs = phone.conversations[c.characterId] || [];
-                    const last = msgs[msgs.length - 1];
-                    const unread = phone.unreadFrom.includes(c.characterId);
-                    return (
-                      <button
-                        key={c.characterId}
-                        className="w-full flex items-center gap-3 rounded-xl bg-white/5 hover:bg-white/10 px-3 py-2.5 text-left"
-                        onClick={() => openChat(c.characterId)}
-                      >
-                        <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-sm shrink-0">
-                          {contactName(c.characterId)[0]}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium flex items-center gap-2">
-                            {contactName(c.characterId)}
-                            {unread && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
-                          </div>
-                          <div className="text-xs text-white/60 truncate">{last ? last.text : 'Нет сообщений'}</div>
-                        </div>
-                        <span className="text-white/30 text-lg">›</span>
-                      </button>
-                    );
-                  })}
-              </div>
-            )}
-          </Screen>
+          <ContactsScreen onBack={() => setApp('home')} onOpenChat={openChat} contactName={contactName} />
         )}
 
         {app === 'messages' && chatWith && (
@@ -559,6 +528,124 @@ function CameraScreen({ onBack }: { onBack: () => void }) {
                   </button>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Экран «Сообщения»: список контактов + сканирование (Batch 8 §V) ----
+function ContactsScreen({
+  onBack,
+  onOpenChat,
+  contactName,
+}: {
+  onBack: () => void;
+  onOpenChat: (id: string) => void;
+  contactName: (id: string) => string;
+}) {
+  const s = usePlayerStore();
+  const phone = s.state?.phone;
+  const contacts = (phone?.contacts || []).filter((c) => !c.hidden);
+  const [scan, setScan] = useState<null | 'busy' | { names: string[]; checked: Record<string, boolean> }>(null);
+
+  const runScan = async () => {
+    if (!s.state) return;
+    setScan('busy');
+    try {
+      const known = [
+        ...contacts.map((c) => contactName(c.characterId)),
+        ...(s.project?.characters || []).map((c) => c.name),
+      ];
+      const names = await scanContacts(s.state, known);
+      if (!names.length) {
+        setScan(null);
+        pushToast('info', 'Новых знакомых в контексте не нашлось.');
+      } else {
+        setScan({ names, checked: Object.fromEntries(names.map((n) => [n, true])) });
+      }
+    } catch (e) {
+      setScan(null);
+      pushToast('error', 'Не удалось просканировать: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
+  const confirmScan = () => {
+    if (!scan || scan === 'busy') return;
+    const chosen = scan.names.filter((n) => scan.checked[n]);
+    if (chosen.length) s.addScannedContacts(chosen);
+    setScan(null);
+  };
+
+  return (
+    <div className="absolute inset-0 flex flex-col">
+      <div className="flex items-center gap-2 px-3 py-3 bg-black/30 backdrop-blur-md">
+        <button className="text-white/90 text-xl leading-none" onClick={onBack}>‹</button>
+        <div className="font-semibold text-white">Сообщения</div>
+        <button
+          className="ml-auto text-xs px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-white/90 disabled:opacity-50"
+          onClick={runScan}
+          disabled={scan === 'busy'}
+        >
+          {scan === 'busy' ? '⏳' : '🔍 Сканировать'}
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto scrollbar-thin p-3 text-white">
+        {!contacts.length ? (
+          <div className="text-sm text-white/50">Контактов пока нет — они появятся, когда встретишь персонажей, или нажми «Сканировать».</div>
+        ) : (
+          <div className="space-y-1.5">
+            {contacts.map((c) => {
+              const msgs = phone?.conversations[c.characterId] || [];
+              const last = msgs[msgs.length - 1];
+              const unread = phone?.unreadFrom.includes(c.characterId);
+              return (
+                <button
+                  key={c.characterId}
+                  className="w-full flex items-center gap-3 rounded-xl bg-white/5 hover:bg-white/10 px-3 py-2.5 text-left"
+                  onClick={() => onOpenChat(c.characterId)}
+                >
+                  <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-sm shrink-0">
+                    {contactName(c.characterId)[0]}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium flex items-center gap-2">
+                      {contactName(c.characterId)}
+                      {unread && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
+                    </div>
+                    <div className="text-xs text-white/60 truncate">{last ? last.text : 'Нет сообщений'}</div>
+                  </div>
+                  <span className="text-white/30 text-lg">›</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Чек-лист найденных при сканировании — ничего не добавляем без подтверждения. */}
+      {scan && scan !== 'busy' && (
+        <div className="absolute inset-0 z-10 bg-black/70 flex items-end" onClick={() => setScan(null)}>
+          <div className="w-full rounded-t-2xl bg-[#141019] border-t border-white/10 p-3 max-h-[75%] overflow-y-auto scrollbar-thin" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-semibold text-white mb-1">Найденные знакомые</div>
+            <div className="text-[11px] text-white/50 mb-2">Отметьте, кого добавить в контакты.</div>
+            <div className="space-y-1">
+              {scan.names.map((n) => (
+                <label key={n} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm text-white">
+                  <input
+                    type="checkbox"
+                    checked={scan.checked[n]}
+                    onChange={(e) => setScan({ ...scan, checked: { ...scan.checked, [n]: e.target.checked } })}
+                  />
+                  {n}
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end mt-3">
+              <button className="text-sm px-3 py-1.5 rounded-lg bg-white/10 text-white/80" onClick={() => setScan(null)}>Отмена</button>
+              <button className="text-sm px-3 py-1.5 rounded-lg bg-emerald-500 text-white" onClick={confirmScan}>Добавить</button>
             </div>
           </div>
         </div>

@@ -149,7 +149,7 @@ export interface Character {
    * (чтобы к одному персонажу можно было привязать несколько статов). Поле читается
    * только для миграции старых проектов. */
   linkedStatId?: string;
-  importedFrom?: 'tavern_v2' | 'tavern_v3' | 'manual' | 'promoted_npc';
+  importedFrom?: 'tavern_v2' | 'tavern_v3' | 'manual' | 'promoted_npc' | 'scanned_contact' | 'gm_sheet';
   sourceSystemPrompt?: string; // из карточки, НЕ применять авто
 }
 

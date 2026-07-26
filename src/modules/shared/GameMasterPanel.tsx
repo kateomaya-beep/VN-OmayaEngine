@@ -5,20 +5,20 @@ import { usePlayerStore } from '../player/playerStore';
 import { ApiConnectionField } from '../constructor/editors/ApiConnectionField';
 import { getConnection } from '../../ai/connection';
 import { formatClock } from '../../ai/gameMaster';
-import { scanCharacter, scanEvents, scanAgenda } from '../../ai/gmScan';
+import { scanCharacter, scanEvents, scanAgenda, generateCharacterSheet, type GeneratedSheet } from '../../ai/gmScan';
 import { pushToast, updateToast } from '../../shared/toast';
 import { uid } from '../../shared/utils';
 import { DEFAULT_MONTHS, RELATIONSHIP_FIELDS, RELATIONSHIP_META } from '../../shared/types';
 import type {
   Project, MemoryConfig, VectorizationMode, GmCharacter, GameMasterState, RelationshipStats,
-  AssetSelectorSource,
+  AssetSelectorSource, CharacterRole,
 } from '../../shared/types';
 
 // Game Master (вдохновлено Horae): динамическое состояние мира — персонажи с
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
 // отношений, календарь (день/месяц/год/время/локация + кастомные месяцы), адженда,
 // список саммари (свёрток) и векторизация. Двуязычно (по глобальному языку UI).
-type Tab = 'characters' | 'inventory' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'summary' | 'vector' | 'selector';
+type Tab = 'characters' | 'inventory' | 'sheets' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'summary' | 'vector' | 'selector';
 type Lf = (ru: string, en: string) => string;
 type GM = GameMasterState;
 type PatchGm = (m: (gm: GM) => void) => void;
@@ -42,6 +42,7 @@ export function GameMasterPanel({
   const TABS: { id: Tab; label: string; icon: string }[] = [
     { id: 'characters', label: L('Персонажи', 'Characters'), icon: '👥' },
     { id: 'inventory', label: L('Инвентарь', 'Inventory'), icon: '🎒' },
+    { id: 'sheets', label: L('Анкеты', 'Sheets'), icon: '📇' },
     { id: 'events', label: L('События', 'Events'), icon: '🎬' },
     { id: 'relations', label: L('Взаимоотношения', 'Relationships'), icon: '🕸' },
     { id: 'locations', label: L('Локации', 'Locations'), icon: '📍' },
@@ -74,6 +75,7 @@ export function GameMasterPanel({
 
       {tab === 'characters' && (gm ? <CharactersTab gm={gm} patchGm={s.patchGm} L={L} project={project} relationship={s.state?.relationship ?? {}} /> : noGame)}
       {tab === 'inventory' && (s.state ? <InventoryTab L={L} /> : noGame)}
+      {tab === 'sheets' && (s.state ? <SheetsTab L={L} project={project} /> : noGame)}
       {tab === 'events' && (gm ? <EventsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'relations' && (gm ? <RelationsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'locations' && (gm ? <LocationsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
@@ -382,6 +384,103 @@ function InventoryTab({ L }: { L: Lf }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Анкеты (Batch 8 §VI.2-3): генерация полной карточки на английском → правка → экспорт.
+function SheetsTab({ L, project }: { L: Lf; project?: Project | null }) {
+  const s = usePlayerStore();
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sheet, setSheet] = useState<GeneratedSheet | null>(null);
+  const [role, setRole] = useState<CharacterRole>('important_character');
+  const [done, setDone] = useState(false);
+
+  const gen = async () => {
+    const n = name.trim();
+    if (!n || !s.state || busy) return;
+    setBusy(true);
+    setDone(false);
+    try {
+      const sh = await generateCharacterSheet(s.state, n);
+      setSheet(sh);
+    } catch (e) {
+      pushToast('error', L('Не удалось сгенерировать анкету: ', 'Sheet generation failed: ') + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const upd = (k: keyof GeneratedSheet, v: string) => setSheet((sh) => (sh ? { ...sh, [k]: v } : sh));
+  const existing = sheet && project?.characters.find((c) => c.name.toLowerCase() === sheet.name.toLowerCase());
+
+  const doExport = () => {
+    if (!sheet) return;
+    s.exportCharacterSheet(sheet, role);
+    setDone(true);
+  };
+
+  const npcAndMentioned = [
+    ...(project?.characters.filter((c) => c.role === 'npc').map((c) => c.name) || []),
+    ...(s.state?.gm.characters.map((c) => c.name) || []),
+  ].filter((n, i, a) => n && a.indexOf(n) === i);
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500">
+        {L(
+          'Полная анкета персонажа на английском (для совместимости с ST/Janitor) по имени из истории. Правьте перед добавлением в проект.',
+          'A full English character sheet (ST/Janitor-compatible) built from the transcript. Edit before adding to the project.'
+        )}
+      </p>
+      <div className="flex gap-2 items-center flex-wrap">
+        <input
+          className="input !py-1.5 text-sm flex-1 min-w-[160px]"
+          placeholder={L('Имя персонажа', 'Character name')}
+          value={name}
+          list="gm-sheet-names"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && gen()}
+        />
+        <datalist id="gm-sheet-names">
+          {npcAndMentioned.map((n) => <option key={n} value={n} />)}
+        </datalist>
+        <button className="btn-primary !py-1.5 text-sm" onClick={gen} disabled={busy || !name.trim()}>
+          {busy ? '⏳' : '🪄'} {L('Сгенерировать', 'Generate')}
+        </button>
+      </div>
+
+      {sheet && (
+        <div className="card space-y-2">
+          {(['name', 'appearance', 'personality', 'backstory', 'speechStyle', 'scenario'] as (keyof GeneratedSheet)[]).map((k) => (
+            <Field key={k as string} label={k as string}>
+              {k === 'name' ? (
+                <input className="input !py-1 text-sm" value={(sheet[k] as string) || ''} onChange={(e) => upd(k, e.target.value)} />
+              ) : (
+                <textarea className="input text-sm h-16" value={(sheet[k] as string) || ''} onChange={(e) => upd(k, e.target.value)} />
+              )}
+            </Field>
+          ))}
+          {existing && (
+            <p className="text-[11px] text-amber-400">
+              {L(`Персонаж «${sheet.name}» уже есть — экспорт обновит его (без дубля).`, `Character "${sheet.name}" already exists — export will update it (no duplicate).`)}
+            </p>
+          )}
+          <div className="flex gap-2 items-center flex-wrap pt-1">
+            <label className="text-xs text-gray-400">{L('Роль:', 'Role:')}</label>
+            <select className="input !py-1 text-sm !w-auto" value={role} onChange={(e) => setRole(e.target.value as CharacterRole)}>
+              <option value="important_character">{L('Важный персонаж', 'Important character')}</option>
+              <option value="love_interest">{L('Любовный интерес', 'Love interest')}</option>
+              <option value="npc">NPC</option>
+            </select>
+            <button className="btn-primary !py-1.5 text-sm" onClick={doExport}>
+              {L('Добавить как персонажа проекта', 'Add as project character')}
+            </button>
+            {done && <span className="text-xs text-green-400">✓ {L('добавлено', 'added')}</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

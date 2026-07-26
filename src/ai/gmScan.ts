@@ -111,6 +111,58 @@ export async function scanEvents(state: RuntimeState): Promise<ScannedEvent[]> {
     .map((e) => ({ summary: s(e.summary), chars: sArr(e.chars), mood: s(e.mood) }));
 }
 
+// Сканирование контактов (Batch 8 §V): люди, с которыми протагонист ЗНАКОМ и чей
+// номер мог бы быть в телефоне. `known` — имена, которые уже есть (не предлагать снова).
+export async function scanContacts(state: RuntimeState, known: string[]): Promise<string[]> {
+  const system =
+    'You are a story analyst for a phone-contacts feature. From the transcript, list the NAMED people ' +
+    'the protagonist personally knows and could realistically have a phone number for (friends, love ' +
+    'interests, family, colleagues, acquaintances they have actually interacted with). ' +
+    'EXCLUDE: strangers, one-off passersby, groups, and anyone only mentioned in passing without a real ' +
+    'acquaintance. Reply with ONLY a JSON array of names (strings), most relevant first, at most 12.';
+  const known2 = known.map((n) => n.toLowerCase());
+  const arr = await scanJson(system, contextText(state));
+  return sArr(arr)
+    .map((n) => n.trim())
+    .filter((n) => n && !known2.includes(n.toLowerCase()))
+    // Дедуп без учёта регистра.
+    .filter((n, i, a) => a.findIndex((x) => x.toLowerCase() === n.toLowerCase()) === i)
+    .slice(0, 12);
+}
+
+export interface GeneratedSheet {
+  name: string;
+  appearance: string;
+  personality: string;
+  backstory: string;
+  speechStyle: string;
+  scenario?: string;
+  greetings?: string[];
+}
+
+// Генерация полной анкеты персонажа на английском (Batch 8 §VI.2) — формат нашего
+// конструктора / ST-совместимый, независимо от языка нарратива.
+export async function generateCharacterSheet(state: RuntimeState, name: string): Promise<GeneratedSheet> {
+  const system =
+    'You are a character-card writer for a visual-novel engine. Build a FULL character sheet for the ' +
+    `character named "${name}", based strictly on what the transcript shows (infer tastefully where the ` +
+    'transcript is silent, staying consistent). ALL VALUES IN ENGLISH regardless of the story language. ' +
+    'Reply with ONLY a JSON object: {"name":string,"appearance":string,"personality":string,' +
+    '"backstory":string,"speechStyle":string,"scenario":string,"greetings":[string]}. ' +
+    'appearance/personality/backstory are a few sentences each; speechStyle describes how they talk; ' +
+    'scenario is the situation framing; greetings is 1-2 opening lines in their voice.';
+  const obj = await scanJson(system, contextText(state));
+  return {
+    name: s(obj.name) || name,
+    appearance: s(obj.appearance),
+    personality: s(obj.personality),
+    backstory: s(obj.backstory),
+    speechStyle: s(obj.speechStyle),
+    scenario: s(obj.scenario) || undefined,
+    greetings: sArr(obj.greetings),
+  };
+}
+
 // Извлекает открытые задачи/цели из контекста (для адженды).
 export async function scanAgenda(state: RuntimeState): Promise<string[]> {
   const system =
