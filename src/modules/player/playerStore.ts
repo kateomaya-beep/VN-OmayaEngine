@@ -23,6 +23,10 @@ import { parseSlash, SLASH_HELP } from './slashCommands';
 import { logEvent } from '../../shared/logStore';
 import { uid } from '../../shared/utils';
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+// Пауза «набора» под длину сообщения (живой ритм переписки), с потолком.
+const typingDelay = (text: string) => Math.min(1600, 350 + text.length * 18);
+
 // currentMusicAssetId — это id ассета; для проигрывания нужен его blobKey.
 function trackBlobKey(project: Project, assetId: string | null): string | null {
   if (!assetId) return null;
@@ -532,10 +536,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     try {
       const cur = get();
       const convo = cur.state?.phone?.conversations[characterId] || [];
-      const reply = await generatePhoneReply(cur.project!, cur.state!, characterId, convo);
-      get().patchPhone((p) => {
-        (p.conversations[characterId] ||= []).push({ from: 'contact', text: reply, at: Date.now() });
-      });
+      const replies = await generatePhoneReply(cur.project!, cur.state!, characterId, convo);
+      // Отдаём сообщения «пачкой» по-живому: пауза набора → пузырь → снова печатает.
+      for (const msg of replies) {
+        await sleep(typingDelay(msg));
+        get().patchPhone((p) => {
+          (p.conversations[characterId] ||= []).push({ from: 'contact', text: msg, at: Date.now() });
+        });
+      }
     } catch (e) {
       logEvent('error', 'phone', e instanceof Error ? e.message : String(e));
       get().patchPhone((p) => {
@@ -806,10 +814,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     try {
       const cur = get();
       const convo = cur.state?.phone?.conversations[characterId] || [];
-      const reply = await generatePhoneReply(cur.project!, cur.state!, characterId, convo);
-      get().patchPhone((p) => {
-        (p.conversations[characterId] ||= []).push({ from: 'contact', text: reply, at: Date.now() });
-      });
+      const replies = await generatePhoneReply(cur.project!, cur.state!, characterId, convo);
+      for (const msg of replies) {
+        await sleep(typingDelay(msg));
+        get().patchPhone((p) => {
+          (p.conversations[characterId] ||= []).push({ from: 'contact', text: msg, at: Date.now() });
+        });
+      }
     } catch (e) {
       logEvent('error', 'phone', e instanceof Error ? e.message : String(e));
     } finally {

@@ -48,7 +48,7 @@ export async function generatePhoneReply(
   characterId: string,
   conversation: PhoneMessage[],
   signal?: AbortSignal
-): Promise<string> {
+): Promise<string[]> {
   const ps = getPresetSettings();
   const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
 
@@ -58,10 +58,11 @@ export async function generatePhoneReply(
     worldContext(project, state),
     `TEXTING RULES (this is a plain text-message chat, NOT the visual-novel narration engine):`,
     `- Reply as ${charName} would type in a messenger: short, natural, in-character. React to the hero's last message.`,
-    `- Write in ${narr}. Casual messenger tone; occasional emoji if it fits — do not overdo it.`,
+    `- MESSAGE BURSTS: reply the way people really text — sometimes ONE message, sometimes several short ones fired in a row (up to 4). Put EACH separate message on ITS OWN LINE (a line break = a new message bubble). Split when it feels natural (a quick thought, then another), keep it to one message when that's natural.`,
+    `- Write in ${narr}. Use real texting culture WHEN IT FITS the character: casual tone, common abbreviations, emoji, and (for Russian) smiley parentheses like ), )), ))) or :). Lowercase and dropped punctuation are fine for a casual character. Match the character's personality — a formal or cold character texts differently; don't force slang on them.`,
     `- Output ONLY the literal words ${charName} types. NOTHING else.`,
-    `- ABSOLUTELY FORBIDDEN: mood/tone labels or emotion tags of any kind (e.g. "(Defensive/Playful):", "[teasing]", "Amused:"), asterisk actions or roleplay markup (e.g. *smiles*, *rolls eyes*), narration, stage directions, character name prefixes, quotation marks around the whole message, JSON, or any commentary about the message. Just the message text itself.`,
-    `- Keep it to 1–3 short messages worth of text (a few sentences at most). Finish your thought — do not cut off mid-sentence.`,
+    `- ABSOLUTELY FORBIDDEN: mood/tone labels or emotion tags of any kind (e.g. "(Defensive/Playful):", "[teasing]", "Amused:"), asterisk actions or roleplay markup (e.g. *smiles*, *rolls eyes*), narration, stage directions, character name prefixes, quotation marks around the whole message, JSON, or any commentary. Note: smiley parentheses like ")))" are allowed as emoji, but a parenthesis label like "(playful)" is NOT.`,
+    `- Keep each message short (a texting line, not a paragraph). Finish your thought — never cut off mid-sentence.`,
   ].join('\n');
 
   const messages: LlmMessage[] = conversation.slice(-MAX_HISTORY).map((m) => ({
@@ -79,12 +80,41 @@ export async function generatePhoneReply(
     messages,
     temperature: Math.min(ps.temperature ?? 0.8, 1),
     // Больше запаса, чтобы reasoning-модели не обрезали короткую реплику на полуслове.
-    maxTokens: 800,
+    maxTokens: 900,
     reasoningEffort: 'none',
     signal,
   });
 
-  return cleanReply(raw, charName);
+  return splitReplies(raw, charName);
+}
+
+// Разбивает сырой ответ на отдельные сообщения-«пузыри» (Batch — живые смс).
+// Строка = сообщение. Поддерживает и JSON-массив, если модель его прислала.
+export function splitReplies(raw: string, charName: string): string[] {
+  let text = (raw || '').trim();
+
+  // JSON-массив строк.
+  if (text.startsWith('[')) {
+    try {
+      const arr = JSON.parse(text);
+      if (Array.isArray(arr)) {
+        const out = arr
+          .map((x) => (typeof x === 'string' ? x : typeof x?.text === 'string' ? x.text : ''))
+          .map((m) => cleanReply(m, charName))
+          .filter((m) => m && m !== '…');
+        if (out.length) return out.slice(0, 5);
+      }
+    } catch {
+      /* fallthrough к построчному разбору */
+    }
+  }
+
+  const lines = text
+    .split(/\n+/)
+    .map((l) => cleanReply(l, charName))
+    .filter((l) => l && l !== '…');
+  if (!lines.length) return ['…'];
+  return lines.slice(0, 5);
 }
 
 // Убирает артефакты «режиссёрского» формата, если модель их всё же добавила:
