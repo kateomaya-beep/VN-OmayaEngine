@@ -161,7 +161,27 @@ export async function applyTurn(
       if (cur) onScreenMap.set(b.characterId, { ...cur, outfit: b.outfit });
       continue;
     }
-    // Телефон: money_change / sms_incoming / contact_added — управляющие, текста нет.
+    // Телефон: transaction / money_change / sms_incoming / contact_added — текста нет.
+    // transaction (ревизия блока 6) — трата/поступление из повествования с выпиской.
+    if (b.type === 'transaction') {
+      if (phoneOn) {
+        const before = values[PHONE_BALANCE_STAT] ?? 0;
+        const after = Math.max(0, before + b.amount);
+        values[PHONE_BALANCE_STAT] = after;
+        if (after !== before) {
+          const reason = [b.vendor, b.item].filter(Boolean).join(' — ') || 'Транзакция';
+          phone.transactions.push({
+            amount: after - before,
+            reason,
+            vendor: b.vendor,
+            item: b.item,
+            time: b.time,
+            at: Date.now(),
+          });
+        }
+      }
+      continue;
+    }
     if (b.type === 'money_change') {
       if (phoneOn) {
         const before = values[PHONE_BALANCE_STAT] ?? 0;
@@ -214,6 +234,12 @@ export async function applyTurn(
   turn.beats = contentBeats;
   const onScreen = [...onScreenMap.values()].slice(-3);
   const finalBackgroundId = runBg ?? state.currentBackgroundId;
+
+  // Заказы доставки «прибывают» за пару ходов: ИИ видит их в контексте как ожидаемые,
+  // затем движок их снимает (считаем доставленными). Инвентарь добавлен при заказе.
+  if (phoneOn && phone.activeOrders.length) {
+    phone.activeOrders = phone.activeOrders.filter((o) => nextTurnNumber - o.placedAtTurn < 2);
+  }
 
   // Музыка: финальное настроение хода -> конкретный трек (мид-турн смены играет плеер).
   const nextMood = runMood ?? state.currentMusicMood;

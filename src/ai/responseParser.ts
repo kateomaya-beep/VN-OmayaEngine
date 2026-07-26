@@ -95,7 +95,13 @@ export function repairBeat(project: Project, b: any): Beat {
     if (ch && canon) return { type: 'outfit_change', characterId: ch.id, outfit: canon };
     return { type: 'narration', text: '' }; // невалидно → пустой нарратив (движок отфильтрует)
   }
-  // Телефон (Batch 7 §7.2): money_change / sms_incoming / contact_added.
+  // Телефон (Batch 7 §7.2): transaction / money_change / sms_incoming / contact_added.
+  if (b?.type === 'transaction') {
+    const amount = typeof b.amount === 'number' && Number.isFinite(b.amount) ? Math.round(b.amount) : 0;
+    if (amount === 0) return { type: 'narration', text: '' };
+    const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    return { type: 'transaction', amount, vendor: s(b.vendor), item: s(b.item), time: s(b.time) };
+  }
   if (b?.type === 'money_change') {
     const amount = typeof b.amount === 'number' && Number.isFinite(b.amount) ? Math.round(b.amount) : 0;
     if (amount === 0) return { type: 'narration', text: '' };

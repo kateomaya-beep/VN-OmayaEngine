@@ -19,6 +19,7 @@ import type {
   ProseStyleId,
   ApiConnection,
   GameMasterState,
+  PhoneState,
 } from './types';
 import {
   EMOTIONS,
@@ -466,6 +467,34 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
       : str(raw.authorNote).trim()
         ? [{ id: uid('note'), text: str(raw.authorNote) }]
         : [],
+    turnsSinceLastEvent: num(raw.turnsSinceLastEvent, fresh.turnsSinceLastEvent ?? 999),
+    // Телефон (Batch 7): сохраняем контакты/переписки/транзакции/заказы при загрузке.
+    phone: normalizePhoneState(raw.phone),
+  };
+}
+
+// Нормализация рантайм-состояния телефона из сейва (старые сейвы без phone → fresh;
+// переименование shopCache→deliveryCache; добавление activeOrders — миграция).
+function normalizePhoneState(raw: any): PhoneState {
+  const fresh = initialPhoneState();
+  if (!raw || typeof raw !== 'object') return fresh;
+  const a = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+  const conv: Record<string, any[]> = {};
+  if (raw.conversations && typeof raw.conversations === 'object') {
+    for (const [k, v] of Object.entries(raw.conversations)) {
+      if (Array.isArray(v)) conv[k] = v.filter((m: any) => m && typeof m.text === 'string');
+    }
+  }
+  return {
+    transactions: a<any>(raw.transactions).filter((t) => t && typeof t.amount === 'number'),
+    contacts: a<any>(raw.contacts).filter((c) => c && typeof c.characterId === 'string'),
+    conversations: conv,
+    unreadFrom: a<any>(raw.unreadFrom).filter((x) => typeof x === 'string'),
+    gallery: a<any>(raw.gallery).filter((x) => typeof x === 'string'),
+    inventory: a<any>(raw.inventory).filter((it) => it && typeof it.name === 'string'),
+    // Переименование: старое поле shopCache → deliveryCache.
+    deliveryCache: a<any>(raw.deliveryCache ?? raw.shopCache).filter((it) => it && typeof it.name === 'string'),
+    activeOrders: a<any>(raw.activeOrders).filter((o) => o && typeof o.itemId === 'string'),
   };
 }
 

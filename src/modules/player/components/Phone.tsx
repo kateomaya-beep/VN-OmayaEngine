@@ -9,7 +9,7 @@ import { defaultPhoneConfig, PHONE_BALANCE_STAT, type PhoneConfig } from '../../
 // заглушки действий. Мессенджер-ИИ, покупки, камера и связь с контекстом — следующие фазы.
 // Иконки нарисованы свои (НЕ копии фирменных Apple).
 
-type App = 'home' | 'messages' | 'bank' | 'shop' | 'camera';
+type App = 'home' | 'messages' | 'bank' | 'delivery' | 'camera';
 
 function useCfg(): { cfg: PhoneConfig; patch: (p: Partial<PhoneConfig>) => void } {
   const s = usePlayerStore();
@@ -35,10 +35,12 @@ const AppIcon = ({ kind }: { kind: App | 'settings' }) => {
         <path d="M5 10h2v6H5zM11 10h2v6h-2zM17 10h2v6h-2zM4 17h16v2H4z" fill="#fff" />
       </>
     ),
-    shop: (
+    delivery: (
       <>
-        <path d="M6 7h12l-1 12H7L6 7Z" fill="none" stroke="#fff" strokeWidth="1.6" />
-        <path d="M9 7a3 3 0 0 1 6 0" fill="none" stroke="#fff" strokeWidth="1.6" />
+        <path d="M3 8h11v7H3z" fill="none" stroke="#fff" strokeWidth="1.6" />
+        <path d="M14 10h4l3 3v2h-7z" fill="none" stroke="#fff" strokeWidth="1.6" />
+        <circle cx="7" cy="17" r="1.8" fill="none" stroke="#fff" strokeWidth="1.6" />
+        <circle cx="17.5" cy="17" r="1.8" fill="none" stroke="#fff" strokeWidth="1.6" />
       </>
     ),
     camera: (
@@ -58,7 +60,7 @@ const AppIcon = ({ kind }: { kind: App | 'settings' }) => {
   const grad: Record<string, string> = {
     messages: 'from-emerald-400 to-green-600',
     bank: 'from-sky-400 to-indigo-600',
-    shop: 'from-amber-400 to-orange-600',
+    delivery: 'from-amber-400 to-orange-600',
     camera: 'from-fuchsia-400 to-purple-600',
     settings: 'from-slate-400 to-slate-600',
   };
@@ -180,7 +182,7 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
               {([
                 ['messages', 'Сообщения'],
                 ['bank', 'Банк'],
-                ['shop', 'Магазин'],
+                ['delivery', 'Доставка'],
                 ['camera', 'Камера'],
               ] as [App, string][]).map(([id, label]) => (
                 <button key={id} className="flex flex-col items-center gap-1" onClick={() => { setChatWith(null); setApp(id); }}>
@@ -212,15 +214,25 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
               <div className="text-sm text-white/50">Транзакций пока нет.</div>
             ) : (
               <div className="space-y-1.5">
-                {[...phone.transactions].reverse().map((t, i) => (
-                  <div key={i} className="flex justify-between items-center rounded-lg bg-white/5 px-3 py-2 text-sm">
-                    <span className="text-white/80 truncate">{t.reason || '—'}</span>
-                    <span className={t.amount >= 0 ? 'text-green-400' : 'text-red-300'}>
-                      {t.amount >= 0 ? '+' : ''}
-                      {money(t.amount, cfg.currencyName)}
-                    </span>
-                  </div>
-                ))}
+                {[...phone.transactions].reverse().map((t, i) => {
+                  // Выписка: где (vendor), что (item), когда (time). Легаси — reason.
+                  const title = t.vendor || t.reason || '—';
+                  const sub = [t.item && t.item !== t.vendor ? t.item : '', t.time]
+                    .filter(Boolean)
+                    .join(' · ');
+                  return (
+                    <div key={i} className="flex justify-between items-start gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-white/85 truncate">{title}</div>
+                        {sub && <div className="text-[11px] text-white/45 truncate">{sub}</div>}
+                      </div>
+                      <span className={`shrink-0 ${t.amount >= 0 ? 'text-green-400' : 'text-red-300'}`}>
+                        {t.amount >= 0 ? '+' : ''}
+                        {money(t.amount, cfg.currencyName)}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Screen>
@@ -271,31 +283,8 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
           />
         )}
 
-        {app === 'shop' && (
-          <Screen title="Магазин">
-            {cfg.shopCategories.map((cat) => {
-              const items = [...cfg.baseCatalog, ...(phone?.shopCache || [])].filter((it) => it.category === cat);
-              return (
-                <div key={cat} className="mb-4">
-                  <div className="text-xs uppercase tracking-wide text-white/50 mb-1.5">{cat}</div>
-                  {items.length === 0 ? (
-                    <div className="text-sm text-white/40">Пусто.</div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                      {items.map((it) => (
-                        <div key={it.id} className="rounded-xl bg-white/5 border border-white/10 p-2.5">
-                          <div className="text-sm font-medium truncate">{it.name}</div>
-                          {it.description && <div className="text-[11px] text-white/50 line-clamp-2">{it.description}</div>}
-                          <div className="mt-1 text-sm text-amber-300">{money(it.price, cfg.currencyName)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            <div>{soon}</div>
-          </Screen>
+        {app === 'delivery' && (
+          <DeliveryScreen onBack={() => setApp('home')} />
         )}
 
         {app === 'camera' && (
@@ -384,6 +373,98 @@ function ChatThread({ characterId, name, onBack }: { characterId: string; name: 
           title="Отправить"
         >
           <svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 12l16-8-6 8 6 8-16-8Z" fill="#fff" /></svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---- Приложение «Доставка» (ревизия блока 6 §3) ----
+function DeliveryScreen({ onBack }: { onBack: () => void }) {
+  const s = usePlayerStore();
+  const { cfg } = useCfg();
+  const [cat, setCat] = useState<string>(cfg.deliveryCategories[0]?.name || '');
+  const phone = s.state?.phone;
+  const balance = s.state?.statValues[PHONE_BALANCE_STAT] ?? 0;
+  const loading = s.deliveryLoadingCat === cat;
+  const orders = phone?.activeOrders || [];
+
+  const items = [...cfg.baseCatalog, ...(phone?.deliveryCache || [])].filter((it) => it.category === cat);
+
+  return (
+    <div className="absolute inset-0 flex flex-col">
+      <div className="flex items-center gap-2 px-3 py-3 bg-black/30 backdrop-blur-md">
+        <button className="text-white/90 text-xl leading-none" onClick={onBack}>‹</button>
+        <div className="font-semibold text-white">Доставка</div>
+        <div className="ml-auto text-sm text-white/70">{money(balance, cfg.currencyName)}</div>
+      </div>
+
+      {/* Табы категорий */}
+      <div className="flex gap-1.5 overflow-x-auto scrollbar-thin px-3 py-2">
+        {cfg.deliveryCategories.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => setCat(c.name)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs border transition-colors ${
+              cat === c.name
+                ? 'bg-amber-500/25 border-amber-400/60 text-amber-100'
+                : 'bg-white/5 border-white/10 text-white/70'
+            }`}
+          >
+            {c.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin px-3 pb-3 text-white">
+        {orders.length > 0 && (
+          <div className="mb-3 rounded-xl bg-emerald-500/15 border border-emerald-400/30 px-3 py-2 text-xs text-emerald-100">
+            В пути: {orders.map((o) => o.name).join(', ')}
+          </div>
+        )}
+        {items.length === 0 ? (
+          <div className="text-sm text-white/40 py-4 text-center">
+            В этой категории пока пусто. Нажмите «Показать ещё», чтобы ИИ подобрал ассортимент под сеттинг.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {items.map((it) => {
+              const price = Math.max(0, Math.round(it.price));
+              const affordable = balance >= price;
+              return (
+                <div key={it.id} className="rounded-xl bg-white/5 border border-white/10 p-2.5 flex flex-col">
+                  <div className="text-sm font-medium truncate">{it.name}</div>
+                  {it.description && <div className="text-[11px] text-white/50 line-clamp-2 flex-1">{it.description}</div>}
+                  <div className="mt-1.5 flex items-center justify-between gap-1">
+                    <span className="text-sm text-amber-300">{money(price, cfg.currencyName)}</span>
+                    <button
+                      className="text-[11px] px-2 py-1 rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => s.orderDelivery(it)}
+                      disabled={!affordable}
+                      title={affordable ? 'Заказать' : 'Недостаточно средств'}
+                    >
+                      {affordable ? 'Заказать' : 'Нет денег'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <button
+          className="mt-3 w-full py-2 rounded-xl bg-white/8 border border-white/15 text-sm text-white/80 hover:bg-white/12 disabled:opacity-50 flex items-center justify-center gap-2"
+          onClick={() => s.generateDelivery(cat)}
+          disabled={loading || !cat}
+        >
+          {loading ? (
+            <>
+              <span className="inline-block w-3.5 h-3.5 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
+              Подбираем…
+            </>
+          ) : (
+            'Показать ещё'
+          )}
         </button>
       </div>
     </div>

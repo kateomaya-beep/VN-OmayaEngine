@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { Modal, AssetImage } from '../../../shared/ui';
 import { usePlayerStore } from '../playerStore';
-import { defaultPhoneConfig, type PhoneConfig } from '../../../shared/types';
+import { defaultPhoneConfig, type PhoneConfig, type PhoneDeliveryCategory } from '../../../shared/types';
+
+function catId(): string {
+  return `cat_${Math.random().toString(36).slice(2, 8)}`;
+}
 
 // Настройки телефона (Batch 7): вкл/выкл, иконка, обои, валюта, камера, уведомления,
 // категории магазина. Открывается из бургер-меню плеера.
@@ -60,6 +64,19 @@ export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () =>
           </div>
 
           <div>
+            <label className="label">Прайс-гайд сеттинга</label>
+            <textarea
+              className="input h-20 text-xs"
+              value={cfg.priceGuide}
+              placeholder="кофе ~5, обед ~15, такси ~20, зарплата в месяц ~3000…"
+              onChange={(e) => patch({ priceGuide: e.target.value })}
+            />
+            <p className="text-[11px] text-gray-500 mt-1">
+              Ориентиры цен уходят в контекст ИИ — чтобы суммы трат были консистентными. Для фэнтези/истории перепишите под свою экономику.
+            </p>
+          </div>
+
+          <div>
             <label className="label">Обои рабочего стола</label>
             <div className="flex gap-2 flex-wrap">
               <button
@@ -94,14 +111,16 @@ export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () =>
           </div>
 
           <div>
-            <label className="label">Категории магазина</label>
+            <label className="label">Категории доставки</label>
             <div className="flex gap-1.5 flex-wrap mb-2">
-              {cfg.shopCategories.map((c) => (
-                <span key={c} className="chip">
-                  {c}
+              {cfg.deliveryCategories.map((c) => (
+                <span key={c.id} className="chip">
+                  {c.name}
                   <button
                     className="ml-1 text-red-300"
-                    onClick={() => patch({ shopCategories: cfg.shopCategories.filter((x) => x !== c) })}
+                    onClick={() =>
+                      patch({ deliveryCategories: cfg.deliveryCategories.filter((x) => x.id !== c.id) })
+                    }
                   >
                     ✕
                   </button>
@@ -115,8 +134,10 @@ export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () =>
                 value={newCat}
                 onChange={(e) => setNewCat(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && newCat.trim() && !cfg.shopCategories.includes(newCat.trim())) {
-                    patch({ shopCategories: [...cfg.shopCategories, newCat.trim()] });
+                  const name = newCat.trim();
+                  if (e.key === 'Enter' && name && !cfg.deliveryCategories.some((x) => x.name === name)) {
+                    const next: PhoneDeliveryCategory = { id: catId(), name, custom: true };
+                    patch({ deliveryCategories: [...cfg.deliveryCategories, next] });
                     setNewCat('');
                   }
                 }}
@@ -124,8 +145,10 @@ export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () =>
               <button
                 className="btn-ghost shrink-0"
                 onClick={() => {
-                  if (newCat.trim() && !cfg.shopCategories.includes(newCat.trim())) {
-                    patch({ shopCategories: [...cfg.shopCategories, newCat.trim()] });
+                  const name = newCat.trim();
+                  if (name && !cfg.deliveryCategories.some((x) => x.name === name)) {
+                    const next: PhoneDeliveryCategory = { id: catId(), name, custom: true };
+                    patch({ deliveryCategories: [...cfg.deliveryCategories, next] });
                     setNewCat('');
                   }
                 }}
@@ -133,10 +156,13 @@ export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () =>
                 + Категория
               </button>
             </div>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Приложение «Доставка» показывает эти категории. Кафе, такси и покупки вживую идут через повествование (ИИ создаёт транзакции сам).
+            </p>
           </div>
 
           <p className="text-[11px] text-gray-500">
-            Мессенджер с ответами ботов, покупки, камера и полная связь с контекстом ИИ — в следующих обновлениях телефона.
+            Камера и генерация селфи — в следующем обновлении телефона.
           </p>
         </div>
       </div>

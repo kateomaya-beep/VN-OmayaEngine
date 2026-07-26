@@ -262,9 +262,9 @@ function gameMasterBlock(state: RuntimeState): string {
     : '(no game-master state yet — establish it via worldState this turn)';
 }
 
-// Контекст телефона (Batch 7 §7.3): даём модели знать про баланс, валюту и
-// управляющие биты (money_change / sms_incoming / contact_added), плюс правило
-// нулевого баланса. Возвращаем '' если расширение выключено.
+// Контекст телефона (Batch 7 §7.3 + ревизия блока 6): баланс, валюта, прайс-гайд,
+// управляющие биты (transaction / sms_incoming / contact_added), правило нулевого
+// баланса и активные заказы доставки. Возвращаем '' если расширение выключено.
 function phoneBlock(project: Project, state: RuntimeState): string {
   const cfg = project.phone;
   if (!cfg?.enabled) return '';
@@ -278,14 +278,26 @@ function phoneBlock(project: Project, state: RuntimeState): string {
     });
   const parts = [
     `The hero carries a smartphone. Current wallet balance: ${bal} ${cur}.`,
-    `You may drive the phone through control beats (they carry NO display text and are removed from the visible flow):`,
-    `  - {"type":"money_change","amount":<+/- number>,"reason":"<short>"} — hero earns or spends money. Use for salaries, gifts, purchases, fines, etc. Never let the balance go below 0 in fiction.`,
-    `  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero off-screen (weave it naturally; it appears in the Messages app).`,
-    `  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone's number (any character who appears is auto-added, so only use this for someone met off-screen).`,
-    `ZERO-BALANCE RULE: if balance is 0 and the hero tries to buy or pay for something, they cannot afford it — reflect that in the story (declined card, no cash) instead of emitting a negative money_change.`,
+    cfg.priceGuide?.trim()
+      ? `PRICE GUIDE (setting's price levels — keep every amount in this order of magnitude, stay consistent between turns, never invent prices outside this scale):\n${cfg.priceGuide.trim()}`
+      : '',
+    `MONEY RULE: whenever the hero spends or receives money in the narrative, emit a "transaction" control beat: {"type":"transaction","amount":<negative to spend / positive to receive>,"vendor":"<where or from whom>","item":"<what for>","time":"<in-story time>"}. vendor, item and time are required — together they form the hero's bank statement. Do NOT also mirror the same amount in statChanges (the engine already applies it).`,
+    `Other phone control beats (no display text, removed from the visible flow):`,
+    `  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero off-screen (appears in the Messages app).`,
+    `  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone's number (characters who appear are auto-added; use only for someone met off-screen).`,
+    `ZERO-BALANCE RULE: check the balance before letting the hero buy anything. If they cannot afford it, do NOT emit a negative transaction — write the scene accordingly (declined card, no cash, has to skip it).`,
   ];
   if (contacts.length) parts.push(`Saved phone contacts: ${contacts.join(', ')}.`);
-  return `== PHONE ==\n${parts.join('\n')}`;
+  // Активные заказы доставки — ИИ должен ввести их в сцену (еда приезжает, вещь пришла).
+  const orders = state.phone?.activeOrders || [];
+  if (orders.length) {
+    parts.push(
+      `PENDING DELIVERIES (the hero ordered these via a delivery app — have them arrive in the story naturally, then move on): ${orders
+        .map((o) => `${o.name} (${o.category})`)
+        .join(', ')}.`
+    );
+  }
+  return `== PHONE ==\n${parts.filter(Boolean).join('\n')}`;
 }
 
 export interface BuiltRequest {
