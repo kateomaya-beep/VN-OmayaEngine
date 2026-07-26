@@ -10,7 +10,7 @@ import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './r
 import { mergeWorldState } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { maybeCompress } from './memoryEngine';
-import { rollRandomEvent } from './randomEvents';
+import { rollRandomEvent, rollRandomSms } from './randomEvents';
 import { uid } from '../shared/utils';
 
 // Порог, с которого сдвиг отношений считается «заметным событием» и попадает
@@ -90,7 +90,7 @@ export async function applyTurn(
   playerMove: string,
   turn: AiTurn,
   raw: string,
-  opts?: { eventFired?: boolean }
+  opts?: { eventFired?: boolean; smsFired?: boolean }
 ): Promise<RuntimeState> {
   const nextTurnNumber = state.turnCount + 1;
 
@@ -399,6 +399,8 @@ export async function applyTurn(
     lastChoiceTurn,
     // Кулдаун случайных событий (Batch 6 §3): сброс при срабатывании, иначе +1.
     turnsSinceLastEvent: opts?.eventFired ? 0 : (state.turnsSinceLastEvent ?? 999) + 1,
+    // Кулдаун случайных СМС (Batch 8-fix): отдельный счётчик.
+    turnsSinceLastSms: opts?.smsFired ? 0 : (state.turnsSinceLastSms ?? 999) + 1,
     memory: {
       ...state.memory,
       facts,
@@ -422,9 +424,12 @@ export async function runTurn(
   playerMove: string,
   signal?: AbortSignal
 ): Promise<TurnResult> {
-  // Случайное событие (Batch 6 §3): скрытая директива в контекст этого хода.
+  // Случайное событие (Batch 6 §3) и случайное СМС (Batch 8-fix) — независимые роллы.
+  // Обе скрытые директивы могут прийти в один ход (событие + отдельное входящее СМС).
   const evt = rollRandomEvent(project, state);
-  const req = await buildRequest(project, state, playerMove, { extraDirective: evt.directive || undefined });
+  const sms = rollRandomSms(project, state);
+  const extraDirective = [evt.directive, sms.directive].filter(Boolean).join('\n\n') || undefined;
+  const req = await buildRequest(project, state, playerMove, { extraDirective });
 
   // Потолок токенов — под верхнюю границу длины хода (слова→токены ≈ ×2.2 для
   // кириллицы) + запас на JSON-обвязку/worldState. Держим НЕ слишком большим,
@@ -471,6 +476,6 @@ export async function runTurn(
   // ('custom'/'local'), он переопределяет emotion/наряд/музыку из закрытых списков.
   // source==='main' или ошибка → ход без изменений (выбор Рассказчика).
   const turn = await selectAssets(project, state, parsed.turn);
-  const nextState = await applyTurn(project, state, playerMove, turn, raw, { eventFired: evt.fired });
+  const nextState = await applyTurn(project, state, playerMove, turn, raw, { eventFired: evt.fired, smsFired: sms.fired });
   return { turn, state: nextState };
 }

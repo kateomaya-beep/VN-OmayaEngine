@@ -14,19 +14,7 @@ const EVENT_TEXT: Record<RandomEventType, string> = {
     'A secret comes to light. Draw the secret from the existing unresolved plot hooks / lorebook — do not invent an unrelated one.',
   dramatic_event: 'Something dramatic or heavy happens.',
   unexpected_twist: 'An unexpected twist occurs.',
-  incoming_sms:
-    "One of the hero's saved phone contacts texts them out of the blue. Emit an \"sms_incoming\" beat with that contact's characterId and a short in-character message. Optionally have the hero react in the scene, but the text itself must go through the sms_incoming beat.",
 };
-
-// Доступен ли тип для этой сцены. incoming_sms требует включённого телефона и хотя бы
-// одного контакта (иначе некому писать).
-function typeAvailable(project: Project, state: RuntimeState, type: RandomEventType): boolean {
-  if (type === 'incoming_sms') {
-    if (!project.phone?.enabled) return false;
-    return (state.phone?.contacts || []).some((c) => !c.hidden);
-  }
-  return true;
-}
 
 export interface RandomEventRoll {
   fired: boolean;
@@ -51,9 +39,7 @@ export function rollRandomEvent(project: Project, state: RuntimeState): RandomEv
 
   if (Math.random() * 100 >= cfg.chancePercent) return none; // не прокнуло
 
-  const pool = cfg.types.filter(
-    (t) => t.enabled && t.weight > 0 && typeAvailable(project, state, t.id)
-  );
+  const pool = cfg.types.filter((t) => t.enabled && t.weight > 0);
   if (!pool.length) return none;
   const total = pool.reduce((s, t) => s + t.weight, 0);
   let r = Math.random() * total;
@@ -66,21 +52,44 @@ export function rollRandomEvent(project: Project, state: RuntimeState): RandomEv
     }
   }
 
-  // Для входящего СМС подсказываем модели, кто из контактов может написать.
-  let extra = '';
-  if (picked.id === 'incoming_sms') {
-    const ids = (state.phone?.contacts || [])
-      .filter((c) => !c.hidden)
-      .map((c) => {
-        const nm = project.characters.find((x) => x.id === c.characterId)?.name || c.characterId;
-        return `${nm} (${c.characterId})`;
-      });
-    if (ids.length) extra = `\nSaved contacts who could text: ${ids.join(', ')}. Pick one that fits.`;
-  }
-
   const directive = `[RANDOM EVENT TRIGGERED: ${picked.id}]
-${EVENT_TEXT[picked.id]}${extra}
+${EVENT_TEXT[picked.id]}
 Weave this into your next response organically. It must fit the current story, tone and pacing — introduce it naturally as part of the narrative, never as a jarring interruption or a system announcement. Do NOT mention that it was a random event.`;
 
   return { fired: true, directive, type: picked.id };
+}
+
+// Случайное входящее СМС (Batch 8-fix): отдельная от событий система — свой тумблер,
+// шанс и кулдаун. Требует включённого телефона и хотя бы одного видимого контакта.
+export interface RandomSmsRoll {
+  fired: boolean;
+  directive: string;
+}
+export function rollRandomSms(project: Project, state: RuntimeState): RandomSmsRoll {
+  const none: RandomSmsRoll = { fired: false, directive: '' };
+  const cfg = project.randomSms;
+  if (!cfg || !cfg.enabled) return none;
+  if (!project.phone?.enabled) return none;
+
+  const contacts = (state.phone?.contacts || []).filter((c) => !c.hidden);
+  if (!contacts.length) return none; // некому писать
+
+  const since = state.turnsSinceLastSms ?? 999;
+  if (since < Math.max(0, cfg.cooldownTurns)) return none;
+  if (!cfg.canInterruptTenseScenes && state.currentMusicMood && TENSE_MOODS.has(state.currentMusicMood)) {
+    return none;
+  }
+  if (Math.random() * 100 >= cfg.chancePercent) return none;
+
+  const ids = contacts.map((c) => {
+    const nm = project.characters.find((x) => x.id === c.characterId)?.name || c.characterId;
+    return `${nm} (${c.characterId})`;
+  });
+
+  const directive = `[RANDOM SMS TRIGGERED]
+One of the hero's saved phone contacts texts them out of the blue. Emit an "sms_incoming" beat with that contact's characterId and a short in-character message. Optionally have the hero notice/react in the scene, but the text itself must go through the sms_incoming beat.
+Saved contacts who could text: ${ids.join(', ')}. Pick one that fits the current moment.
+Do NOT mention that it was a random event.`;
+
+  return { fired: true, directive };
 }

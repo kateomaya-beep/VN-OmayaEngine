@@ -34,6 +34,7 @@ import {
   initialPhoneState,
   normalizeFinanceConfig,
   normalizeInventory,
+  normalizeRandomSms,
   PHONE_BALANCE_STAT,
 } from './types';
 import { uid, clamp } from './utils';
@@ -336,6 +337,7 @@ export function normalizeProject(raw: any): Project {
     playerTheme: raw?.playerTheme ? normalizePlayerTheme(raw.playerTheme) : undefined,
     imageGen: raw?.imageGen ? normalizeImageGen(raw.imageGen) : undefined,
     randomEvents: raw?.randomEvents ? normalizeRandomEvents(raw.randomEvents) : undefined,
+    randomSms: raw?.randomSms ? normalizeRandomSms(raw.randomSms) : undefined,
     phone: raw?.phone ? normalizePhoneConfig(raw.phone) : undefined,
     finance: raw?.finance ? normalizeFinanceConfig(raw.finance) : undefined,
   };
@@ -387,6 +389,7 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     lastChoiceTurn: -1e9,
     authorNotes: [],
     turnsSinceLastEvent: 999, // «давно не было» → случайное событие может сработать сразу
+    turnsSinceLastSms: 999,
     phone: initialPhoneState(),
     inventory: [],
   };
@@ -479,6 +482,7 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
         ? [{ id: uid('note'), text: str(raw.authorNote) }]
         : [],
     turnsSinceLastEvent: num(raw.turnsSinceLastEvent, fresh.turnsSinceLastEvent ?? 999),
+    turnsSinceLastSms: num(raw.turnsSinceLastSms, fresh.turnsSinceLastSms ?? 999),
     // Телефон (Batch 7): сохраняем контакты/переписки/транзакции/заказы при загрузке.
     phone: normalizePhoneState(raw.phone),
     // Инвентарь (Batch 8): из RuntimeState.inventory; миграция со старого phone.inventory.

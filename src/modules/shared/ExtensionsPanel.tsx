@@ -3,6 +3,7 @@ import { Modal, Field } from '../../shared/ui';
 import { getApiKey, setApiKey } from '../../ai/keys';
 import {
   defaultRandomEvents,
+  defaultRandomSms,
   defaultImageGenConfig,
   RANDOM_EVENT_LABELS,
   type Project,
@@ -74,6 +75,11 @@ export function ExtensionsPanel({
       p.randomEvents = { ...cur, types: cur.types.map((t) => (t.id === id ? { ...t, ...patch } : t)) };
     });
   const phoneOn = !!project.phone?.enabled;
+  const sms = project.randomSms ?? defaultRandomSms();
+  const patchSms = (patch: Partial<typeof sms>) =>
+    onPatch((p) => {
+      p.randomSms = { ...(p.randomSms ?? defaultRandomSms()), ...patch };
+    });
 
   return (
     <Modal open={open} onClose={onClose} title="Управление расширениями" wide>
@@ -158,31 +164,78 @@ export function ExtensionsPanel({
             <div>
               <div className="text-xs uppercase tracking-wide text-gray-500 mb-2">Типы событий и веса</div>
               <div className="space-y-2">
-                {re.types
-                  .filter((t) => t.id !== 'incoming_sms' || phoneOn)
-                  .map((t) => (
-                    <div key={t.id} className="card flex items-center gap-3 !p-2.5">
-                      <input type="checkbox" checked={t.enabled} onChange={(e) => patchType(t.id, { enabled: e.target.checked })} />
-                      <div className="flex-1 text-sm">{RANDOM_EVENT_LABELS[t.id].ru}</div>
-                      <span className="text-xs text-gray-500">вес</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={20}
-                        step={1}
-                        className="input w-16 !py-1"
-                        value={t.weight}
-                        disabled={!t.enabled}
-                        onChange={(e) => patchType(t.id, { weight: Math.max(0, Math.min(20, Number(e.target.value) || 0)) })}
-                      />
-                    </div>
-                  ))}
+                {re.types.map((t) => (
+                  <div key={t.id} className="card flex items-center gap-3 !p-2.5">
+                    <input type="checkbox" checked={t.enabled} onChange={(e) => patchType(t.id, { enabled: e.target.checked })} />
+                    <div className="flex-1 text-sm">{RANDOM_EVENT_LABELS[t.id].ru}</div>
+                    <span className="text-xs text-gray-500">вес</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      step={1}
+                      className="input w-16 !py-1"
+                      value={t.weight}
+                      disabled={!t.enabled}
+                      onChange={(e) => patchType(t.id, { weight: Math.max(0, Math.min(20, Number(e.target.value) || 0)) })}
+                    />
+                  </div>
+                ))}
               </div>
               <p className="text-[11px] text-gray-500 mt-2">
                 «Раскрытие секрета» тянет нить из уже заложенных сюжетных крючков (саммари/лорбук), а не
                 выдумывает новую. Отключённые типы не выпадают; больший вес — чаще.
               </p>
             </div>
+          </div>
+
+          {/* Случайные входящие СМС — отдельная система (свой тумблер и шанс). */}
+          <div className="pt-3 border-t border-white/10 space-y-3">
+            <div>
+              <h4 className="font-semibold text-sm">📱 Случайные входящие СМС</h4>
+              <p className="text-xs text-gray-500">
+                Отдельно от событий: контакт из телефона может написать герою «из ниоткуда». Работает только при
+                включённом расширении «Телефон» и наличии контактов.
+              </p>
+            </div>
+            {!phoneOn && (
+              <p className="text-[11px] text-amber-400">Включите расширение «Телефон» (вкладка «Телефон»), чтобы это работало.</p>
+            )}
+            <label className={`flex items-center gap-2 text-sm ${phoneOn ? '' : 'opacity-50'}`}>
+              <input type="checkbox" checked={sms.enabled} disabled={!phoneOn} onChange={(e) => patchSms({ enabled: e.target.checked })} />
+              Включить случайные входящие СМС
+            </label>
+            <div className={`grid sm:grid-cols-2 gap-3 ${sms.enabled && phoneOn ? '' : 'opacity-50 pointer-events-none'}`}>
+              <Field label={`Шанс на ход: ${sms.chancePercent}%`}>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={sms.chancePercent}
+                  onChange={(e) => patchSms({ chancePercent: Number(e.target.value) })}
+                  className="w-full accent-accent2"
+                />
+              </Field>
+              <Field label="Кулдаун (мин. ходов между СМС)">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="input w-28"
+                  value={sms.cooldownTurns}
+                  onChange={(e) => patchSms({ cooldownTurns: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                />
+              </Field>
+            </div>
+            <label className={`flex items-center gap-2 text-sm ${sms.enabled && phoneOn ? '' : 'opacity-50 pointer-events-none'}`}>
+              <input
+                type="checkbox"
+                checked={sms.canInterruptTenseScenes}
+                onChange={(e) => patchSms({ canInterruptTenseScenes: e.target.checked })}
+              />
+              Может прерывать напряжённые/интимные сцены
+            </label>
           </div>
         </div>
       )}

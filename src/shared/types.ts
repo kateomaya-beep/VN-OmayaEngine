@@ -312,6 +312,7 @@ export interface Project {
   playerTheme?: PlayerTheme; // пер-проектное оформление плеера (мини-мастерская)
   imageGen?: ImageGenConfig; // CG-студия: генерация кат-сцен через image-API
   randomEvents?: RandomEventConfig; // случайные сюжетные события (Batch 6 §3)
+  randomSms?: RandomSmsConfig; // случайные входящие СМС — отдельно от событий (Batch 8-fix)
   phone?: PhoneConfig; // расширение «Телефон» (Batch 7)
   finance?: ProjectFinanceConfig; // стартовый капитал + регулярные статьи (Batch 8 §III)
 }
@@ -584,8 +585,7 @@ export type RandomEventType =
   | 'new_location'
   | 'secret_reveal'
   | 'dramatic_event'
-  | 'unexpected_twist'
-  | 'incoming_sms';
+  | 'unexpected_twist';
 
 export interface RandomEventTypeConfig {
   id: RandomEventType;
@@ -607,7 +607,6 @@ export const RANDOM_EVENT_TYPES: RandomEventType[] = [
   'secret_reveal',
   'dramatic_event',
   'unexpected_twist',
-  'incoming_sms',
 ];
 
 export const RANDOM_EVENT_LABELS: Record<RandomEventType, { ru: string; en: string }> = {
@@ -616,8 +615,32 @@ export const RANDOM_EVENT_LABELS: Record<RandomEventType, { ru: string; en: stri
   secret_reveal: { ru: 'Раскрытие секрета', en: 'Secret revealed' },
   dramatic_event: { ru: 'Драматичное событие', en: 'Dramatic event' },
   unexpected_twist: { ru: 'Неожиданный поворот', en: 'Unexpected twist' },
-  incoming_sms: { ru: 'Входящее СМС (телефон)', en: 'Incoming SMS (phone)' },
 };
+
+// Случайные входящие СМС (Batch 8-fix): отдельная от рандом-ивентов система — свой
+// тумблер и свой шанс. Работает только при включённом телефоне и наличии контактов.
+export interface RandomSmsConfig {
+  enabled: boolean; // дефолт false
+  chancePercent: number; // шанс на ход, дефолт 15
+  cooldownTurns: number; // мин. ходов между СМС, дефолт 4
+  canInterruptTenseScenes: boolean; // дефолт false
+}
+
+export function defaultRandomSms(): RandomSmsConfig {
+  return { enabled: false, chancePercent: 15, cooldownTurns: 4, canInterruptTenseScenes: false };
+}
+
+export function normalizeRandomSms(v: unknown): RandomSmsConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const num = (x: unknown, def: number, lo: number, hi: number) =>
+    typeof x === 'number' && x >= lo && x <= hi ? x : def;
+  return {
+    enabled: typeof o.enabled === 'boolean' ? o.enabled : false,
+    chancePercent: num(o.chancePercent, 15, 0, 100),
+    cooldownTurns: num(o.cooldownTurns, 4, 0, 100),
+    canInterruptTenseScenes: typeof o.canInterruptTenseScenes === 'boolean' ? o.canInterruptTenseScenes : false,
+  };
+}
 
 export function defaultRandomEvents(): RandomEventConfig {
   return {
@@ -1056,6 +1079,8 @@ export interface RuntimeState {
   authorNotes: AuthorNote[];
   // Ходов с последнего случайного события (Batch 6 §3) — для кулдауна. В сейве.
   turnsSinceLastEvent?: number;
+  // Ходов с последнего случайного СМС (Batch 8-fix) — отдельный кулдаун. В сейве.
+  turnsSinceLastSms?: number;
   // Состояние телефона (Batch 7) — контакты, переписки, транзакции, инвентарь. В сейве.
   phone?: PhoneState;
   // Инвентарь протагониста (Batch 8 §IV) — не в телефоне: работает и без него. В сейве.
