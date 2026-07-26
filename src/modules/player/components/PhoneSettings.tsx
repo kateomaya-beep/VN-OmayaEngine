@@ -1,33 +1,36 @@
 import { useState } from 'react';
-import { Modal, AssetImage } from '../../../shared/ui';
+import { AssetImage } from '../../../shared/ui';
 import { usePlayerStore } from '../playerStore';
-import { defaultPhoneConfig, type PhoneConfig, type PhoneDeliveryCategory } from '../../../shared/types';
+import { defaultPhoneConfig, type PhoneConfig, type PhoneDeliveryCategory, type Project } from '../../../shared/types';
 
 function catId(): string {
   return `cat_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // Настройки телефона (Batch 7): вкл/выкл, иконка, обои, валюта, камера, уведомления,
-// категории магазина. Открывается из бургер-меню плеера.
-export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const s = usePlayerStore();
-  const project = s.project;
+// категории доставки. Живут в панели «Расширения» (Batch 8-fix). Работают на props,
+// чтобы редактироваться и в конструкторе, и в игре.
+export function PhoneSettingsContent({
+  project,
+  onPatch,
+}: {
+  project: Project;
+  onPatch: (m: (p: Project) => void) => void;
+}) {
   const [newCat, setNewCat] = useState('');
   // Результат теста image-API: null — не запускали; 'testing'; 'ok'; {error}.
   const [imgTest, setImgTest] = useState<null | 'testing' | 'ok' | { error: string }>(null);
-  if (!open || !project) return null;
 
   const cfg = project.phone ?? defaultPhoneConfig();
   const patch = (p: Partial<PhoneConfig>) =>
-    s.patchProject((proj) => {
+    onPatch((proj) => {
       proj.phone = { ...(proj.phone ?? defaultPhoneConfig()), ...p };
     });
 
   const wallpapers = project.assets.filter((a) => a.type === 'background' || a.type === 'cg');
 
   return (
-    <Modal open={open} onClose={onClose} title="📱 Телефон — настройки" wide>
-      <div className="space-y-4 max-h-[72vh] overflow-y-auto scrollbar-thin pr-1">
+      <div className="space-y-4">
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={cfg.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
           Включить расширение «Телефон»
@@ -116,7 +119,7 @@ export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () =>
                 disabled={imgTest === 'testing'}
                 onClick={async () => {
                   setImgTest('testing');
-                  const err = await s.testImageApi();
+                  const err = await usePlayerStore.getState().testImageApi();
                   setImgTest(err ? { error: err } : 'ok');
                 }}
               >
@@ -185,11 +188,7 @@ export function PhoneSettings({ open, onClose }: { open: boolean; onClose: () =>
             </p>
           </div>
 
-          <p className="text-[11px] text-gray-500">
-            Камера и генерация селфи — в следующем обновлении телефона.
-          </p>
         </div>
       </div>
-    </Modal>
   );
 }

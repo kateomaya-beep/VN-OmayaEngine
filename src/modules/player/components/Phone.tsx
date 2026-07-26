@@ -133,7 +133,7 @@ export function PhoneFloatingIcon({ onOpen }: { onOpen: () => void }) {
 }
 
 // ---- Окно телефона ----
-export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onClose: () => void; onSettings: () => void }) {
+export function PhoneWindow({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { cfg } = useCfg();
   const s = usePlayerStore();
   const [app, setApp] = useState<App>('home');
@@ -198,10 +198,6 @@ export function PhoneWindow({ open, onClose, onSettings }: { open: boolean; onCl
                   <span className="text-[11px] text-white/90">{label}</span>
                 </button>
               ))}
-              <button className="flex flex-col items-center gap-1" onClick={onSettings}>
-                <AppIcon kind="settings" />
-                <span className="text-[11px] text-white/90">Настройки</span>
-              </button>
             </div>
             <button
               className="absolute bottom-4 left-1/2 -translate-x-1/2 w-32 h-1.5 rounded-full bg-white/60"

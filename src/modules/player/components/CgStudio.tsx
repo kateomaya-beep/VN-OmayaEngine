@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Modal, AssetImage } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
 import { usePlayerStore } from '../playerStore';
-import { getApiKey, setApiKey } from '../../../ai/keys';
 import { composeCgPrompt } from '../../../ai/imagePrompt';
 import { generateImage, blobToRef, type ImageRef } from '../../../ai/imageProvider';
 import { useStylePresets } from '../../../ai/imageStyles';
@@ -40,8 +39,6 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   const state = s.state;
   const { presets, add: addPreset, remove: removePreset } = useStylePresets();
 
-  const [showSettings, setShowSettings] = useState(false);
-  const [imageKey, setImageKey] = useState('');
   const [stage, setStage] = useState<Stage>('idle');
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState('');
@@ -50,9 +47,6 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    if (open) setImageKey(getApiKey('image'));
-  }, [open]);
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (result) URL.revokeObjectURL(result.url);
@@ -362,65 +356,10 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           </div>
         </div>
 
-        {/* Системный промпт воркера + настройки подключения (сворачиваемо) */}
-        <div>
-          <button className="text-xs text-[var(--pl-accent-bright,#d3b8ff)] hover:underline" onClick={() => setShowSettings((v) => !v)}>
-            {showSettings ? '▾' : '▸'} {L('Промпт-воркер и подключение', 'Prompt worker & connection')}
-          </button>
-          {showSettings && (
-            <div className="mt-2 space-y-3">
-              <div>
-                <label className="label">{L('Системный промпт воркера (как собирать image-промпт)', 'Worker system prompt (how to build the image prompt)')}</label>
-                <textarea
-                  className="input h-40 font-mono text-xs"
-                  value={ig.systemPrompt}
-                  onChange={(e) => patchIG({ systemPrompt: e.target.value })}
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="label">{L('Провайдер картинок', 'Image provider')}</label>
-                  <select className="input" value={ig.providerKind} onChange={(e) => patchIG({ providerKind: e.target.value as ImageGenConfig['providerKind'] })}>
-                    <option value="gemini">Gemini / Nano Banana ({L('с рефами', 'with refs')})</option>
-                    <option value="openai">{L('OpenAI-совместимый', 'OpenAI-compatible')} ({L('без рефов', 'no refs')})</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="label">{L('Модель', 'Model')}</label>
-                  <input
-                    className="input"
-                    placeholder={ig.providerKind === 'gemini' ? 'gemini-2.5-flash-image' : 'gpt-image-1'}
-                    value={ig.model || ''}
-                    onChange={(e) => patchIG({ model: e.target.value || undefined })}
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="label">Base URL</label>
-                <input
-                  className="input"
-                  placeholder={ig.providerKind === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'}
-                  value={ig.baseUrl || ''}
-                  onChange={(e) => patchIG({ baseUrl: e.target.value || undefined })}
-                />
-              </div>
-              <div>
-                <label className="label">{L('API-ключ картинок', 'Image API key')}</label>
-                <input
-                  className="input"
-                  type="password"
-                  placeholder="sk-… / AIza…"
-                  value={imageKey}
-                  onChange={(e) => {
-                    setImageKey(e.target.value);
-                    setApiKey('image', e.target.value);
-                  }}
-                />
-                <p className="text-[11px] text-gray-500 mt-1">{L('Хранится только в этом браузере.', 'Stored only in this browser.')}</p>
-              </div>
-            </div>
-          )}
-        </div>
+        {/* Подключение image-API (провайдер/модель/ключ/промпт-воркер) — в 🧩 Расширения → Картинки. */}
+        <p className="text-[11px] text-gray-500">
+          {L('Подключение к image-API и промпт-воркер — в панели «Расширения» → «Картинки».', 'Image-API connection & prompt worker are in Extensions → Images.')}
+        </p>
       </div>
     </Modal>
   );
