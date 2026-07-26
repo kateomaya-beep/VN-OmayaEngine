@@ -11,6 +11,8 @@ import { Console } from './components/Console';
 import { Mixer } from './components/Mixer';
 import { QuickActions } from './components/QuickActions';
 import { CgStudio } from './components/CgStudio';
+import { PhoneFloatingIcon, PhoneWindow } from './components/Phone';
+import { PhoneSettings } from './components/PhoneSettings';
 import { EditPanel } from './components/EditPanel';
 import { HistoryPanel } from './components/HistoryPanel';
 import { AuthorNotesPanel } from './components/AuthorNotesPanel';
@@ -31,6 +33,8 @@ export function PlayerPage() {
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
   const [cgStudioOpen, setCgStudioOpen] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const [phoneSettingsOpen, setPhoneSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [workshopOpen, setWorkshopOpen] = useState(false);
@@ -107,6 +111,7 @@ export function PlayerPage() {
                   <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
                   <MenuItem icon="🎨" label="Оформление" onClick={() => setWorkshopOpen(true)} />
                   <MenuItem icon="🎬" label="CG-студия" onClick={() => setCgStudioOpen(true)} />
+                  <MenuItem icon="📱" label="Телефон" onClick={() => setPhoneSettingsOpen(true)} />
                   <MenuItem icon="🖼" label="Генерация фонов" onClick={() => setGenOpen((v) => !v)} />
                   <MenuItem icon="✎" label="Правка в игре" onClick={() => setPanel('edit')} />
                   <MenuItem icon="↻" label={t('player.regen')} onClick={() => s.regenerate()} />
@@ -213,6 +218,16 @@ export function PlayerPage() {
       <AuthorNotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} />
       <SaveLoadPanel open={panel === 'saves'} onClose={() => setPanel(null)} />
       <CgStudio open={cgStudioOpen} onClose={() => setCgStudioOpen(false)} />
+      <PhoneFloatingIcon onOpen={() => setPhoneOpen(true)} />
+      <PhoneWindow
+        open={phoneOpen}
+        onClose={() => setPhoneOpen(false)}
+        onSettings={() => {
+          setPhoneOpen(false);
+          setPhoneSettingsOpen(true);
+        }}
+      />
+      <PhoneSettings open={phoneSettingsOpen} onClose={() => setPhoneSettingsOpen(false)} />
       <WorkshopPanel
         open={workshopOpen}
         onClose={() => setWorkshopOpen(false)}

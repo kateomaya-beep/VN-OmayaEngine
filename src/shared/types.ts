@@ -312,6 +312,134 @@ export interface Project {
   playerTheme?: PlayerTheme; // пер-проектное оформление плеера (мини-мастерская)
   imageGen?: ImageGenConfig; // CG-студия: генерация кат-сцен через image-API
   randomEvents?: RandomEventConfig; // случайные сюжетные события (Batch 6 §3)
+  phone?: PhoneConfig; // расширение «Телефон» (Batch 7)
+}
+
+// ---- Телефон (Batch 7) ----
+// Опциональное расширение: внутриигровой смартфон, двусторонне связанный с игрой.
+// PhoneConfig — авторская настройка (в проекте); PhoneState — рантайм (в RuntimeState/сейве).
+// Баланс — глобальный «стат» под зарезервированным id (участвует в statChanges/контексте).
+export const PHONE_BALANCE_STAT = 'phone_balance';
+
+export interface PhoneShopItem {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  description?: string;
+  generated?: boolean; // добавлен ИИ (кэш)
+  outfitTag?: string; // одежда → тег наряда (если есть спрайт)
+  spriteAssetId?: string;
+}
+
+export interface PhoneConfig {
+  enabled: boolean;
+  showFloatingIcon: boolean;
+  iconPosition: { x: number; y: number }; // проценты 0..100 от экрана
+  wallpaperAssetId?: string;
+  cameraPromptTemplate: string;
+  popupNotifications: boolean;
+  currencyName: string; // «$», «кредиты» и т.п.
+  shopCategories: string[];
+  baseCatalog: PhoneShopItem[]; // авторский базовый каталог
+}
+
+export interface PhoneTransaction {
+  amount: number;
+  reason: string;
+  at: number;
+}
+export interface PhoneContact {
+  characterId: string;
+  hidden?: boolean;
+}
+export interface PhoneMessage {
+  from: 'protagonist' | 'contact';
+  text: string;
+  attachedAssetId?: string;
+  at: number;
+}
+export interface PhoneInventoryItem {
+  itemId: string;
+  name: string;
+  category: string;
+}
+
+export interface PhoneState {
+  transactions: PhoneTransaction[];
+  contacts: PhoneContact[];
+  conversations: Record<string, PhoneMessage[]>; // characterId -> messages
+  unreadFrom: string[]; // characterIds с непрочитанным
+  gallery: string[]; // assetId сгенерированных фото
+  inventory: PhoneInventoryItem[];
+  shopCache: PhoneShopItem[]; // сгенерированные ИИ товары (кэш)
+}
+
+const DEFAULT_CAMERA_PROMPT =
+  'selfie photo of {protagonist_name}, {user_prompt}, casual phone camera quality, natural lighting';
+
+export function defaultPhoneConfig(): PhoneConfig {
+  return {
+    enabled: false,
+    showFloatingIcon: true,
+    iconPosition: { x: 84, y: 62 },
+    cameraPromptTemplate: DEFAULT_CAMERA_PROMPT,
+    popupNotifications: true,
+    currencyName: '$',
+    shopCategories: ['Товары для дома', 'Доставка еды', 'Одежда'],
+    baseCatalog: [],
+  };
+}
+
+export function initialPhoneState(): PhoneState {
+  return {
+    transactions: [],
+    contacts: [],
+    conversations: {},
+    unreadFrom: [],
+    gallery: [],
+    inventory: [],
+    shopCache: [],
+  };
+}
+
+export function normalizePhoneConfig(v: unknown): PhoneConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const d = defaultPhoneConfig();
+  const pos = (o.iconPosition && typeof o.iconPosition === 'object' ? o.iconPosition : {}) as {
+    x?: unknown;
+    y?: unknown;
+  };
+  const catItems = Array.isArray(o.baseCatalog) ? (o.baseCatalog as any[]) : [];
+  return {
+    enabled: typeof o.enabled === 'boolean' ? o.enabled : false,
+    showFloatingIcon: typeof o.showFloatingIcon === 'boolean' ? o.showFloatingIcon : true,
+    iconPosition: {
+      x: typeof pos.x === 'number' ? Math.max(0, Math.min(100, pos.x)) : d.iconPosition.x,
+      y: typeof pos.y === 'number' ? Math.max(0, Math.min(100, pos.y)) : d.iconPosition.y,
+    },
+    wallpaperAssetId: typeof o.wallpaperAssetId === 'string' ? o.wallpaperAssetId : undefined,
+    cameraPromptTemplate:
+      typeof o.cameraPromptTemplate === 'string' && o.cameraPromptTemplate.trim()
+        ? o.cameraPromptTemplate
+        : d.cameraPromptTemplate,
+    popupNotifications: typeof o.popupNotifications === 'boolean' ? o.popupNotifications : true,
+    currencyName: typeof o.currencyName === 'string' && o.currencyName.trim() ? o.currencyName : '$',
+    shopCategories: Array.isArray(o.shopCategories)
+      ? (o.shopCategories as any[]).filter((x) => typeof x === 'string' && x.trim())
+      : d.shopCategories,
+    baseCatalog: catItems
+      .filter((it) => it && typeof it.name === 'string')
+      .map((it) => ({
+        id: typeof it.id === 'string' ? it.id : `item_${Math.random().toString(36).slice(2, 8)}`,
+        name: it.name,
+        category: typeof it.category === 'string' ? it.category : 'Разное',
+        price: typeof it.price === 'number' ? it.price : 0,
+        description: typeof it.description === 'string' ? it.description : undefined,
+        outfitTag: typeof it.outfitTag === 'string' ? it.outfitTag : undefined,
+        spriteAssetId: typeof it.spriteAssetId === 'string' ? it.spriteAssetId : undefined,
+      })),
+  };
 }
 
 // Случайные события (Batch 6 §3): движок с заданной вероятностью подмешивает в ход
@@ -775,6 +903,8 @@ export interface RuntimeState {
   authorNotes: AuthorNote[];
   // Ходов с последнего случайного события (Batch 6 §3) — для кулдауна. В сейве.
   turnsSinceLastEvent?: number;
+  // Состояние телефона (Batch 7) — контакты, переписки, транзакции, инвентарь. В сейве.
+  phone?: PhoneState;
 }
 
 export interface AuthorNote {

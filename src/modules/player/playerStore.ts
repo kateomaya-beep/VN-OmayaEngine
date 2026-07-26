@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState } from '../../shared/types';
+import { initialPhoneState } from '../../shared/types';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { expandMacros } from '../../ai/macros';
@@ -97,6 +98,7 @@ interface PlayerStore {
   // Правка состояния Game Master (досье/часы/адженда…) прямо в игре — обновляет
   // runtime и автосохраняется.
   patchGm: (mutator: (gm: GameMasterState) => void) => void;
+  patchPhone: (mutator: (p: PhoneState) => void) => void;
   // Правка памяти (список свёрток/саммари) прямо в игре.
   patchMemory: (mutator: (m: MemoryState) => void) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
@@ -445,6 +447,16 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const nextState = { ...st.state, gm };
     set({ state: nextState });
     // Автосейв (fire-and-forget) — правки GM переживают перезагрузку.
+    void get().autosave();
+  },
+
+  // Правка состояния телефона (Batch 7) — контакты/переписки/транзакции/инвентарь.
+  patchPhone(mutator) {
+    const st = get();
+    if (!st.state) return;
+    const phone: PhoneState = JSON.parse(JSON.stringify(st.state.phone ?? initialPhoneState()));
+    mutator(phone);
+    set({ state: { ...st.state, phone } });
     void get().autosave();
   },
 

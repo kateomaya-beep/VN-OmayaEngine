@@ -29,6 +29,8 @@ import {
   normalizePlayerTheme,
   normalizeImageGen,
   normalizeRandomEvents,
+  normalizePhoneConfig,
+  initialPhoneState,
 } from './types';
 import { uid, clamp } from './utils';
 
@@ -330,6 +332,7 @@ export function normalizeProject(raw: any): Project {
     playerTheme: raw?.playerTheme ? normalizePlayerTheme(raw.playerTheme) : undefined,
     imageGen: raw?.imageGen ? normalizeImageGen(raw.imageGen) : undefined,
     randomEvents: raw?.randomEvents ? normalizeRandomEvents(raw.randomEvents) : undefined,
+    phone: raw?.phone ? normalizePhoneConfig(raw.phone) : undefined,
   };
 }
 
@@ -373,6 +376,7 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     lastChoiceTurn: -1e9,
     authorNotes: [],
     turnsSinceLastEvent: 999, // «давно не было» → случайное событие может сработать сразу
+    phone: initialPhoneState(),
   };
 }
 
