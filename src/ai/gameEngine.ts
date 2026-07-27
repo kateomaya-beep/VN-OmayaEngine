@@ -1,5 +1,5 @@
 import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry, PhoneState, InventoryItem } from '../shared/types';
-import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhoneState } from '../shared/types';
+import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhoneState, RANDOM_EVENT_LABELS } from '../shared/types';
 import { pushToast } from '../shared/toast';
 import { resolveEmoji } from '../shared/emojiDict';
 import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
@@ -498,6 +498,9 @@ export async function runTurn(
   // Обе скрытые директивы могут прийти в один ход (событие + отдельное входящее СМС).
   const evt = rollRandomEvent(project, state);
   const sms = rollRandomSms(project, state);
+  // Небольшой поп-ап, чтобы игрок понимал, что сейчас триггернулось (по просьбе).
+  if (evt.fired && evt.type) pushToast('info', `🎲 Случайное событие: ${RANDOM_EVENT_LABELS[evt.type].ru}`);
+  if (sms.fired) pushToast('info', '📱 Сейчас придёт входящее сообщение…');
   const extraDirective = [evt.directive, sms.directive].filter(Boolean).join('\n\n') || undefined;
   const req = await buildRequest(project, state, playerMove, { extraDirective });
 

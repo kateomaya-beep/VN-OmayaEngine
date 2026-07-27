@@ -17,6 +17,7 @@ import { HistoryPanel } from './components/HistoryPanel';
 import { AuthorNotesPanel } from './components/AuthorNotesPanel';
 import { SaveLoadPanel } from './components/Panels';
 import { WorkshopPanel } from './components/WorkshopPanel';
+import { WardrobePanel } from './components/WardrobePanel';
 import { themeVars, ensureFontLink, loadGlobalTheme } from './playerTheme';
 import { useT } from '../../shared/i18n';
 import { TopBar } from '../../app/TopBar';
@@ -36,6 +37,7 @@ export function PlayerPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [workshopOpen, setWorkshopOpen] = useState(false);
+  const [wardrobeOpen, setWardrobeOpen] = useState(false);
   // Экран запуска (Batch 5.2): Продолжить / Загрузить / Новая история.
   const [setup, setSetup] = useState<Setup>('launch');
   // Оформление плеера (мини-мастерская) — ПЕР-ПРОЕКТНОЕ: тема живёт в project.playerTheme.
@@ -107,6 +109,7 @@ export function PlayerPage() {
                   <MenuItem icon="📜" label="История" onClick={() => setPanel('history')} />
                   <MenuItem icon="💾" label={t('player.saves')} onClick={() => setPanel('saves')} />
                   <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
+                  <MenuItem icon="👗" label="Гардероб" onClick={() => setWardrobeOpen(true)} />
                   <MenuItem icon="🎨" label="Оформление" onClick={() => setWorkshopOpen(true)} />
                   <MenuItem icon="🎬" label="CG-студия" onClick={() => setCgStudioOpen(true)} />
                   <MenuItem icon="📱" label="Телефон" onClick={() => setPhoneOpen(true)} />
@@ -218,6 +221,7 @@ export function PlayerPage() {
       <CgStudio open={cgStudioOpen} onClose={() => setCgStudioOpen(false)} />
       <PhoneFloatingIcon onOpen={() => setPhoneOpen(true)} />
       <PhoneWindow open={phoneOpen} onClose={() => setPhoneOpen(false)} />
+      <WardrobePanel open={wardrobeOpen} onClose={() => setWardrobeOpen(false)} />
       <WorkshopPanel
         open={workshopOpen}
         onClose={() => setWorkshopOpen(false)}

@@ -111,6 +111,8 @@ interface PlayerStore {
   patchPhone: (mutator: (p: PhoneState) => void) => void;
   // Правка инвентаря (Batch 8 §IV) прямо в игре — добавить/переименовать/кол-во/эмодзи/удалить.
   patchInventory: (mutator: (inv: InventoryItem[]) => void) => void;
+  // Гардероб: вручную задать наряд персонажа на текущую сцену (если ИИ не переоделся).
+  setSceneOutfit: (characterId: string, outfit: string) => void;
   // Мессенджер телефона (Batch 7 §7.2): отправить СМС персонажу и получить ответ ИИ.
   phoneTypingFrom: string | null; // characterId, от кого сейчас «печатается» ответ
   sendPhoneMessage: (characterId: string, text: string) => Promise<void>;
@@ -894,6 +896,24 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const inventory: InventoryItem[] = JSON.parse(JSON.stringify(st.state.inventory ?? []));
     mutator(inventory);
     set({ state: { ...st.state, inventory } });
+    void get().autosave();
+  },
+
+  setSceneOutfit(characterId, outfit) {
+    const st = get();
+    if (!st.state) return;
+    // Меняем наряд в уже показанных битах (спрайт сменится сразу) и в onScreen
+    // (сохранится + уйдёт в контекст ИИ на следующий ход).
+    const visibleBeats = st.visibleBeats.map((b) =>
+      b.type === 'dialogue' && b.characterId === characterId ? { ...b, outfit } : b
+    );
+    const queue = st.queue.map((b) =>
+      b.type === 'dialogue' && b.characterId === characterId ? { ...b, outfit } : b
+    );
+    const onScreen = st.state.onScreen.some((o) => o.characterId === characterId)
+      ? st.state.onScreen.map((o) => (o.characterId === characterId ? { ...o, outfit } : o))
+      : [...st.state.onScreen, { characterId, emotion: 'neutral', outfit, position: 'center' as const }];
+    set({ visibleBeats, queue, state: { ...st.state, onScreen } });
     void get().autosave();
   },
 

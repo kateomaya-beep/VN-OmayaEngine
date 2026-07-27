@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SLASH_HELP } from '../slashCommands';
 
 // Консоль ввода — ВСЕГДА видна (Блок B.3). Свой ввод = дословная реплика героя;
@@ -25,6 +25,16 @@ export function Console({
   onOpenNotes: () => void;
 }) {
   const [showHelp, setShowHelp] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // Автовысота поля ввода: растёт под текст (до потолка), затем скроллится внутри.
+  const resize = () => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
+  };
+  useEffect(resize, [value]);
 
   const send = () => {
     const t = value.trim();
@@ -41,7 +51,7 @@ export function Console({
 
   return (
     <div className="bg-[var(--pl-bubble-bg)] backdrop-blur-lg border-t border-[rgba(180,150,255,0.14)] px-3 sm:px-4 pt-3 pb-4">
-      <div className="max-w-4xl mx-auto flex items-center gap-2.5">
+      <div className="max-w-4xl mx-auto flex items-end gap-2.5">
         <button
           className={`${iconBtn} ${iconIdle}`}
           title={SLASH_HELP}
@@ -61,13 +71,21 @@ export function Console({
         >
           📝
         </button>
-        <input
-          className="flex-1 rounded-[14px] px-4 py-2.5 text-[13.5px] outline-none text-[#f0ecfa] bg-white/[0.05] border border-[rgba(180,150,255,0.25)] focus:border-[var(--pl-accent)] disabled:opacity-50"
+        <textarea
+          ref={taRef}
+          rows={1}
+          className="flex-1 resize-none rounded-[14px] px-4 py-2.5 text-[13.5px] leading-snug outline-none text-[#f0ecfa] bg-white/[0.05] border border-[rgba(180,150,255,0.25)] focus:border-[var(--pl-accent)] disabled:opacity-50 scrollbar-thin"
           placeholder="Ваши слова или действие героя… ( / — команды)"
           value={value}
           disabled={disabled}
           onChange={(e) => onValueChange(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && send()}
+          onKeyDown={(e) => {
+            // Enter — отправить; Shift+Enter — перенос строки.
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
         />
         {value.trim() ? (
           <button

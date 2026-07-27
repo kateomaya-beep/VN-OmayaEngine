@@ -39,6 +39,7 @@ export function CharacterEditor() {
   const { project, update } = useProjectStore();
   const [selId, setSelId] = useState<string | null>(null);
   const [importBusy, setImportBusy] = useState(false);
+  const [showExtraFields, setShowExtraFields] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
   if (!project) return null;
 
@@ -183,38 +184,50 @@ export function CharacterEditor() {
               </div>
             </div>
 
-            <Field label="Внешность">
+            <Field label="Описание персонажа" hint="Внешность, характер, предыстория — всё в одном поле. Поддерживаются макросы {{protagonist}} и др.">
               <textarea
-                className="input h-16"
-                value={selected.card.appearance}
-                onChange={(e) => patchChar(selected.id, (c) => (c.card.appearance = e.target.value))}
-              />
-            </Field>
-            <Field label="Характер">
-              <textarea
-                className="input h-16"
+                className="input h-48"
+                placeholder="Кто это: внешность, характер, привычки, прошлое, мотивация…"
                 value={selected.card.personality}
-                onChange={(e) =>
-                  patchChar(selected.id, (c) => (c.card.personality = e.target.value))
-                }
-              />
-            </Field>
-            <Field label="Предыстория">
-              <textarea
-                className="input h-16"
-                value={selected.card.backstory}
-                onChange={(e) => patchChar(selected.id, (c) => (c.card.backstory = e.target.value))}
+                onChange={(e) => patchChar(selected.id, (c) => (c.card.personality = e.target.value))}
               />
             </Field>
             <Field label="Манера речи" hint="Примеры реплик, лексика, тон. Поддерживаются макросы {{protagonist}} и др.">
               <textarea
-                className="input h-16"
+                className="input h-20"
                 value={selected.card.speechStyle}
                 onChange={(e) =>
                   patchChar(selected.id, (c) => (c.card.speechStyle = e.target.value))
                 }
               />
             </Field>
+            {/* Внешность/предыстория — отдельные поля (опционально, напр. из импорта ST). */}
+            {(showExtraFields || selected.card.appearance.trim() || selected.card.backstory.trim()) ? (
+              <div className="space-y-3 rounded-lg border border-white/10 p-3">
+                <div className="text-xs uppercase tracking-wide text-gray-500">Отдельные поля (опционально)</div>
+                <Field label="Внешность">
+                  <textarea
+                    className="input h-16"
+                    value={selected.card.appearance}
+                    onChange={(e) => patchChar(selected.id, (c) => (c.card.appearance = e.target.value))}
+                  />
+                </Field>
+                <Field label="Предыстория">
+                  <textarea
+                    className="input h-16"
+                    value={selected.card.backstory}
+                    onChange={(e) => patchChar(selected.id, (c) => (c.card.backstory = e.target.value))}
+                  />
+                </Field>
+              </div>
+            ) : (
+              <button
+                className="text-xs text-[var(--accent2,#a78bfa)] hover:underline"
+                onClick={() => setShowExtraFields(true)}
+              >
+                + Внешность и предыстория отдельными полями
+              </button>
+            )}
             {selected.role === 'love_interest' && (
               <Field label="Арка отношений" hint="Как развивается роман с этим персонажем.">
                 <textarea

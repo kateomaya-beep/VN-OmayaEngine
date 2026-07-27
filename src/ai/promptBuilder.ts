@@ -107,10 +107,11 @@ function characterBlocks(
           })
           .join('\n')}`
       : '';
+    // Внешность/предыстория — опциональные поля (могут быть пустыми, если всё в описании).
+    const appLine = c.card.appearance.trim() ? `\nAppearance: ${expandMacros(c.card.appearance, ctx)}` : '';
+    const backLine = c.card.backstory.trim() ? `\nBackstory: ${expandMacros(c.card.backstory, ctx)}` : '';
     return `### ${c.name} (id: ${c.id}, role: ${roleLabel[c.role] || c.role})
-Appearance: ${expandMacros(c.card.appearance, ctx)}
-Personality: ${expandMacros(c.card.personality, ctx)}
-Backstory: ${expandMacros(c.card.backstory, ctx)}
+Description: ${expandMacros(c.card.personality, ctx)}${appLine}${backLine}
 Speech style: ${expandMacros(c.card.speechStyle, ctx)}${
       c.card.relationshipArc ? `\nRelationship arc: ${expandMacros(c.card.relationshipArc, ctx)}` : ''
     }${relLine(c)}
