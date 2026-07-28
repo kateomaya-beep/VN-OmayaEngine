@@ -249,12 +249,19 @@ function gameMasterBlock(state: RuntimeState): string {
   }
   const openTasks = gm.agenda.filter((t) => !t.done);
   if (openTasks.length) {
-    parts.push(`Open agenda:\n${openTasks.map((t) => `- ${t.text}`).join('\n')}`);
+    parts.push(`Open agenda (unresolved — still to happen):\n${openTasks.map((t) => `- ${t.text}`).join('\n')}`);
+  }
+  // Завершённые арки/задачи — чтобы ИИ НЕ повторял уже пройденное (фикс памяти).
+  const doneTasks = gm.agenda.filter((t) => t.done).slice(-12);
+  if (doneTasks.length) {
+    parts.push(
+      `Already resolved / DONE (do NOT replay these as if they haven't happened):\n${doneTasks.map((t) => `- ${t.text}`).join('\n')}`
+    );
   }
   if (gm.events.length) {
-    const recent = gm.events.slice(-6);
+    const recent = gm.events.slice(-12);
     parts.push(
-      `Recent events (chronological):\n${recent
+      `Recent events (chronological — these already happened):\n${recent
         .map((e) => `- ${e.date ? `[${e.date}] ` : `[t${e.turn}] `}${e.summary}${e.chars.length ? ` (${e.chars.join(', ')})` : ''}`)
         .join('\n')}`
     );
@@ -485,11 +492,16 @@ export async function buildRequest(
   if (phoneCtx) systemParts.push(phoneCtx);
   const system = systemParts.join('\n\n');
 
-  // Live window of history. Прошлые ходы ассистента храним сырым JSON (для реплея),
-  // но в контекст ИИ шлём только ПРОЗУ этих ходов — так вход в разы легче (в
-  // истории иначе едет весь JSON со worldState/статами, дублируя текущие блоки).
+  // Живое окно истории. КЛЮЧЕВОЕ (фикс памяти): шлём ВСЮ ещё-не-свёрнутую историю,
+  // а не только последние liveWindow ходов. Иначе между свёртками (summaryEveryN)
+  // возникает «слепая зона» — ходы старше окна, но ещё не попавшие в саммари,
+  // выпадают из контекста, и игра ведёт себя так, будто событий не было. История уже
+  // ограничена свёрткой (~summaryEveryN + liveWindow ходов), а ходы ассистента идут
+  // сжатой прозой (лёгкие по токенам). Кап — на случай сбоя саммаризации.
   const K = Math.max(2, ps.liveWindow);
-  const window = state.history.slice(-K * 2).map((m) =>
+  const everyN = Math.max(4, project.memoryConfig.summaryEveryN);
+  const histCap = (everyN + K + 6) * 2; // сообщений (2 на ход)
+  const window = state.history.slice(-histCap).map((m) =>
     m.role === 'assistant'
       ? { role: 'assistant' as const, content: condenseAssistantTurn(m.content, project, state) ?? m.content }
       : m
