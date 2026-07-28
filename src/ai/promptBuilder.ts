@@ -176,7 +176,11 @@ async function memoryBlock(
   const m = state.memory;
   const parts: string[] = [];
   if (m.chronicle.length) {
-    parts.push(`CHRONICLE (compressed past events):\n${m.chronicle.map((c, i) => `[${i + 1}] ${c.text}`).join('\n')}`);
+    parts.push(
+      `STORY SO FAR (authoritative summary of everything BEFORE the recent turns — these events HAVE happened; never contradict or replay them):\n${m.chronicle
+        .map((c) => c.text)
+        .join('\n\n')}`
+    );
   }
   if (m.liveSummary.trim()) {
     parts.push(`CURRENT ARC NOTE (from the author):\n${m.liveSummary}`);

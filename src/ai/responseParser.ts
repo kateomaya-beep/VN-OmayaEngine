@@ -1,5 +1,5 @@
-import type { Project, AiTurn, Beat, RuntimeState, RelationshipStats } from '../shared/types';
-import { EMOTIONS, AUDIO_MOODS, RELATIONSHIP_FIELDS } from '../shared/types';
+import type { Project, AiTurn, Beat, RuntimeState, RelationshipStats, Character } from '../shared/types';
+import { EMOTIONS, AUDIO_MOODS, RELATIONSHIP_FIELDS, PHONE_BALANCE_STAT } from '../shared/types';
 import { aiTurnSchema } from './schema';
 import { characterOutfits, defaultOutfitTag } from '../shared/outfits';
 import { clamp } from '../shared/utils';
@@ -61,6 +61,20 @@ export function extractJson(raw: string): string | null {
 
 const EMOTION_SET = new Set<string>(EMOTIONS);
 
+// Резолв ссылки на персонажа: точный id, иначе имя (без регистра). Модели (особенно
+// Gemini) часто пишут отображаемое ИМЯ вместо id — раньше такие биты молча
+// выбрасывались (наряды «не менялись», реплики теряли спрайт). Чиним, не роняем.
+export function charByRef(project: Project, ref: unknown): Character | undefined {
+  if (typeof ref !== 'string' || !ref.trim()) return undefined;
+  const exact = project.characters.find((c) => c.id === ref);
+  if (exact) return exact;
+  const n = ref.trim().toLowerCase();
+  return project.characters.find((c) => c.name.trim().toLowerCase() === n);
+}
+
+// Алиасы полей отношений, которые модели пишут вместо канонических.
+const REL_FIELD_ALIAS: Record<string, string> = { passion: 'passion_stat', love: 'affection' };
+
 // Иногда ИИ ошибочно префиксит текст служебной меткой хода игрока
 // ([CHOICE]/[VERBATIM]/… или их старыми русскими вариантами). В отображаемом
 // тексте (реплики, варианты выбора) их быть не должно — вырезаем ведущую метку.
@@ -72,7 +86,6 @@ export function stripMoveTag(text: string): string {
 
 // Чинит один beat против манифеста (используется и потоковым, и обычным путём).
 export function repairBeat(project: Project, b: any): Beat {
-  const charById = new Map(project.characters.map((c) => [c.id, c]));
   const bgIds = new Set(project.assets.filter((a) => a.type === 'background').map((a) => a.id));
   const txt = (v: unknown) => stripMoveTag(String(v ?? ''));
   // Динамический фон бита: оставляем только валидный id фона, иначе — undefined
@@ -88,9 +101,9 @@ export function repairBeat(project: Project, b: any): Beat {
     // Полностью пустой scene_change бесполезен — сворачиваем в пустой нарратив (движок отфильтрует).
     return { type: 'scene_change', ...(scBg ? { bg: scBg } : {}), ...(scMood ? { musicMood: scMood } : {}) };
   }
-  // outfit_change: валидный персонаж + каноничный (по регистру) наряд, иначе — игнор.
+  // outfit_change: персонаж по id ИЛИ имени + каноничный (по регистру) наряд, иначе — игнор.
   if (b?.type === 'outfit_change') {
-    const ch = b.characterId ? charById.get(b.characterId) : undefined;
+    const ch = charByRef(project, b.characterId);
     const raw = typeof b.outfit === 'string' ? b.outfit.trim() : '';
     const canon = ch && raw ? characterOutfits(ch).find((o) => o.toLowerCase() === raw.toLowerCase()) : undefined;
     if (ch && canon) return { type: 'outfit_change', characterId: ch.id, outfit: canon };
@@ -109,13 +122,13 @@ export function repairBeat(project: Project, b: any): Beat {
     return { type: 'money_change', amount, reason: typeof b.reason === 'string' ? b.reason : undefined };
   }
   if (b?.type === 'sms_incoming') {
-    const ch = b.characterId ? charById.get(b.characterId) : undefined;
+    const ch = charByRef(project, b.characterId);
     const text = txt(b.text);
     if (ch && text.trim()) return { type: 'sms_incoming', characterId: ch.id, text };
     return { type: 'narration', text: '' };
   }
   if (b?.type === 'contact_added') {
-    const ch = b.characterId ? charById.get(b.characterId) : undefined;
+    const ch = charByRef(project, b.characterId);
     if (ch) return { type: 'contact_added', characterId: ch.id };
     return { type: 'narration', text: '' };
   }
@@ -178,8 +191,9 @@ export function repairBeat(project: Project, b: any): Beat {
     return { type: 'narration', text: txt(b?.text), bg, mood };
   }
   const position = ['left', 'center', 'right'].includes(b.position) ? b.position : 'center';
-  const cid = b.characterId || undefined;
-  const ch = cid ? charById.get(cid) : undefined;
+  // Персонаж по id ИЛИ имени (модели пишут «Дэмиан» вместо char_x — раньше такая
+  // реплика деградировала в NPC без спрайта/наряда и рвала непрерывность сцены).
+  const ch = charByRef(project, b.characterId);
   if (ch) {
     // Эмоция — только из закрытого словаря (защита от рассинхрона мимики). Конкретный
     // спрайт наряд+эмоция подбирает resolveSprite на отрисовке (с fallback-цепочкой),
@@ -195,7 +209,10 @@ export function repairBeat(project: Project, b: any): Beat {
     const outfit = canon && canon !== defaultOutfitTag(ch) ? canon : undefined;
     return { type: 'dialogue', characterId: ch.id, emotion, ...(outfit ? { outfit } : {}), position, text: txt(b.text), bg, mood };
   }
-  const name = (b.name || '').trim();
+  // NPC: имя из name; если его нет, а characterId — «человеческая» строка (не наш
+  // id-формат), это и есть имя эпизодника — не теряем реплику.
+  const cidStr = typeof b.characterId === 'string' ? b.characterId.trim() : '';
+  const name = ((b.name || '').trim() || (cidStr && !/^(char|np)_/i.test(cidStr) ? cidStr : '')).trim();
   if (name) {
     const emotion = EMOTION_SET.has(b.emotion) ? b.emotion : 'neutral';
     return { type: 'dialogue', name, emotion, position, text: txt(b.text), bg, mood };
@@ -222,30 +239,57 @@ export function repairScene(
 }
 
 // Repair ids against the project manifest so hallucinations never crash render.
+// Нормализация statId (ФИКС «статы не обновляются»): раньше принимался только
+// ТОЧНЫЙ id — statChange с именем стата («Деньги»), именем персонажа в rel:
+// (rel:Дэмиан:affection) или phone_balance молча выбрасывался. Теперь чиним:
+// id как есть → имя стата (без регистра) → rel с резолвом персонажа по имени
+// и алиасами полей → phone_balance. Невалидное — по-прежнему отбрасываем.
+export function normalizeStatId(project: Project, raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  const s = raw.trim();
+  if (project.stats.some((d) => d.id === s)) return s;
+  if (s === PHONE_BALANCE_STAT) return s;
+  const byName = project.stats.find((d) => d.name.trim().toLowerCase() === s.toLowerCase());
+  if (byName) return byName.id;
+  if (s.startsWith('rel:')) {
+    const rest = s.slice(4);
+    const idx = rest.lastIndexOf(':');
+    if (idx > 0) {
+      const ref = rest.slice(0, idx);
+      const fieldRaw = rest.slice(idx + 1).trim().toLowerCase();
+      const field = REL_FIELD_ALIAS[fieldRaw] || fieldRaw;
+      const ch = charByRef(project, ref);
+      if (ch && REL_FIELD_SET.has(field)) return `rel:${ch.id}:${field}`;
+    }
+  }
+  return null;
+}
+
 function repair(
   project: Project,
   parsed: AiTurn,
   currentBg: string | null,
   currentMood: string | null
 ): AiTurn {
-  const charById = new Map(project.characters.map((c) => [c.id, c]));
-  const statIds = new Set(project.stats.map((s) => s.id));
-
   const scene = repairScene(project, parsed.scene, currentBg, currentMood);
   const beats: Beat[] = parsed.beats.map((b) => repairBeat(project, b));
 
-  // Оставляем изменения либо для проектных статов, либо для валидных rel-статов.
-  const statChanges = parsed.statChanges.filter((s) => {
-    if (statIds.has(s.statId)) return true;
-    const rel = parseRelStatId(s.statId);
-    return !!rel && charById.has(rel.charId);
-  });
+  // Нормализуем statId (id/имя/rel-имя/phone_balance); ненайденные отбрасываем.
+  const statChanges = parsed.statChanges
+    .map((s) => {
+      const id = normalizeStatId(project, s.statId);
+      return id ? { ...s, statId: id } : null;
+    })
+    .filter((s): s is AiTurn['statChanges'][number] => !!s);
 
-  const choices = parsed.choices.map((c) => ({
-    ...c,
-    text: stripMoveTag(c.text),
-    cost: c.cost && statIds.has(c.cost.statId) ? c.cost : null,
-  }));
+  const choices = parsed.choices.map((c) => {
+    const costId = c.cost ? normalizeStatId(project, c.cost.statId) : null;
+    return {
+      ...c,
+      text: stripMoveTag(c.text),
+      cost: c.cost && costId ? { ...c.cost, statId: costId } : null,
+    };
+  });
 
   return { scene, beats, statChanges, choices, chapterEvent: parsed.chapterEvent, worldState: parsed.worldState };
 }

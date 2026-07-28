@@ -61,14 +61,22 @@ export async function maybeCompress(
   logEvent('info', 'memory', `Саммаризация: сворачиваю ${stale.length} сообщений`);
   try {
     const prompt = project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(project.memoryConfig.minorEventsLimit ?? 10);
-    const text = await summarize(project, prompt, transcript);
+    // ИНКРЕМЕНТАЛЬНЫЙ режим (фикс консистентности): передаём ПРЕДЫДУЩЕЕ саммари +
+    // новые ходы, получаем ОДНО обновлённое саммари, которое ЗАМЕНЯЕТ хронику.
+    // Раньше прошлое саммари не передавалось, и в хронике копились независимые
+    // записи — каждая со своим устаревшим «CURRENT STORY STATE», противореча друг
+    // другу в контексте. Теперь, как в Таверне: одно живое эволюционирующее саммари.
+    const prev = state.memory.chronicle.map((c) => c.text).join('\n\n---\n\n');
+    const input = prev
+      ? `PREVIOUS SUMMARY (update this — merge, don't lose established facts):\n${prev}\n\n=== NEW TURNS SINCE THAT SUMMARY ===\n${transcript}`
+      : transcript;
+    const text = await summarize(project, prompt, input);
     updateToast(toastId, 'success', tt('Память обновлена', 'Memory updated'));
     logEvent('info', 'memory', 'Саммаризация выполнена');
-    // Новая запись Хроники с диапазоном свёрнутых сообщений (для списка саммари).
-    const fromMsg = state.memory.foldedMsgCount + 1;
+    // Хроника = одна живая запись (merged). Диапазон — от начала истории.
     const toMsg = state.memory.foldedMsgCount + stale.length;
     const chronicle = text
-      ? [...state.memory.chronicle, { id: uid('chr'), text, atTurn: state.turnCount, fromMsg, toMsg }]
+      ? [{ id: uid('chr'), text, atTurn: state.turnCount, fromMsg: 1, toMsg }]
       : state.memory.chronicle;
     // Сырой кусок сохраняем отдельно — не инжектится целиком, только через
     // векторный подсос релевантного (см. vectorEngine.ts).
