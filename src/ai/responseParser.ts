@@ -75,6 +75,22 @@ export function charByRef(project: Project, ref: unknown): Character | undefined
 // Алиасы полей отношений, которые модели пишут вместо канонических.
 const REL_FIELD_ALIAS: Record<string, string> = { passion: 'passion_stat', love: 'affection' };
 
+// Резолв ссылки на фон: точный id → имя ассета (без регистра) → тег. Та же беда,
+// что с персонажами: модель часто пишет НАЗВАНИЕ или тег фона из манифеста вместо id,
+// и раньше scene_change с таким фоном молча выбрасывался — фон не менялся по ходу сцены.
+export function bgByRef(project: Project, ref: unknown): string | undefined {
+  if (typeof ref !== 'string' || !ref.trim()) return undefined;
+  const s = ref.trim();
+  const bgs = project.assets.filter((a) => a.type === 'background');
+  const byId = bgs.find((a) => a.id === s);
+  if (byId) return byId.id;
+  const n = s.toLowerCase();
+  const byName = bgs.find((a) => a.name.trim().toLowerCase() === n);
+  if (byName) return byName.id;
+  const byTag = bgs.find((a) => (a.tags || []).some((t) => t.trim().toLowerCase() === n));
+  return byTag?.id;
+}
+
 // Иногда ИИ ошибочно префиксит текст служебной меткой хода игрока
 // ([CHOICE]/[VERBATIM]/… или их старыми русскими вариантами). В отображаемом
 // тексте (реплики, варианты выбора) их быть не должно — вырезаем ведущую метку.
@@ -86,11 +102,10 @@ export function stripMoveTag(text: string): string {
 
 // Чинит один beat против манифеста (используется и потоковым, и обычным путём).
 export function repairBeat(project: Project, b: any): Beat {
-  const bgIds = new Set(project.assets.filter((a) => a.type === 'background').map((a) => a.id));
   const txt = (v: unknown) => stripMoveTag(String(v ?? ''));
-  // Динамический фон бита: оставляем только валидный id фона, иначе — undefined
+  // Динамический фон бита: резолвим по id / имени / тегу, иначе — undefined
   // (движок протянет прежний). Всегда undefined на невалидном — без крашей.
-  const bgOf = (v: unknown) => (typeof v === 'string' && bgIds.has(v) ? v : undefined);
+  const bgOf = (v: unknown) => bgByRef(project, v);
   const bg = bgOf(b?.bg);
   const mood = typeof b?.mood === 'string' && b.mood.trim() ? b.mood.trim() : undefined;
 
@@ -231,7 +246,8 @@ export function repairScene(
   const moodSet = new Set<string>([...AUDIO_MOODS, ...project.audioMoods]);
   const s = scene || {};
   return {
-    backgroundId: s.backgroundId && assetIds.has(s.backgroundId) ? s.backgroundId : currentBg,
+    // Тот же мягкий резолв (id/имя/тег), что и для scene_change-битов.
+    backgroundId: bgByRef(project, s.backgroundId) ?? currentBg,
     musicMood: s.musicMood && moodSet.has(s.musicMood) ? s.musicMood : currentMood,
     sfxId: s.sfxId && assetIds.has(s.sfxId) ? s.sfxId : null,
     cutsceneCgId: s.cutsceneCgId && assetIds.has(s.cutsceneCgId) ? s.cutsceneCgId : null,
