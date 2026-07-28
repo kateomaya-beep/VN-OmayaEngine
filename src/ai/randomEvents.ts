@@ -71,8 +71,16 @@ export function rollRandomSms(project: Project, state: RuntimeState): RandomSmsR
   if (!cfg || !cfg.enabled) return none;
   if (!project.phone?.enabled) return none;
 
-  const contacts = (state.phone?.contacts || []).filter((c) => !c.hidden);
-  if (!contacts.length) return none; // некому писать
+  // Кандидаты: контакты телефона, а если их ещё нет — знакомые персонажи проекта
+  // (ЛИ/важные). Иначе фича молчала до первой реплики, добавляющей контакт, и юзер
+  // видел «триггер включён, а сообщений нет».
+  const contactIds = (state.phone?.contacts || []).filter((c) => !c.hidden).map((c) => c.characterId);
+  const candidates = contactIds.length
+    ? contactIds
+    : project.characters
+        .filter((c) => c.role === 'love_interest' || c.role === 'important_character')
+        .map((c) => c.id);
+  if (!candidates.length) return none; // некому писать
 
   const since = state.turnsSinceLastSms ?? 999;
   if (since < Math.max(0, cfg.cooldownTurns)) return none;
@@ -81,14 +89,16 @@ export function rollRandomSms(project: Project, state: RuntimeState): RandomSmsR
   }
   if (Math.random() * 100 >= cfg.chancePercent) return none;
 
-  const ids = contacts.map((c) => {
-    const nm = project.characters.find((x) => x.id === c.characterId)?.name || c.characterId;
-    return `${nm} (${c.characterId})`;
+  const ids = candidates.map((id) => {
+    const nm = project.characters.find((x) => x.id === id)?.name || id;
+    return `${nm} (${id})`;
   });
 
-  const directive = `[RANDOM SMS TRIGGERED]
-One of the hero's saved phone contacts texts them out of the blue. Emit an "sms_incoming" beat with that contact's characterId and a short in-character message. Optionally have the hero notice/react in the scene, but the text itself must go through the sms_incoming beat.
-Saved contacts who could text: ${ids.join(', ')}. Pick one that fits the current moment.
+  const directive = `[RANDOM SMS TRIGGERED — REQUIRED THIS TURN]
+Someone the hero knows texts them out of the blue. You MUST include a control beat
+{"type":"sms_incoming","characterId":"<id>","text":"<short in-character message>"} in this turn's beats.
+Use the EXACT characterId from this list: ${ids.join(', ')}. Pick whoever fits the current moment.
+The hero may notice the phone buzz in the narration, but the message text itself MUST go through the sms_incoming beat.
 Do NOT mention that it was a random event.`;
 
   return { fired: true, directive };

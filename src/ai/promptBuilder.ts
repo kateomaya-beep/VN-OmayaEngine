@@ -284,7 +284,11 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   const inv = state.inventory || [];
   const clock = state.gm.clock;
   const hasDate = !!clock.date;
-  if (!financeOn && !phoneOn && !inv.length && !hasDate) return '';
+  // Проектные статы показываем ВСЕГДА (не только в блоке пресета «Current State» —
+  // его можно отключить/удалить в редакторе пресета, и тогда ИИ переставал видеть
+  // id статов и не мог их обновлять).
+  const hasStats = project.stats.length > 0;
+  if (!financeOn && !phoneOn && !inv.length && !hasDate && !hasStats) return '';
 
   const cur = project.phone?.currencyName || '$';
   const bal = state.statValues[PHONE_BALANCE_STAT];
@@ -295,6 +299,19 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   const when = [clock.date, clock.time].filter(Boolean).join(', ');
   if (when) parts.push(`Date/time: ${when}`);
   if (clock.location) parts.push(`Location: ${clock.location}`);
+
+  // Проектные статы с ТЕКУЩИМИ значениями и точными id — чтобы модель могла и читать,
+  // и обновлять их через statChanges (частая жалоба: «в тексте стат вырос, в статах нет»).
+  if (hasStats) {
+    parts.push(
+      `PROJECT STATS (update these via statChanges using the EXACT statId; if your narration says one of them changed, you MUST emit the matching statChange this same turn):\n${project.stats
+        .map((s) => {
+          const v = state.statValues[s.id] ?? s.initial;
+          return `  - statId: ${s.id} | "${s.name}" = ${v} (${s.min}..${s.max})${s.description ? ` — ${s.description}` : ''}`;
+        })
+        .join('\n')}`
+    );
+  }
 
   // Экономика.
   if (hasEconomy && typeof bal === 'number') {

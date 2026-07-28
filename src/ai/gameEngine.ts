@@ -12,6 +12,7 @@ import { mergeWorldState } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { maybeCompress } from './memoryEngine';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
+import { generateIncomingSms } from './phoneChat';
 import { uid } from '../shared/utils';
 
 // Порог, с которого сдвиг отношений считается «заметным событием» и попадает
@@ -549,6 +550,52 @@ export async function runTurn(
   // ('custom'/'local'), он переопределяет emotion/наряд/музыку из закрытых списков.
   // source==='main' или ошибка → ход без изменений (выбор Рассказчика).
   const turn = await selectAssets(project, state, parsed.turn);
+  // Проверяем ДО applyTurn: он вырезает управляющие биты из потока.
+  const modelSentSms = turn.beats.some((b) => b.type === 'sms_incoming');
   const nextState = await applyTurn(project, state, playerMove, turn, raw, { eventFired: evt.fired, smsFired: sms.fired });
+
+  // ГАРАНТИЯ ДВИЖКА: событие «входящее СМС» сработало, но модель не прислала
+  // sms_incoming-бит (частый случай — она увлекается основной сценой). Тогда СМС
+  // генерирует движок сам, иначе фича «включил триггер, а сообщений нет» не работает.
+  if (sms.fired && !modelSentSms) {
+    await deliverFallbackSms(project, nextState, signal);
+  }
   return { turn, state: nextState };
+}
+
+// Догенерация входящего СМС от случайного контакта прямо в состояние телефона.
+// Ошибки глушим — ход игрока из-за необязательной фичи ломаться не должен.
+async function deliverFallbackSms(
+  project: Project,
+  state: RuntimeState,
+  signal?: AbortSignal
+): Promise<void> {
+  try {
+    if (!state.phone) return;
+    // Как и в ролле: контакты, иначе знакомые персонажи проекта.
+    const contactIds = state.phone.contacts.filter((c) => !c.hidden).map((c) => c.characterId);
+    const candidates = contactIds.length
+      ? contactIds
+      : project.characters
+          .filter((c) => c.role === 'love_interest' || c.role === 'important_character')
+          .map((c) => c.id);
+    if (!candidates.length) return;
+    const pickId = candidates[Math.floor(Math.random() * candidates.length)];
+    const convo = state.phone.conversations[pickId] || [];
+    const msgs = await generateIncomingSms(project, state, pickId, convo, signal);
+    if (!msgs.length) return;
+    // Пишущий автоматически становится контактом (если его ещё нет).
+    if (!state.phone.contacts.some((c) => c.characterId === pickId)) {
+      state.phone.contacts.push({ characterId: pickId });
+    }
+    const list = (state.phone.conversations[pickId] ||= []);
+    for (const text of msgs) list.push({ from: 'contact', text, at: Date.now() });
+    if (!state.phone.unreadFrom.includes(pickId)) state.phone.unreadFrom.push(pickId);
+    if (project.phone?.popupNotifications) {
+      const nm = project.characters.find((c) => c.id === pickId)?.name || 'Сообщение';
+      pushToast('info', `💬 ${nm}: ${msgs[0].slice(0, 60)}`);
+    }
+  } catch {
+    /* необязательная фича — молча пропускаем */
+  }
 }

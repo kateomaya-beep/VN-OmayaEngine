@@ -90,6 +90,48 @@ export async function generatePhoneReply(
   return splitReplies(raw, charName);
 }
 
+// Спонтанное входящее СМС от персонажа (гарантия движка): вызывается, когда
+// случайное событие «входящее СМС» сработало, а модель не прислала sms_incoming-бит.
+// Возвращает 1–2 коротких сообщения «из ниоткуда» в характере персонажа.
+export async function generateIncomingSms(
+  project: Project,
+  state: RuntimeState,
+  characterId: string,
+  conversation: PhoneMessage[],
+  signal?: AbortSignal
+): Promise<string[]> {
+  const ps = getPresetSettings();
+  const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
+  const charName = project.characters.find((c) => c.id === characterId)?.name || 'the character';
+
+  const system = [
+    characterProfile(project, state, characterId),
+    worldContext(project, state),
+    `TASK: ${charName} texts the hero FIRST, out of the blue — the hero did not write to them just now.`,
+    `- Pick a natural reason to reach out that fits the current story moment and your relationship: checking in, a question, a complaint, teasing, news, a request, missing them.`,
+    `- Write in ${narr}, in real texting style: short, casual, in character. 1-2 messages, EACH ON ITS OWN LINE.`,
+    `- Output ONLY the literal words ${charName} types. No tone labels, no asterisk actions, no narration, no name prefix, no JSON.`,
+    conversation.length
+      ? `- Continue naturally from the existing chat; do not repeat what was already said.`
+      : `- This is the first message in this chat.`,
+  ].join('\n');
+
+  const recent = conversation.slice(-8).map((m) => ({
+    role: m.from === 'protagonist' ? ('user' as const) : ('assistant' as const),
+    content: m.text || '[photo]',
+  }));
+
+  const raw = await runCompletion({
+    system,
+    messages: [...recent, { role: 'user', content: '(write your incoming message now)' }],
+    temperature: Math.min(ps.temperature ?? 0.9, 1),
+    maxTokens: 2000,
+    reasoningEffort: 'none',
+    signal,
+  });
+  return splitReplies(raw, charName).slice(0, 2);
+}
+
 // Разбивает сырой ответ на отдельные сообщения-«пузыри» (Batch — живые смс).
 // Строка = сообщение. Поддерживает и JSON-массив, если модель его прислала.
 export function splitReplies(raw: string, charName: string): string[] {
