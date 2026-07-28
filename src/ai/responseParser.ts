@@ -208,7 +208,17 @@ export function repairBeat(project: Project, b: any): Beat {
   const position = ['left', 'center', 'right'].includes(b.position) ? b.position : 'center';
   // Персонаж по id ИЛИ имени (модели пишут «Дэмиан» вместо char_x — раньше такая
   // реплика деградировала в NPC без спрайта/наряда и рвала непрерывность сцены).
-  const ch = charByRef(project, b.characterId);
+  let ch = charByRef(project, b.characterId);
+  // ЯВНОЕ ИМЯ ПОБЕЖДАЕТ (фикс: «реплику NPC вещает анкетный персонаж»). Модели часто
+  // заполняют ОБА поля — name эпизодника + случайный/залипший characterId анкетного
+  // персонажа. Раньше characterId выигрывал, и барменскую фразу произносил любовный
+  // интерес со своим спрайтом. Если name задан и НЕ совпадает с найденным персонажем —
+  // доверяем имени: это либо другой анкетный персонаж, либо NPC.
+  const givenName = typeof b.name === 'string' ? b.name.trim() : '';
+  if (givenName && (!ch || ch.name.trim().toLowerCase() !== givenName.toLowerCase())) {
+    const byName = charByRef(project, givenName);
+    ch = byName; // нашли анкетного по имени — он; не нашли → undefined ⇒ NPC ниже
+  }
   if (ch) {
     // Эмоция — только из закрытого словаря (защита от рассинхрона мимики). Конкретный
     // спрайт наряд+эмоция подбирает resolveSprite на отрисовке (с fallback-цепочкой),
