@@ -544,6 +544,12 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       const cur = get();
       const convo = cur.state?.phone?.conversations[characterId] || [];
       const replies = await generatePhoneReply(cur.project!, cur.state!, characterId, convo);
+      if (!replies.length) {
+        // Модель вернула пустоту даже после повтора — не мусорим в переписке
+        // пузырём-заглушкой, честно сообщаем и даём переотправить.
+        set({ error: 'Собеседник не ответил (пустой ответ модели). Попробуйте ещё раз.' });
+        return;
+      }
       // Отдаём сообщения «пачкой» по-живому: пауза набора → пузырь → снова печатает.
       for (const msg of replies) {
         await sleep(typingDelay(msg));

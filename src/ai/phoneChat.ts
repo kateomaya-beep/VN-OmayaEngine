@@ -4,6 +4,7 @@ import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { expandMacros } from './macros';
 import { formatClock } from './gameMaster';
+import { logEvent } from '../shared/logStore';
 
 // Мессенджер телефона (Batch 7 §7.2). Отдельный лёгкий вызов ИИ: персонаж
 // отвечает игроку СМС «в характере», не трогая основную сцену/движок. Возвращает
@@ -65,29 +66,54 @@ export async function generatePhoneReply(
     `- Keep each message short (a texting line, not a paragraph). Finish your thought — never cut off mid-sentence.`,
   ].join('\n');
 
-  const messages: LlmMessage[] = conversation.slice(-MAX_HISTORY).map((m) => ({
-    role: m.from === 'protagonist' ? ('user' as const) : ('assistant' as const),
-    // Фото без текста (селфи из камеры) — модель vision не видит, даём словесную пометку.
-    content: m.text || (m.attachedAssetId ? '[the hero sent you a photo]' : '…'),
-  }));
+  const messages: LlmMessage[] = conversation
+    // Выбрасываем заглушки «…» от прежних пустых ответов — иначе модель считает их
+    // своим стилем и продолжает отвечать многоточиями.
+    .filter((m) => m.text.trim() !== '…' || !!m.attachedAssetId)
+    .slice(-MAX_HISTORY)
+    .map((m) => ({
+      role: m.from === 'protagonist' ? ('user' as const) : ('assistant' as const),
+      // Фото без текста (селфи из камеры) — модель vision не видит, даём словесную пометку.
+      content: m.text || (m.attachedAssetId ? '[the hero sent you a photo]' : '…'),
+    }));
   // Гарантируем, что последнее сообщение — от игрока (иначе модели нечего отвечать).
   if (!messages.length || messages[messages.length - 1].role !== 'user') {
     messages.push({ role: 'user', content: '…' });
   }
 
-  const raw = await runCompletion({
+  const raw = await completeWithRetry(system, messages, ps.temperature ?? 0.8, signal);
+  return splitReplies(raw, charName);
+}
+
+// Вызов с ретраем на ПУСТОЙ ответ. Reasoning-модели (Gemini 3 и т.п.) нередко тратят
+// весь бюджет на скрытое размышление и возвращают пустой текст — игрок видел «…»
+// вместо реплики. Повтор идёт с бо́льшим лимитом и без принудительного reasoning:'none'
+// (некоторые шлюзы на этом значении как раз и отдают пустоту).
+async function completeWithRetry(
+  system: string,
+  messages: LlmMessage[],
+  temperature: number,
+  signal?: AbortSignal
+): Promise<string> {
+  const first = await runCompletion({
     system,
     messages,
-    temperature: Math.min(ps.temperature ?? 0.8, 1),
-    // Щедрый потолок: reasoning-модели (Gemini 3 и т.п.) тратят токены на «мысли»,
-    // и при низком лимите короткая реплика обрывается на полуслове. Ответ всё равно
-    // короткий — лишнее не тратится, но места хватает и на скрытое размышление.
+    temperature: Math.min(temperature, 1),
     maxTokens: 2400,
     reasoningEffort: 'none',
     signal,
   });
+  if (first.trim()) return first;
 
-  return splitReplies(raw, charName);
+  logEvent('info', 'phone', 'Пустой ответ мессенджера — повторяю с увеличенным лимитом');
+  const second = await runCompletion({
+    system: `${system}\n\nIMPORTANT: reply with the message text directly. Do not think out loud, do not return an empty response.`,
+    messages,
+    temperature: Math.min(temperature, 1),
+    maxTokens: 6000,
+    signal, // reasoningEffort не задаём — пусть провайдер решает сам
+  });
+  return second;
 }
 
 // Спонтанное входящее СМС от персонажа (гарантия движка): вызывается, когда
@@ -121,14 +147,12 @@ export async function generateIncomingSms(
     content: m.text || '[photo]',
   }));
 
-  const raw = await runCompletion({
+  const raw = await completeWithRetry(
     system,
-    messages: [...recent, { role: 'user', content: '(write your incoming message now)' }],
-    temperature: Math.min(ps.temperature ?? 0.9, 1),
-    maxTokens: 2000,
-    reasoningEffort: 'none',
-    signal,
-  });
+    [...recent, { role: 'user', content: '(write your incoming message now)' }],
+    ps.temperature ?? 0.9,
+    signal
+  );
   return splitReplies(raw, charName).slice(0, 2);
 }
 
@@ -157,7 +181,8 @@ export function splitReplies(raw: string, charName: string): string[] {
     .split(/\n+/)
     .map((l) => cleanReply(l, charName))
     .filter((l) => l && l !== '…');
-  if (!lines.length) return ['…'];
+  // Пусто — возвращаем ПУСТОЙ список, а не «…»: вызывающий покажет ошибку и не
+  // засорит переписку заглушкой (она потом ещё и уезжала в контекст как реплика).
   return lines.slice(0, 5);
 }
 

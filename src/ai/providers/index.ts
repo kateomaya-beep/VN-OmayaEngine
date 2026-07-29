@@ -26,6 +26,18 @@ export interface Provider {
   listModels(conn: ApiConnection, apiKey: string): Promise<string[]>;
 }
 
+// Текст ответа: строка ИЛИ массив частей ([{type:'text',text:'…'}]) — так отдают
+// некоторые шлюзы (особенно для reasoning-моделей). null = поля вообще нет.
+function normalizeContent(v: unknown): string | null {
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v)) {
+    return v
+      .map((p) => (typeof p === 'string' ? p : typeof (p as any)?.text === 'string' ? (p as any).text : ''))
+      .join('');
+  }
+  return null;
+}
+
 const DEFAULT_OPENAI_BASE = 'https://api.openai.com/v1';
 const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com/v1';
 
@@ -169,8 +181,20 @@ const openAiCompatible: Provider = {
     });
     if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => ''));
     const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') throw new Error('Пустой ответ провайдера');
+    const choice = data?.choices?.[0];
+    const content = normalizeContent(choice?.message?.content);
+    if (content === null) throw new Error('Пустой ответ провайдера');
+    // Пустая строка при finish_reason=length — модель израсходовала бюджет на скрытое
+    // «размышление» и до видимого текста не дошла. Логируем причину: иначе наверху
+    // виден лишь пустой ответ (в мессенджере это выглядело как «три точки»).
+    if (!content.trim()) {
+      logEvent(
+        'error',
+        'llm',
+        `Пустой текст в ответе (finish_reason: ${choice?.finish_reason ?? '—'}). ` +
+          'Вероятно, весь бюджет токенов ушёл на reasoning — увеличьте лимит или снизьте глубину размышления.'
+      );
+    }
     return req.prefill ? req.prefill + content : content;
   },
   async listModels(conn, apiKey) {
