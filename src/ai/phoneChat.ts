@@ -76,13 +76,44 @@ export async function generatePhoneReply(
       // Фото без текста (селфи из камеры) — модель vision не видит, даём словесную пометку.
       content: m.text || (m.attachedAssetId ? '[the hero sent you a photo]' : '…'),
     }));
-  // Гарантируем, что последнее сообщение — от игрока (иначе модели нечего отвечать).
-  if (!messages.length || messages[messages.length - 1].role !== 'user') {
-    messages.push({ role: 'user', content: '…' });
-  }
-
-  const raw = await completeWithRetry(system, messages, ps.temperature ?? 0.8, signal);
+  const raw = await completeWithRetry(system, normalizeChatHistory(messages), ps.temperature ?? 0.8, signal);
   return splitReplies(raw, charName);
+}
+
+// Приводит историю переписки к виду, который принимают все провайдеры.
+// ПРИЧИНА (баг «ответы на мои смс не приходят, а рандомные приходят»): если тред
+// начинался входящим СМС, первым сообщением шёл assistant. Gemini (и его
+// OpenAI-совместимые шлюзы) требуют, чтобы диалог начинался с user-хода, и на
+// историю, открытую ходом модели, возвращают ПУСТОЙ текст — игрок видел «…».
+// Заодно склеиваем подряд идущие одинаковые роли (их тоже принимают не все).
+export function normalizeChatHistory(msgs: LlmMessage[]): LlmMessage[] {
+  // 1) Отбрасываем ведущие assistant-сообщения, но не теряем их смысл: первое
+  //    входящее становится частью вводного user-сообщения.
+  let i = 0;
+  const leading: string[] = [];
+  while (i < msgs.length && msgs[i].role === 'assistant') {
+    leading.push(msgs[i].content);
+    i++;
+  }
+  const rest = msgs.slice(i);
+  const out: LlmMessage[] = [];
+  if (leading.length) {
+    out.push({
+      role: 'user',
+      content: `(Earlier you texted the hero first: ${leading.join(' / ')})`,
+    });
+  }
+  // 2) Склеиваем подряд идущие одинаковые роли.
+  for (const m of rest) {
+    const last = out[out.length - 1];
+    if (last && last.role === m.role) last.content = `${last.content}\n${m.content}`;
+    else out.push({ ...m });
+  }
+  // 3) Последним всегда ход игрока — иначе модели нечего отвечать.
+  if (!out.length || out[out.length - 1].role !== 'user') {
+    out.push({ role: 'user', content: '(reply to the last message)' });
+  }
+  return out;
 }
 
 // Вызов с ретраем на ПУСТОЙ ответ. Reasoning-модели (Gemini 3 и т.п.) нередко тратят
@@ -105,7 +136,13 @@ async function completeWithRetry(
   });
   if (first.trim()) return first;
 
-  logEvent('info', 'phone', 'Пустой ответ мессенджера — повторяю с увеличенным лимитом');
+  logEvent(
+    'info',
+    'phone',
+    `Пустой ответ мессенджера — повторяю с увеличенным лимитом (история: ${messages
+      .map((m) => m.role[0])
+      .join('')})`
+  );
   const second = await runCompletion({
     system: `${system}\n\nIMPORTANT: reply with the message text directly. Do not think out loud, do not return an empty response.`,
     messages,
@@ -149,7 +186,7 @@ export async function generateIncomingSms(
 
   const raw = await completeWithRetry(
     system,
-    [...recent, { role: 'user', content: '(write your incoming message now)' }],
+    normalizeChatHistory([...recent, { role: 'user', content: '(write your incoming message now)' }]),
     ps.temperature ?? 0.9,
     signal
   );
