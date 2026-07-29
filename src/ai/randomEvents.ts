@@ -1,11 +1,19 @@
 import type { Project, RuntimeState, RandomEventType } from '../shared/types';
+import { logEvent } from '../shared/logStore';
 
 // Случайные события (Batch 6 §3): движок с заданной вероятностью подмешивает в ход
 // СКРЫТУЮ директиву-событие (игрок её не видит). ИИ вплетает событие в обычный ответ.
 
 // Настроения, считающиеся «напряжённой/интимной/кульминационной» сценой — по ним
-// событие откладывается, если canInterruptTenseScenes выключен.
+// СЮЖЕТНОЕ событие откладывается, если canInterruptTenseScenes выключен.
 const TENSE_MOODS = new Set(['tense', 'scary', 'dangerous', 'romantic', 'epic']);
+
+// Для ВХОДЯЩЕГО СМС список у́же: жужжание телефона — не полноценное вторжение в сцену,
+// а в романтической/эпической сцене оно даже работает на драму. Раньше здесь
+// использовался общий список, куда входят romantic и epic, — в романтической новелле
+// настроение почти всегда romantic, и СМС блокировались практически каждый ход
+// (симптом: «триггер включён, а сообщения не приходят»).
+const SMS_BLOCKING_MOODS = new Set(['tense', 'scary', 'dangerous']);
 
 const EVENT_TEXT: Record<RandomEventType, string> = {
   new_npc: 'A new character enters the story.',
@@ -67,9 +75,14 @@ export interface RandomSmsRoll {
 }
 export function rollRandomSms(project: Project, state: RuntimeState): RandomSmsRoll {
   const none: RandomSmsRoll = { fired: false, directive: '' };
+  // Диагностика: почему СМС не пришло — видно в панели логов, а не гадаем.
+  const skip = (why: string): RandomSmsRoll => {
+    logEvent('info', 'sms', `Случайное СМС не сработало: ${why}`);
+    return none;
+  };
   const cfg = project.randomSms;
-  if (!cfg || !cfg.enabled) return none;
-  if (!project.phone?.enabled) return none;
+  if (!cfg || !cfg.enabled) return none; // выключено — молчим, это норма
+  if (!project.phone?.enabled) return skip('расширение «Телефон» выключено');
 
   // Кандидаты: контакты телефона, а если их ещё нет — знакомые персонажи проекта
   // (ЛИ/важные). Иначе фича молчала до первой реплики, добавляющей контакт, и юзер
@@ -80,14 +93,19 @@ export function rollRandomSms(project: Project, state: RuntimeState): RandomSmsR
     : project.characters
         .filter((c) => c.role === 'love_interest' || c.role === 'important_character')
         .map((c) => c.id);
-  if (!candidates.length) return none; // некому писать
+  if (!candidates.length) return skip('нет контактов и подходящих персонажей — некому писать');
 
   const since = state.turnsSinceLastSms ?? 999;
-  if (since < Math.max(0, cfg.cooldownTurns)) return none;
-  if (!cfg.canInterruptTenseScenes && state.currentMusicMood && TENSE_MOODS.has(state.currentMusicMood)) {
-    return none;
+  const cd = Math.max(0, cfg.cooldownTurns);
+  if (since < cd) return skip(`кулдаун (${since} из ${cd} ходов)`);
+  if (
+    !cfg.canInterruptTenseScenes &&
+    state.currentMusicMood &&
+    SMS_BLOCKING_MOODS.has(state.currentMusicMood)
+  ) {
+    return skip(`напряжённая сцена (настроение «${state.currentMusicMood}»)`);
   }
-  if (Math.random() * 100 >= cfg.chancePercent) return none;
+  if (Math.random() * 100 >= cfg.chancePercent) return skip(`не выпал шанс (${cfg.chancePercent}%)`);
 
   const ids = candidates.map((id) => {
     const nm = project.characters.find((x) => x.id === id)?.name || id;

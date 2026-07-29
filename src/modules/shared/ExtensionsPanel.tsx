@@ -234,8 +234,13 @@ export function ExtensionsPanel({
                 checked={sms.canInterruptTenseScenes}
                 onChange={(e) => patchSms({ canInterruptTenseScenes: e.target.checked })}
               />
-              Может прерывать напряжённые/интимные сцены
+              Может приходить в напряжённых сценах
             </label>
+            <p className="text-[11px] text-gray-500 -mt-1">
+              Для СМС «напряжённые» — это только tense / scary / dangerous. В романтических и эпических
+              сценах сообщения приходят всегда: жужжание телефона там только добавляет драмы.
+              Если сообщений долго нет — загляните в «Логи» (📃), там написана причина каждого пропуска.
+            </p>
           </div>
         </div>
       )}
