@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { usePlayerStore } from '../playerStore';
 import { Modal } from '../../../shared/ui';
 import { uid } from '../../../shared/utils';
-import { emptyRelationship } from '../../../shared/types';
+import { emptyRelationship, RELATIONSHIP_FIELDS, RELATIONSHIP_META } from '../../../shared/types';
 import type { CharacterRole, Project, RuntimeState } from '../../../shared/types';
 import { parseAiResponse } from '../../../ai/responseParser';
 
@@ -41,6 +41,8 @@ export function EditPanel({ open, onClose }: { open: boolean; onClose: () => voi
 
   if (!open || !s.project || !s.state) return null;
   const project = s.project;
+  // Персонажи со статами отношений (протагонист их не имеет).
+  const relChars = project.characters.filter((c) => c.role !== 'protagonist');
 
   // Промоушен NPC → полноценный персонаж (Блок K): статы отношений активируются сразу.
   function promoteNpc(name: string, role: CharacterRole) {
@@ -196,18 +198,80 @@ export function EditPanel({ open, onClose }: { open: boolean; onClose: () => voi
         </button>
       </div>
 
-      <h4 className="font-semibold text-sm mb-2">Статы</h4>
-      <div className="space-y-1 mb-3 text-sm">
-        {project.stats.map((st) => (
-          <div key={st.id} className="flex items-center justify-between">
-            <span>{st.name}</span>
-            <span className="text-gray-400">
-              {s.state!.statValues[st.id] ?? st.initial} ({st.min}..{st.max})
-            </span>
-          </div>
-        ))}
+      <h4 className="font-semibold text-sm mb-1">Статы</h4>
+      <p className="text-[11px] text-gray-500 mb-2">
+        Значения правятся вручную — если ИИ забыл начислить по сюжету. Изменения сразу уходят в контекст.
+      </p>
+      <div className="space-y-1.5 mb-3 text-sm">
+        {project.stats.map((st) => {
+          const val = s.state!.statValues[st.id] ?? st.initial;
+          return (
+            <div key={st.id} className="flex items-center gap-2">
+              <span className="flex-1 truncate" title={st.description || undefined}>
+                {st.name}
+              </span>
+              <button
+                className="btn-ghost !px-2 !py-0.5 text-xs"
+                onClick={() => s.setStatValue(st.id, val - 1)}
+                title="−1"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                className="input !py-1 w-20 text-center"
+                value={val}
+                min={st.min}
+                max={st.max}
+                onChange={(e) => s.setStatValue(st.id, Number(e.target.value))}
+              />
+              <button
+                className="btn-ghost !px-2 !py-0.5 text-xs"
+                onClick={() => s.setStatValue(st.id, val + 1)}
+                title="+1"
+              >
+                +
+              </button>
+              <span className="text-[11px] text-gray-500 w-16 text-right">
+                {st.min}..{st.max}
+              </span>
+            </div>
+          );
+        })}
         {project.stats.length === 0 && <div className="text-gray-600">— нет статов —</div>}
       </div>
+
+      {/* Статы отношений — их ИИ тоже иногда пропускает. */}
+      {relChars.length > 0 && (
+        <>
+          <h4 className="font-semibold text-sm mb-2">Отношения</h4>
+          <div className="space-y-2 mb-3">
+            {relChars.map((c) => {
+              const r = s.state!.relationship[c.id] ?? emptyRelationship();
+              return (
+                <div key={c.id} className="rounded-lg border border-white/10 p-2">
+                  <div className="text-sm mb-1.5">{c.name}</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {RELATIONSHIP_FIELDS.map((f) => (
+                      <label key={f} className="flex items-center gap-1.5 text-xs">
+                        <span className="w-5 text-center">{RELATIONSHIP_META[f].icon}</span>
+                        <input
+                          type="number"
+                          className="input !py-1 flex-1 text-center"
+                          value={r[f]}
+                          min={-100}
+                          max={100}
+                          onChange={(e) => s.setRelationshipStat(c.id, f, Number(e.target.value))}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
       <div className="flex gap-2">
         <input
           className="input text-sm flex-1"

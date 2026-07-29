@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, AssetMeta, InventoryItem, CharacterRole } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, AssetMeta, InventoryItem, CharacterRole, RelationshipStats } from '../../shared/types';
 import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRelationship } from '../../shared/types';
 import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState } from '../../shared/factory';
@@ -129,6 +129,9 @@ interface PlayerStore {
   testImageApi: () => Promise<string>;
   // Ручная правка баланса в «Банке» (Batch 8 §III.1) — записывает корректировку в выписку.
   setBalance: (value: number) => void;
+  // Ручная правка статов прямо в игре — если ИИ пропустил изменение по сюжету.
+  setStatValue: (statId: string, value: number) => void;
+  setRelationshipStat: (charId: string, field: keyof RelationshipStats, value: number) => void;
   // Контакты из сканирования (Batch 8 §V): создать минимальные npc-персонажи + контакты.
   addScannedContacts: (names: string[]) => void;
   // Экспорт анкеты в проект (Batch 8 §VI.3): промоушен существующего npc по имени или новый.
@@ -675,6 +678,32 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     } finally {
       set({ cameraBusy: false });
     }
+  },
+
+  setStatValue(statId, value) {
+    const st = get();
+    if (!st.state || !st.project) return;
+    const def = st.project.stats.find((s) => s.id === statId);
+    if (!def) return;
+    const v = Math.max(def.min, Math.min(def.max, Math.round(value)));
+    if ((st.state.statValues[statId] ?? def.initial) === v) return;
+    set({ state: { ...st.state, statValues: { ...st.state.statValues, [statId]: v } } });
+    void get().autosave();
+  },
+
+  setRelationshipStat(charId, field, value) {
+    const st = get();
+    if (!st.state) return;
+    const v = Math.max(-100, Math.min(100, Math.round(value)));
+    const cur = st.state.relationship[charId] ?? emptyRelationship();
+    if (cur[field] === v) return;
+    set({
+      state: {
+        ...st.state,
+        relationship: { ...st.state.relationship, [charId]: { ...cur, [field]: v } },
+      },
+    });
+    void get().autosave();
   },
 
   setBalance(value) {
