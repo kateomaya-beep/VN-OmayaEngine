@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { Project, SaveSlot } from '../shared/types';
+import type { Project, SaveSlot, Character, AssetMeta } from '../shared/types';
 import { normalizeProject, normalizeRuntimeState } from '../shared/factory';
 import { uid } from '../shared/utils';
 import {
@@ -146,6 +146,60 @@ export async function duplicateProject(source: Project, newTitle?: string): Prom
 
   await saveProject(clone);
   return clone;
+}
+
+// Перенос персонажа в другой проект. Спрайты копируются как НОВЫЕ blob'ы + ассеты
+// (по образцу duplicateProject): переиспользовать blobKey нельзя — удаление
+// исходного проекта стёрло бы картинки и в проекте-получателе.
+export async function copyCharacterToProject(
+  source: Project,
+  characterId: string,
+  targetProjectId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const character = source.characters.find((c) => c.id === characterId);
+  if (!character) return { ok: false, error: 'Персонаж не найден' };
+  const target = await getProject(targetProjectId);
+  if (!target) return { ok: false, error: 'Проект-получатель не найден' };
+
+  const clone: Character = JSON.parse(JSON.stringify(character));
+  clone.id = uid('char');
+  // Протагонист в проекте может быть только один — переносим как важного персонажа.
+  if (clone.role === 'protagonist' && target.characters.some((c) => c.role === 'protagonist')) {
+    clone.role = 'important_character';
+  }
+  // Имя-дубль — помечаем, чтобы в списке было видно, что это перенос.
+  if (target.characters.some((c) => c.name.trim().toLowerCase() === clone.name.trim().toLowerCase())) {
+    clone.name = `${clone.name} (копия)`;
+  }
+
+  // Копируем задействованные ассеты-спрайты под новыми ключами.
+  const assetCache = new Map<string, string>(); // старый assetId → новый assetId
+  const copyAsset = async (oldAssetId: string): Promise<string | undefined> => {
+    if (assetCache.has(oldAssetId)) return assetCache.get(oldAssetId);
+    const meta = source.assets.find((a) => a.id === oldAssetId);
+    if (!meta) return undefined;
+    const blob = await getAssetBlob(meta.blobKey);
+    if (!blob) return undefined;
+    const newBlobKey = uid('blob');
+    await putAsset(newBlobKey, blob);
+    const newMeta: AssetMeta = { ...meta, id: uid('asset'), blobKey: newBlobKey };
+    target.assets.push(newMeta);
+    assetCache.set(oldAssetId, newMeta.id);
+    return newMeta.id;
+  };
+  const remapSprites = async (m: Record<string, string>) => {
+    for (const k of Object.keys(m)) {
+      const next = await copyAsset(m[k]);
+      if (next) m[k] = next;
+      else delete m[k]; // битая ссылка — не тащим в новый проект
+    }
+  };
+  await remapSprites(clone.sprites as Record<string, string>);
+  for (const o of clone.outfits || []) await remapSprites(o.sprites as Record<string, string>);
+
+  target.characters.push(clone);
+  await saveProject(target);
+  return { ok: true };
 }
 
 export async function deleteProject(id: string): Promise<void> {

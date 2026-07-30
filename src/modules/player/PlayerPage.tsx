@@ -20,6 +20,7 @@ import { WorkshopPanel } from './components/WorkshopPanel';
 import { WardrobePanel } from './components/WardrobePanel';
 import { themeVars, ensureFontLink, loadGlobalTheme } from './playerTheme';
 import { useT } from '../../shared/i18n';
+import { useGlobalNotes } from '../../shared/globalNotes';
 import { TopBar } from '../../app/TopBar';
 
 type Setup = 'launch' | 'play';
@@ -29,6 +30,8 @@ export function PlayerPage() {
   const nav = useNavigate();
   const t = useT();
   const s = usePlayerStore();
+  // Универсальные заметки (все проекты) — для индикатора на иконке заметок.
+  const globalNotes = useGlobalNotes((g) => g.notes);
   const [panel, setPanel] = useState<null | 'saves' | 'edit' | 'history'>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
@@ -208,7 +211,9 @@ export function PlayerPage() {
             canContinue={canContinue}
             onSubmit={(txt) => s.submitFreeInput(txt)}
             onContinue={() => s.continueStory()}
-            hasNotes={s.state.authorNotes.some((n) => n.text.trim())}
+            hasNotes={
+              s.state.authorNotes.some((n) => n.text.trim()) || globalNotes.some((n) => n.text.trim())
+            }
             onOpenNotes={() => setNotesOpen(true)}
           />
         </div>

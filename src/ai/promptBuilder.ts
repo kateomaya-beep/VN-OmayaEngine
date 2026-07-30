@@ -5,6 +5,7 @@ import { type DynamicSource } from './promptPreset';
 import { getPresetSettings } from './presetSettings';
 import { matchLorebook } from './lorebookEngine';
 import { logEvent } from '../shared/logStore';
+import { getGlobalNotes } from '../shared/globalNotes';
 import { characterOutfits, defaultOutfitTag, hasExtraOutfits } from '../shared/outfits';
 import { extractJson } from './responseParser';
 import { formatClock } from './gameMaster';
@@ -565,8 +566,15 @@ export async function buildRequest(
     withMove.splice(insertAt, 0, { role: 'user', content: expandMacros(b.content, ctx) });
   }
 
-  // Заметка для ИИ (Author's Note, см. CR v2 §M) — тот же слот глубины 0, что и
-  // кастомные вставки Блока F, но со своим UI. Пусто — ничего не инжектится.
+  // Заметки для ИИ (Author's Note, см. CR v2 §M) — слот глубины 0, свой UI.
+  // Две категории: УНИВЕРСАЛЬНЫЕ (общие для всех проектов, из localStorage) идут
+  // первыми как постоянные правила подачи, затем ПРОЕКТНЫЕ (из сейва) — они
+  // конкретнее и стоят ближе к ходу, поэтому весят больше. Пусто — не инжектится.
+  for (const note of getGlobalNotes()) {
+    if (note.text.trim()) {
+      withMove.push({ role: 'user', content: `[AUTHOR NOTE] ${expandMacros(note.text, ctx)}` });
+    }
+  }
   for (const note of state.authorNotes) {
     if (note.text.trim()) {
       withMove.push({ role: 'user', content: `[AUTHOR NOTE] ${expandMacros(note.text, ctx)}` });

@@ -3,6 +3,7 @@ import { Modal } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
 import { uid } from '../../../shared/utils';
 import { usePlayerStore } from '../playerStore';
+import { useGlobalNotes } from '../../../shared/globalNotes';
 import type { AuthorNote } from '../../../shared/types';
 
 // Менеджер авторских заметок для ИИ. Записи создаются/правятся/удаляются/копируются.
@@ -10,8 +11,14 @@ import type { AuthorNote } from '../../../shared/types';
 export function AuthorNotesPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const lang = useLang((s) => s.lang);
   const L = (ru: string, en: string) => (lang === 'en' ? en : ru);
-  const notes = usePlayerStore((s) => s.state?.authorNotes ?? []);
-  const setNotes = usePlayerStore((s) => s.setAuthorNotes);
+  const [tab, setTab] = useState<'project' | 'global'>('project');
+  // Проектные заметки живут в сейве, универсальные — в localStorage (все истории).
+  const projectNotes = usePlayerStore((s) => s.state?.authorNotes ?? []);
+  const setProjectNotes = usePlayerStore((s) => s.setAuthorNotes);
+  const globalNotes = useGlobalNotes((s) => s.notes);
+  const setGlobalNotes = useGlobalNotes((s) => s.setNotes);
+  const notes = tab === 'project' ? projectNotes : globalNotes;
+  const setNotes = tab === 'project' ? setProjectNotes : setGlobalNotes;
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState<string | null>(null);
   if (!open) return null;
@@ -45,11 +52,34 @@ export function AuthorNotesPanel({ open, onClose }: { open: boolean; onClose: ()
 
   return (
     <Modal open={open} onClose={onClose} title={L('Авторские заметки для ИИ', "AI author's notes")}>
+      <div className="flex gap-1.5 mb-3 p-1 rounded-xl bg-black/30 border border-white/10">
+        <button
+          onClick={() => setTab('project')}
+          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+            tab === 'project' ? 'bg-[var(--pl-accent,#8b5cf6)] text-white' : 'text-gray-300 hover:bg-white/5'
+          }`}
+        >
+          📗 {L('Этот проект', 'This project')} ({projectNotes.length})
+        </button>
+        <button
+          onClick={() => setTab('global')}
+          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+            tab === 'global' ? 'bg-[var(--pl-accent,#8b5cf6)] text-white' : 'text-gray-300 hover:bg-white/5'
+          }`}
+        >
+          🌍 {L('Все проекты', 'All projects')} ({globalNotes.length})
+        </button>
+      </div>
       <p className="text-xs text-gray-500 mb-3">
-        {L(
-          'Инструкции/направление сюжета для ИИ — каждая запись инжектится перед вашим ходом, пока не удалите. Подтверждённую запись нельзя случайно изменить: жмите «Редактировать».',
-          "Directions for the AI — each note is injected before your move until removed. A confirmed note is locked from accidental edits: press Edit to change it."
-        )}
+        {tab === 'project'
+          ? L(
+              'Заметки этой истории — живут в её сейве. Каждая запись инжектится перед вашим ходом, пока не удалите. Подтверждённую запись нельзя случайно изменить: жмите «Редактировать».',
+              "Notes for this story only — stored in its save. Each note is injected before your move until removed. A confirmed note is locked from accidental edits: press Edit."
+            )
+          : L(
+              'Универсальные заметки — действуют во ВСЕХ ваших историях (хранятся в браузере). Сюда — постоянные правила подачи: «не пиши за меня», «больше диалогов», «без пафоса».',
+              'Universal notes — applied in ALL your stories (stored in this browser). Use them for lasting style rules: "never act for me", "more dialogue", "no purple prose".'
+            )}
       </p>
 
       <div className="space-y-2 max-h-[55vh] overflow-y-auto scrollbar-thin pr-1">

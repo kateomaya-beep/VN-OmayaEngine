@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
-import { AssetImage, Field } from '../../../shared/ui';
+import { AssetImage, Field, Modal } from '../../../shared/ui';
 import { uid } from '../../../shared/utils';
 import {
   EMOTIONS,
@@ -14,9 +14,12 @@ import type {
   CharacterRole,
   Emotion,
   AssetMeta,
+  Project,
   RelationshipField,
 } from '../../../shared/types';
 import { uploadAsset } from '../../../storage/assetOps';
+import { listProjects, copyCharacterToProject } from '../../../storage/db';
+import { pushToast } from '../../../shared/toast';
 import {
   characterOutfits,
   defaultOutfitTag,
@@ -40,6 +43,8 @@ export function CharacterEditor() {
   const [selId, setSelId] = useState<string | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [showExtraFields, setShowExtraFields] = useState(false);
+  // id персонажа, которого переносим в другой проект (null — диалог закрыт).
+  const [transferFor, setTransferFor] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   if (!project) return null;
 
@@ -239,15 +244,24 @@ export function CharacterEditor() {
                 />
               </Field>
             )}
-            <button
-              className="btn-danger !px-3 !py-1.5 text-xs"
-              onClick={() => {
-                update((p) => (p.characters = p.characters.filter((c) => c.id !== selected.id)));
-                setSelId(null);
-              }}
-            >
-              Удалить персонажа
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                className="btn-ghost !px-3 !py-1.5 text-xs"
+                onClick={() => setTransferFor(selected.id)}
+                title="Скопировать персонажа со спрайтами в другой проект"
+              >
+                ⇄ Перенести в другой проект
+              </button>
+              <button
+                className="btn-danger !px-3 !py-1.5 text-xs"
+                onClick={() => {
+                  update((p) => (p.characters = p.characters.filter((c) => c.id !== selected.id)));
+                  setSelId(null);
+                }}
+              >
+                Удалить персонажа
+              </button>
+            </div>
           </div>
 
           {selected.role !== 'protagonist' && (
@@ -301,7 +315,83 @@ export function CharacterEditor() {
       ) : (
         <div className="card text-center text-gray-500 py-16">Создайте персонажа.</div>
       )}
+
+      {transferFor && (
+        <TransferCharacterDialog
+          project={project}
+          characterId={transferFor}
+          onClose={() => setTransferFor(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// Перенос персонажа в другой проект: спрайты копируются как новые ассеты, исходный
+// персонаж остаётся на месте (это копия, а не перемещение).
+function TransferCharacterDialog({
+  project,
+  characterId,
+  onClose,
+}: {
+  project: Project;
+  characterId: string;
+  onClose: () => void;
+}) {
+  const [targets, setTargets] = useState<Project[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const character = project.characters.find((c) => c.id === characterId);
+
+  useEffect(() => {
+    void listProjects().then((all) => setTargets(all.filter((p) => p.id !== project.id)));
+  }, [project.id]);
+
+  const send = async (targetId: string, targetTitle: string) => {
+    setBusy(targetId);
+    try {
+      const res = await copyCharacterToProject(project, characterId, targetId);
+      if (res.ok) {
+        setDone(targetTitle);
+        pushToast('success', `«${character?.name}» скопирован в «${targetTitle}»`);
+      } else {
+        pushToast('error', res.error || 'Не удалось перенести персонажа');
+      }
+    } catch (e) {
+      pushToast('error', 'Не удалось перенести: ' + (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`⇄ Перенести «${character?.name || '—'}» в другой проект`}>
+      <p className="text-xs text-gray-500 mb-3">
+        Персонаж копируется вместе со спрайтами и нарядами. В исходном проекте он остаётся.
+        Открытый проект-получатель обновится после перезагрузки его страницы.
+      </p>
+      {targets === null && <p className="text-sm text-gray-500">Загружаю список проектов…</p>}
+      {targets && targets.length === 0 && (
+        <p className="text-sm text-gray-500">Других проектов пока нет — создайте второй проект в библиотеке.</p>
+      )}
+      <div className="space-y-1.5 max-h-[50vh] overflow-y-auto scrollbar-thin">
+        {(targets || []).map((p) => (
+          <button
+            key={p.id}
+            className="w-full flex items-center gap-3 rounded-lg border border-white/10 bg-panel2 px-3 py-2.5 text-left hover:bg-white/5 disabled:opacity-50"
+            disabled={!!busy}
+            onClick={() => send(p.id, p.meta.title || 'Без названия')}
+          >
+            <span className="flex-1 truncate text-sm">{p.meta.title || 'Без названия'}</span>
+            <span className="text-xs text-gray-500">{p.characters.length} перс.</span>
+            <span className="text-xs">{busy === p.id ? '⏳' : '→'}</span>
+          </button>
+        ))}
+      </div>
+      {done && (
+        <p className="text-xs text-green-400 mt-3">✓ Скопировано в «{done}». Можно перенести и в другие проекты.</p>
+      )}
+    </Modal>
   );
 }
 
