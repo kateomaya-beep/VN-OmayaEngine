@@ -933,7 +933,10 @@ export interface ChronicleEntry {
 }
 
 export interface MemoryState {
-  chronicle: ChronicleEntry[]; // свёрнутые сегменты истории (список записей)
+  chronicle: ChronicleEntry[]; // ЖУРНАЛ ЭПИЗОДОВ: хронологические свёртки «что произошло» (append-only, редактируемые)
+  // ЖИВОЙ СНАПШОТ СОСТОЯНИЯ: одно эволюционирующее структурированное саммари
+  // (персонажи/отношения/крючки/текущее положение). Заменяется при каждой свёртке.
+  storyState?: string;
   foldedMsgCount: number; // всего сообщений свёрнуто (для диапазонов записей)
   liveSummary: string; // ручная заметка о текущей арке (не авто-управляется)
   facts: CanonicalFact[]; // canonical facts store — не проходит через LLM-сжатие

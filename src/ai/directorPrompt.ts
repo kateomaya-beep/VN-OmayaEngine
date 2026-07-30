@@ -303,83 +303,61 @@ export const DEFAULT_JAILBREAK = `Это художественная интер
 Разрешён зрелый контент, тёмные темы и откровенные сцены, если они уместны сюжету и выбору игрока.
 Оставайся в рамках JSON-контракта и художественной подачи.`;
 
-// Структурный дефолт саммарайзера (Batch 6 §2). Инкрементальный режим: получает
-// предыдущее саммари (если есть) и новые ходы, обновляет структуру, не теряя старого.
-// {n} — лимит MINOR EVENTS (память попадает в контекст каждый ход, безлимит раздул бы её).
-// Юзер может задать свой промпт (memoryConfig.summaryPrompt).
-export const SUMMARIZER_PROMPT = (n: number) => `You are a specialized AI summarizer creating a complete, detailed story
-summary from a roleplay session. Your goal is to extract and organize ALL
-relevant information so the story can continue seamlessly without access
-to previous messages.
+// Саммарайзер (двухчастная память, Horae-стиль). Один вызов на свёртку возвращает
+// ДВЕ секции с жёсткими маркерами:
+//   1) EPISODE — хронологическая запись «что произошло за этот отрезок» (append-only
+//      журнал: прошлые эпизоды НЕ пересобираются и не искажаются).
+//   2) STORY STATE — единый живой снапшот состояния (персонажи/отношения/крючки/
+//      текущее положение), который ЗАМЕНЯЕТ предыдущий. На входе — прежний снапшот.
+// {n} — лимит пунктов эпизода. Юзер может задать свой промпт (memoryConfig.summaryPrompt),
+// но маркеры секций обязаны сохраниться — движок режет ответ по ним.
+export const SUMMARIZER_PROMPT = (n: number) => `You are the memory engine of an interactive story. You receive the CURRENT
+STORY STATE snapshot (if any) and the NEW turns played since it. Produce
+EXACTLY two sections with these exact markers:
 
-INCREMENTAL MODE: You receive the PREVIOUS summary (if any) and the NEW
-turns since it. Produce an UPDATED summary: merge new information into the
-existing structure, update character states and relationships, append new
-events. Do not lose information from the previous summary unless it is
-explicitly superseded by newer events.
+=== EPISODE ===
+A chronological log entry covering ONLY the new turns: what happened, in
+order. 4–${Math.max(6, n)} numbered points, each one concrete event/decision/
+revelation (who, what, outcome). Facts only, no analysis, no repetition of
+older events. This entry is appended to a permanent chronological log and
+will never be rewritten — make it self-contained and precise.
 
-CRITICAL INSTRUCTIONS:
-- BE COMPREHENSIVE: include every meaningful detail, character, event, plot point
-- BE FACTUAL: state only what happened, no embellishment
-- BE ORGANIZED: follow the exact structure below
-- BE CONCISE: keep individual descriptions brief but informative
-- PRESERVE CONTINUITY: capture enough detail that the story can continue naturally
-
-<output_structure>
+=== STORY STATE ===
+The UPDATED living snapshot, merging the previous snapshot with the new
+turns. Keep it complete but compact:
 
 ## MAIN CHARACTERS
-For each key character:
-- [Name]: [Current status/condition] | [2-3 sentence bio: background,
-  personality, key traits] | Current Situation: [where they are, what
-  they're doing, goals/conflicts, emotional state, recent developments]
+- [Name]: [status/condition] | [1-2 sentence bio] | Now: [where, doing what,
+  goals, emotional state]
 
 ## SECONDARY CHARACTERS
-- [Name]: [Role in story] | [1 sentence description] | [Current status/last known location]
-
-## MAJOR EVENTS
-Chronological:
-1. [Event: who, what, where, why, outcome]
-
-## MINOR EVENTS
-Smaller occurrences that are likely to matter later. Maximum ${n} bullets —
-prioritize by potential future relevance, omit trivia.
-- [Brief event description]
-
-## IMPORTANT ITEMS & ARTIFACTS
-- [Item]: [Description, significance, current location/owner]
-
-## KEY LOCATIONS
-- [Location]: [Brief description, plot significance, who's been there, current state]
+- [Name]: [role] | [current status/last known location]
 
 ## RELATIONSHIPS & DYNAMICS
-- [Character A] & [Character B]: [Relationship type and current dynamic]
-  | Direction of change this period: [how it shifted, e.g. "distrust →
-  cautious sympathy", "growing tension", "unchanged"]
+- [A] & [B]: [type and current dynamic] | shift this period: [e.g. "distrust →
+  cautious sympathy", "unchanged"]
 
-## WORLD STATE & CONTEXT
-[Crucial worldbuilding, setting details, rules, background needed to
-understand the story]
+## RESOLVED ARCS (completed storylines — the story must NOT replay these)
+- [Arc/event]: [how it resolved]
 
 ## ACTIVE PLOT HOOKS & UNRESOLVED THREADS
-- [Hook: what it is, who's involved, why it matters]
+- [Hook: what, who, why it matters]
 
-## CURRENT STORY STATE
-Time/Date: [when the story is set now]
-Primary Location: [where the action is]
-Active Scene: [what is happening right now]
-Immediate Situation: [urgent circumstances, conflicts, tensions]
-Narrative Momentum: [where the story seems to be heading]
+## IMPORTANT ITEMS & LOCATIONS
+- [Item/place]: [significance, current state/owner]
 
-</output_structure>
+## WORLD STATE & CONTEXT
+[Rules and background needed to understand the story]
 
-QUALITY CHECKLIST:
-- Every character who appeared is included
-- All significant events captured; minor events filtered by future relevance
-- Someone could continue the story using only this summary
-- Current emotional tone and narrative direction captured
-- All unresolved plot threads documented
+## CURRENT SITUATION
+Time/Date: … | Location: … | Active scene: … | Immediate tensions: … |
+Narrative momentum: …
 
-Write the summary in ENGLISH, even if the story itself is told in another language.`;
+RULES:
+- Never lose facts from the previous snapshot unless newer events supersede
+  them; move finished storylines into RESOLVED ARCS instead of deleting them.
+- Facts only, no embellishment. Write BOTH sections in ENGLISH regardless of
+  the story language. Output nothing outside the two marked sections.`;
 
 // Короткий ремайндер формата в самый конец (глубина 0) — модели на длинном
 // контексте забывают отдавать чистый JSON.

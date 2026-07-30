@@ -4,6 +4,7 @@ import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { getPresetSettings } from './presetSettings';
 import { matchLorebook } from './lorebookEngine';
+import { logEvent } from '../shared/logStore';
 import { characterOutfits, defaultOutfitTag, hasExtraOutfits } from '../shared/outfits';
 import { extractJson } from './responseParser';
 import { formatClock } from './gameMaster';
@@ -175,12 +176,17 @@ async function memoryBlock(
 ): Promise<string> {
   const m = state.memory;
   const parts: string[] = [];
+  // Журнал эпизодов — хронологически, от старых к новым, с явной нумерацией периодов.
   if (m.chronicle.length) {
     parts.push(
-      `STORY SO FAR (authoritative summary of everything BEFORE the recent turns — these events HAVE happened; never contradict or replay them):\n${m.chronicle
-        .map((c) => c.text)
+      `EPISODE LOG (chronological, oldest → newest; ALL of this has already happened — never contradict it and NEVER replay these events as if new):\n${m.chronicle
+        .map((c, i) => `[Period ${i + 1}${c.atTurn ? `, up to turn ${c.atTurn}` : ''}]\n${c.text}`)
         .join('\n\n')}`
     );
+  }
+  // Живой снапшот состояния — единственное «текущее положение дел».
+  if (m.storyState?.trim()) {
+    parts.push(`CURRENT STORY STATE (authoritative living snapshot — the single source of truth for where things stand NOW):\n${m.storyState.trim()}`);
   }
   if (m.liveSummary.trim()) {
     parts.push(`CURRENT ARC NOTE (from the author):\n${m.liveSummary}`);
@@ -459,12 +465,14 @@ export async function buildRequest(
   const preset = ps.preset;
   const systemParts: string[] = [];
   const presetMessages: LlmMessage[] = [];
+  const renderedDynamics = new Set<DynamicSource>();
   for (const block of preset.blocks) {
     if (!block.enabled) continue;
     let text: string;
     if (block.dynamic) {
       const gen = dynamicContent[block.dynamic];
       text = gen ? await gen() : '';
+      renderedDynamics.add(block.dynamic);
     } else {
       text = expandMacros(block.content, ctx);
     }
@@ -472,6 +480,24 @@ export async function buildRequest(
     const role = block.role || 'system';
     if (role === 'system') systemParts.push(text);
     else presetMessages.push({ role, content: text });
+  }
+
+  // ГАРАНТИЯ ДВИЖКОВЫХ БЛОКОВ (фикс «память не инжектится»): если в пресете нет
+  // (или отключён) какой-то из динамических блоков — например, пресет импортирован
+  // из Таверны и содержит только статичный текст, — мир/персонажи/манифест/состояние/
+  // ПАМЯТЬ выпадали из контекста целиком. Теперь недостающие блоки добавляются
+  // движком всегда, в каноническом порядке; пресет управляет их положением и
+  // текстом ВОКРУГ, но не может молча лишить ИИ память или манифест.
+  const REQUIRED_DYNAMICS: DynamicSource[] = [
+    'world', 'plot', 'lorebook', 'characters', 'manifest', 'state', 'gamemaster', 'memory',
+  ];
+  const missing = REQUIRED_DYNAMICS.filter((k) => !renderedDynamics.has(k));
+  if (missing.length) {
+    logEvent('info', 'prompt', `В пресете нет динамических блоков [${missing.join(', ')}] — добавлены движком`);
+    for (const k of missing) {
+      const text = await dynamicContent[k]();
+      if (text.trim()) systemParts.push(text);
+    }
   }
 
   // Авторитетная длина хода (ползунок/ввод в пресете) — переопределяет любые числа

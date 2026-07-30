@@ -167,18 +167,43 @@ const openAiCompatible: Provider = {
     const model = requireModel(req.model || conn.model);
     const messages = [{ role: 'system', content: req.system }, ...req.messages];
     if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
-    const res = await apiFetch(`${base}/chat/completions`, {
-      method: 'POST',
-      signal: req.signal,
-      headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      body: JSON.stringify({
-        model,
-        temperature: req.temperature,
-        messages,
-        ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
-        ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
-      }),
-    });
+    const body: Record<string, unknown> = {
+      model,
+      temperature: req.temperature,
+      messages,
+      ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+      ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
+    };
+    const post = (b: Record<string, unknown>) =>
+      apiFetch(`${base}/chat/completions`, {
+        method: 'POST',
+        signal: req.signal,
+        headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
+        body: JSON.stringify(b),
+      });
+    let res = await post(body);
+    // Адаптация под капризы шлюзов: параметры вне базового набора OpenAI-совместимые
+    // провайдеры принимают по-разному. На 400 пробуем починить тело и повторить ОДИН раз:
+    //  - reasoning_effort не знают многие (или не принимают 'none') → убираем;
+    //  - новые модели OpenAI требуют max_completion_tokens вместо max_tokens.
+    if (res.status === 400) {
+      const errText = await res.text().catch(() => '');
+      const b2 = { ...body };
+      let fixes: string[] = [];
+      if ('reasoning_effort' in b2 && (/reason/i.test(errText) || !/max_tokens|max_completion/i.test(errText))) {
+        delete b2.reasoning_effort;
+        fixes.push('без reasoning_effort');
+      }
+      if (/max_completion_tokens/i.test(errText) && 'max_tokens' in b2) {
+        b2.max_completion_tokens = b2.max_tokens;
+        delete b2.max_tokens;
+        fixes.push('max_tokens → max_completion_tokens');
+      }
+      if (!fixes.length) throw providerHttpError(400, errText);
+      logEvent('info', 'llm', `HTTP 400 — повторяю (${fixes.join(', ')})`);
+      res = await post(b2);
+      if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => errText));
+    }
     if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => ''));
     const data = await res.json();
     const choice = data?.choices?.[0];

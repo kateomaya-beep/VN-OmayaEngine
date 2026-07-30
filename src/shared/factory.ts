@@ -346,6 +346,7 @@ export function normalizeProject(raw: any): Project {
 export function initialMemory(): MemoryState {
   return {
     chronicle: [],
+    storyState: '',
     foldedMsgCount: 0,
     liveSummary: '',
     facts: [],
@@ -660,6 +661,7 @@ function normalizeMemory(
 
   return {
     chronicle,
+    storyState: str(raw?.storyState),
     foldedMsgCount: num(raw?.foldedMsgCount, 0),
     liveSummary,
     facts,

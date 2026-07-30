@@ -844,17 +844,44 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
         {L('Вместо раздутого контекста — краткие свёртки каждые N сообщений (всегда на английском). Список свёрток можно править и удалять.', 'Instead of a bloated context — short recaps every N messages (always English). The recap list is editable and deletable.')}
       </p>
 
-      {/* Список свёрток/саммари */}
+      {/* Живой снапшот состояния — редактируемый (единый источник «где мы сейчас»). */}
+      {memory && (
+        <div className="space-y-1">
+          <h4 className="font-semibold text-sm">{L('Состояние истории (живой снапшот)', 'Story state (living snapshot)')}</h4>
+          <p className="text-[11px] text-gray-500">
+            {L(
+              'Обновляется при каждой свёртке (заменяется целиком). Правьте, если ИИ что-то понял не так — это авторитетное «текущее положение дел» для следующих ходов.',
+              'Replaced wholesale on each fold. Edit it if the AI got something wrong — this is the authoritative "where things stand now" for future turns.'
+            )}
+          </p>
+          <textarea
+            className="input !py-1 text-xs font-mono h-40"
+            placeholder={L('появится после первой свёртки…', 'appears after the first fold…')}
+            value={memory.storyState || ''}
+            onChange={(e) => patchMemory((m) => { m.storyState = e.target.value; })}
+          />
+        </div>
+      )}
+
+      {/* Журнал эпизодов — хронологический, редактируемый. */}
       {memory && (
         <div className="space-y-2">
-          <h4 className="font-semibold text-sm">{L('Свёртки', 'Compressions')} ({memory.chronicle.length})</h4>
-          {memory.chronicle.length === 0 && <p className="text-gray-600 text-sm">{L('пока нет свёрток', 'no compressions yet')}</p>}
+          <h4 className="font-semibold text-sm">
+            {L('Журнал эпизодов (хронология)', 'Episode log (chronological)')} ({memory.chronicle.length})
+          </h4>
+          <p className="text-[11px] text-gray-500">
+            {L(
+              'Каждая свёртка добавляет запись «что произошло за период». Записи уходят в контекст по порядку, от старых к новым, и больше не переписываются.',
+              'Each fold appends a "what happened this period" entry. Entries go to context oldest → newest and are never rewritten.'
+            )}
+          </p>
+          {memory.chronicle.length === 0 && <p className="text-gray-600 text-sm">{L('пока нет записей', 'no entries yet')}</p>}
           {memory.chronicle.map((c, i) => (
             <div key={c.id} className="card !p-2 !bg-panel2">
               <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                 <span>
-                  #{i + 1} · {L('сообщения', 'messages')} {c.fromMsg}–{c.toMsg}
-                  {c.atTurn ? ` · ${L('ход', 'turn')} ${c.atTurn}` : ''}
+                  {L('Период', 'Period')} {i + 1} · {L('сообщения', 'messages')} {c.fromMsg}–{c.toMsg}
+                  {c.atTurn ? ` · ${L('до хода', 'up to turn')} ${c.atTurn}` : ''}
                 </span>
                 <button className="btn-danger !px-2 !py-0.5 text-xs" onClick={() => patchMemory((m) => m.chronicle.splice(i, 1))}>✕</button>
               </div>
