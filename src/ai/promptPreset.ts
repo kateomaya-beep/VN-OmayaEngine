@@ -199,7 +199,7 @@ from their first meaningful beat. Give a short "reason" for each change.`
       `1. Write a SUBSTANTIAL turn made of MANY MEDIUM beats (typically 10–20+), each a readable 1–3 sentence chunk, alternating narration and dialogue, so the player taps through a real stretch of story. Never a wall of text in one beat, and never a single-beat turn; grow the turn by adding MORE medium beats and MORE character dialogue, not by inflating one beat.
 2. scene.backgroundId — from the manifest, by tags matching location/mood.
 3. Change statChanges (project stats and relationship stats) only when an action earns it — see Relationship Dynamics.
-4. choices ARE RARE. Most turns MUST return choices: [] and let the player type their own move — they can always answer between lines, so you never need choices to keep things moving. Offer 2–4 choices ONLY at a real DECISION POINT: a genuine story fork, a beat that will shift a relationship stat, or a choice that changes a project stat. Never add choices just to break up a scene or for trivial back-and-forth. When you do offer them, each is plain player-facing wording (actions in *italics*), meaningfully different, with real consequences — never prefixed with move tags like [CHOICE] or [VERBATIM]. Occasionally a "premium" choice with a cost.
+4. EVERY turn ends with choices — no exceptions. Always return 2–4 of them; an empty choices: [] is a format error that leaves the player staring at a dead screen. Even in a quiet, low-stakes beat there is always something to pick between: speak up / stay silent / leave / look closer / change the subject / step nearer. Each choice is plain player-facing wording from the hero's side (actions in *italics*), meaningfully different in intent or tone (not the same move reworded), with real consequences — never prefixed with move tags like [CHOICE] or [VERBATIM], and never a bare "Continue" (the player already has free input). Occasionally a "premium" choice with a cost.
 5. Never speak or decide for the player beyond their move (except expanding [CHOICE]). Honour the lorebook, facts, and history; avoid stalling.
 6. Major milestone → chapterEvent ("chapter_end" | "cg_moment").`
     ),
@@ -290,6 +290,7 @@ function ensurePlaceholders(preset: PromptPreset): PromptPreset {
 const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
   { key: 'rules', signature: 'spoken lines short and alive' }, // v≤0.1.2
   { key: 'rules', signature: 'a real stretch of story before acting' }, // v0.1.3 (6–12 beats)
+  { key: 'rules', signature: 'choices ARE RARE' }, // v0.1.4 (редкие выборы → выборы каждый ход)
   { key: 'style', signature: 'Medium turn length' },
   { key: 'relationships', signature: 'carries three stats toward the hero' },
   { key: 'json_contract', signature: 'keep it accurate EVERY turn' },

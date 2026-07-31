@@ -1,6 +1,7 @@
 import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry, PhoneState, InventoryItem } from '../shared/types';
 import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhoneState, RANDOM_EVENT_LABELS } from '../shared/types';
 import { pushToast } from '../shared/toast';
+import { logEvent } from '../shared/logStore';
 import { resolveEmoji } from '../shared/emojiDict';
 import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
 import { syncRegistry, findRegistryMatch, newRegistryId, normName } from './characterRegistry';
@@ -83,6 +84,32 @@ export function computeAccruals(project: Project, oldDate: string, newDate: stri
   return out;
 }
 
+// Запасные выборы, когда модель прислала пустой choices. Формулировки намеренно
+// нейтральные (подходят любой сцене) и разные по намерению: заговорить / выждать /
+// уйти. Зависят от того, чем закончился ход: репликой персонажа или описанием.
+const FALLBACK_CHOICE_TEXTS: Record<'ru' | 'en', { afterDialogue: string[]; afterNarration: string[] }> = {
+  ru: {
+    afterDialogue: ['Ответить прямо', 'Уйти от ответа', '*Промолчать и наблюдать*'],
+    afterNarration: ['*Действовать первым*', '*Осмотреться и выждать*', 'Заговорить'],
+  },
+  en: {
+    afterDialogue: ['Answer straight', 'Dodge the question', '*Stay silent and watch*'],
+    afterNarration: ['*Make the first move*', '*Look around and wait*', 'Speak up'],
+  },
+};
+
+export function fallbackChoices(turn: AiTurn): AiTurn['choices'] {
+  const lang = getPresetSettings().narrativeLanguage === 'en' ? 'en' : 'ru';
+  const lastContent = [...turn.beats]
+    .reverse()
+    .find((b) => b.type === 'dialogue' || b.type === 'narration' || b.type === 'thought');
+  const texts =
+    lastContent?.type === 'dialogue'
+      ? FALLBACK_CHOICE_TEXTS[lang].afterDialogue
+      : FALLBACK_CHOICE_TEXTS[lang].afterNarration;
+  return texts.map((text) => ({ id: uid('ch'), text, cost: null }));
+}
+
 // Применяет разобранный ход к state: статы, отношения, канон-факты, меморибук,
 // спрайты на сцене, музыку, историю, память. Общая часть для обычного и
 // потокового пути (см. Batch 3 §7). `raw` — сырой ответ ИИ для истории.
@@ -101,6 +128,13 @@ export async function applyTurn(
   // ходы не умеет, поэтому решает движок (детерминированно). turn.choices мутируем,
   // чтобы и немедленный рендер, и сохранённый lastTurn отражали троттлинг.
   const choiceGap = getPresetSettings().choiceMinGap ?? 0;
+  // ГАРАНТИЯ ВЫБОРОВ: при дефолтной настройке (gap = 0) ход обязан заканчиваться
+  // выборами. Промпт этого требует, но модель иногда всё равно присылает []; тогда
+  // подставляем нейтральный набор, чтобы игрок никогда не упирался в пустой экран.
+  if (choiceGap === 0 && turn.choices.length === 0) {
+    turn.choices = fallbackChoices(turn);
+    logEvent('warn', 'turn', 'ИИ не прислал выборы — подставлен запасной набор');
+  }
   let lastChoiceTurn = state.lastChoiceTurn ?? -1e9;
   if (choiceGap > 0 && turn.choices.length > 0 && nextTurnNumber - lastChoiceTurn < choiceGap) {
     turn.choices = [];
