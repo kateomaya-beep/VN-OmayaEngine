@@ -16,6 +16,13 @@ function tt(ru: string, en: string): string {
 // Память без деления на главы (см. CR v2 §E). Саммаризация триггерится по
 // счётчику сообщений (memoryConfig.summaryEveryN), не по сюжетному событию.
 
+// Ниже этого порога ответ саммарайзера считаем неудачей (пустой/обрезанный):
+// историю в таком случае НЕ трогаем.
+const MIN_EPISODE_CHARS = 40;
+// Сколько сырого текста периода хранить в архиве. Из него можно пересобрать
+// свёртку вручную, поэтому запас нужен приличный.
+const RAW_ARCHIVE_CHARS = 20000;
+
 export function historyTokens(history: LlmMessage[]): number {
   return history.reduce((sum, m) => sum + estimateTokens(m.content), 0);
 }
@@ -92,6 +99,30 @@ export async function maybeCompress(
       : transcript;
     const raw = await summarize(project, prompt, input);
     const { episode, storyState } = splitSummarySections(raw);
+
+    // КРИТИЧНО: историю режем ТОЛЬКО если свёртка реально получилась. Пустой,
+    // обрезанный или мусорный ответ раньше проходил дальше по коду — запись в
+    // журнал не добавлялась, а сообщения из истории всё равно удалялись. Кусок
+    // сюжета исчезал бесследно: и в контексте его нет, и в журнале нет.
+    // Теперь при неудаче состояние возвращается КАК ЕСТЬ: история цела, счётчик
+    // не сброшен — движок повторит свёртку на следующем ходу.
+    if (episode.trim().length < MIN_EPISODE_CHARS) {
+      updateToast(
+        toastId,
+        'error',
+        tt(
+          'Свёртка не удалась (пустой ответ) — история сохранена, повторю на следующем ходу',
+          'Summarization failed (empty answer) — history kept, will retry next turn'
+        )
+      );
+      logEvent(
+        'error',
+        'memory',
+        `Саммарайзер вернул непригодный ответ (${raw.length} симв., эпизод ${episode.trim().length} симв.) — история НЕ обрезана`,
+        raw.slice(0, 500)
+      );
+      return state;
+    }
     updateToast(toastId, 'success', tt('Память обновлена', 'Memory updated'));
     logEvent('info', 'memory', `Саммаризация выполнена (эпизод: ${episode ? 'да' : 'нет'}, снапшот: ${storyState ? 'да' : 'нет'})`);
     // Журнал эпизодов: append-only, хронологический.
@@ -104,7 +135,7 @@ export async function maybeCompress(
     // векторный подсос релевантного (см. vectorEngine.ts).
     const rawArchive = [
       ...state.memory.rawArchive,
-      { turn: state.turnCount, text: transcript.slice(0, 6000) },
+      { turn: state.turnCount, text: transcript.slice(0, RAW_ARCHIVE_CHARS) },
     ];
 
     return {
@@ -129,6 +160,38 @@ export async function maybeCompress(
     logEvent('error', 'memory', 'Саммаризация не удалась: ' + (e as Error).message);
     return state; // graceful: keep verbatim history, retry next turn
   }
+}
+
+// Пересобрать свёртку из СЫРОГО архива периода (мастерская саммари). Нужна в двух
+// случаях: свёртка получилась куцей/кривой, и её хочется переделать; либо запись
+// вообще не появилась (старый баг терял период целиком). Текущий снапшот состояния
+// при этом НЕ трогаем: пересборка старого куска не должна откатывать «где мы сейчас».
+export async function resummarizeArchived(
+  project: Project,
+  memory: RuntimeState['memory'],
+  archiveIndex: number
+): Promise<RuntimeState['memory']> {
+  const chunk = memory.rawArchive[archiveIndex];
+  if (!chunk?.text?.trim()) throw new Error('В архиве нет текста этого периода');
+  const prompt =
+    project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(project.memoryConfig.minorEventsLimit ?? 10);
+  const raw = await summarize(project, prompt, chunk.text);
+  const { episode } = splitSummarySections(raw);
+  const text = episode.trim();
+  if (text.length < MIN_EPISODE_CHARS) throw new Error('Модель вернула пустой ответ — попробуйте ещё раз');
+
+  const chronicle = [...memory.chronicle];
+  const at = chronicle.findIndex((c) => c.atTurn === chunk.turn);
+  if (at >= 0) {
+    chronicle[at] = { ...chronicle[at], text };
+  } else {
+    // Записи за этот период нет — вставляем на её хронологическое место.
+    const entry = { id: uid('chr'), text, atTurn: chunk.turn, fromMsg: 0, toMsg: 0 };
+    const pos = chronicle.findIndex((c) => c.atTurn > chunk.turn);
+    chronicle.splice(pos < 0 ? chronicle.length : pos, 0, entry);
+  }
+  logEvent('info', 'memory', `Свёртка периода (ход ${chunk.turn}) пересобрана вручную`);
+  return { ...memory, chronicle };
 }
 
 // Режет ответ саммарайзера на секции === EPISODE === / === STORY STATE ===.

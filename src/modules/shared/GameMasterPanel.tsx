@@ -12,8 +12,9 @@ import { uid } from '../../shared/utils';
 import { DEFAULT_MONTHS, RELATIONSHIP_FIELDS, RELATIONSHIP_META } from '../../shared/types';
 import type {
   Project, MemoryConfig, VectorizationMode, GmCharacter, GameMasterState, RelationshipStats,
-  AssetSelectorSource, CharacterRole,
+  AssetSelectorSource, CharacterRole, MemoryState,
 } from '../../shared/types';
+import { resummarizeArchived } from '../../ai/memoryEngine';
 
 // Game Master (вдохновлено Horae): динамическое состояние мира — персонажи с
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
@@ -894,10 +895,88 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
           ))}
         </div>
       )}
+      {/* Архив сырых периодов — страховка: из него свёртку можно пересобрать. */}
+      {memory && project && <RawArchiveList memory={memory} project={project} patchMemory={patchMemory} L={L} />}
+
       {!memory && <p className="text-xs text-gray-500">{L('Список свёрток появится во время игры.', 'The compression list appears during play.')}</p>}
 
       {/* Настройки саммари (проектные) */}
       {project && onPatch && <SummaryConfig project={project} onPatch={onPatch} L={L} />}
+    </div>
+  );
+}
+
+// Архив периодов: сырой текст каждого свёрнутого куска истории. Если свёртка
+// вышла плохой или её вовсе нет (сбой саммарайзера), запись пересобирается отсюда.
+function RawArchiveList({
+  memory,
+  project,
+  patchMemory,
+  L,
+}: {
+  memory: MemoryState;
+  project: Project;
+  patchMemory: (m: (mem: MemoryState) => void) => void;
+  L: Lf;
+}) {
+  const [busy, setBusy] = useState<number | null>(null);
+  const [err, setErr] = useState<string>('');
+  const [open, setOpen] = useState<number | null>(null);
+  if (!memory.rawArchive?.length) return null;
+
+  async function rebuild(i: number) {
+    setBusy(i);
+    setErr('');
+    try {
+      const next = await resummarizeArchived(project, memory, i);
+      patchMemory((m) => {
+        m.chronicle = next.chronicle;
+      });
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <h4 className="font-semibold text-sm">
+        {L('Архив периодов (сырой текст)', 'Period archive (raw text)')} ({memory.rawArchive.length})
+      </h4>
+      <p className="text-[11px] text-gray-500">
+        {L(
+          'Полный текст каждого свёрнутого куска истории. Если запись в журнале вышла куцей или её нет совсем — пересоберите свёртку отсюда: движок заново попросит модель сделать выжимку из этого текста.',
+          'The full text of every folded chunk. If a log entry came out poor — or is missing entirely — rebuild it here: the model will summarize this text again.'
+        )}
+      </p>
+      {err && <p className="text-xs text-red-400">{err}</p>}
+      {memory.rawArchive.map((chunk, i) => {
+        const has = memory.chronicle.some((c) => c.atTurn === chunk.turn);
+        return (
+          <div key={`${chunk.turn}-${i}`} className="card !p-2 !bg-panel2">
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <span>
+                {L('до хода', 'up to turn')} {chunk.turn} · {Math.round(chunk.text.length / 1000)}k {L('симв.', 'chars')}
+              </span>
+              {!has && (
+                <span className="text-amber-400">· {L('записи в журнале нет', 'no log entry')}</span>
+              )}
+              <button className="btn-ghost !px-2 !py-0.5 text-xs ml-auto" onClick={() => setOpen(open === i ? null : i)}>
+                {open === i ? L('скрыть', 'hide') : L('текст', 'text')}
+              </button>
+              <button className="btn-ghost !px-2 !py-0.5 text-xs" disabled={busy !== null} onClick={() => rebuild(i)}>
+                {busy === i ? '…' : `↻ ${has ? L('пересобрать', 'rebuild') : L('восстановить', 'restore')}`}
+              </button>
+            </div>
+            {open === i && (
+              <pre className="mt-1.5 max-h-48 overflow-y-auto scrollbar-thin whitespace-pre-wrap text-[11px] text-gray-300">
+                {chunk.text}
+              </pre>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
