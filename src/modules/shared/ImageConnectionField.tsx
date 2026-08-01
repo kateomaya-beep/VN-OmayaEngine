@@ -15,6 +15,13 @@ import type { ImageGenConfig } from '../../shared/types';
 const DEFAULT_BASE: Record<ImageGenConfig['providerKind'], string> = {
   gemini: 'https://generativelanguage.googleapis.com/v1beta',
   openai: 'https://api.openai.com/v1',
+  openai_chat: 'https://openrouter.ai/api/v1',
+};
+
+const PATH_HINT: Record<ImageGenConfig['providerKind'], string> = {
+  gemini: '/models/<модель>:generateContent',
+  openai: '/images/generations',
+  openai_chat: '/chat/completions',
 };
 
 export function ImageConnectionField({
@@ -76,17 +83,21 @@ export function ImageConnectionField({
             setStatus({ busy: false });
           }}
         >
-          <option value="gemini">Gemini / Nano Banana (с рефами)</option>
-          <option value="openai">OpenAI-совместимый /images/generations (без рефов)</option>
+          <option value="gemini">Google напрямую · Gemini / Nano Banana (с рефами)</option>
+          <option value="openai_chat">Шлюз-роутер · chat/completions с картинкой в ответе (с рефами)</option>
+          <option value="openai">Шлюз · images/generations (без рефов)</option>
         </select>
       </Field>
 
-      <Field
-        label="Base URL"
-        hint={`Запрос уйдёт на: ${effectiveImageBase(cfg)}${
-          cfg.providerKind === 'gemini' ? '/models/<модель>:generateContent' : '/images/generations'
-        }`}
-      >
+      <p className="text-[11px] text-gray-500 -mt-2 mb-2">
+        {cfg.providerKind === 'gemini'
+          ? 'Родной протокол Google — только для ключа Google AI Studio и адреса generativelanguage.googleapis.com.'
+          : cfg.providerKind === 'openai_chat'
+            ? 'Для агрегаторов (OpenRouter и клоны): своей ручки картинок у них нет, рисует модель вида google/gemini-…-image прямо в чате.'
+            : 'Классический путь картинок OpenAI. Если шлюз его не знает — берите вариант с chat/completions.'}
+      </p>
+
+      <Field label="Base URL" hint={`Запрос уйдёт на: ${effectiveImageBase(cfg)}${PATH_HINT[cfg.providerKind]}`}>
         <input
           className="input"
           placeholder={DEFAULT_BASE[cfg.providerKind]}

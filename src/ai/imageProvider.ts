@@ -3,16 +3,20 @@ import { getApiKey } from './keys';
 import { getConnection } from './connection';
 import { netFetch } from './providers';
 
-// Генерация изображений для CG-студии. Два бэкенда (выбор в настройках проекта):
-//  • gemini  — Google Gemini generateContent («Nano Banana»): принимает РЕФЕРЕНСЫ
+// Генерация изображений для CG-студии. Три бэкенда (выбор в CG-студии):
+//  • gemini      — родной Google generateContent («Nano Banana»): принимает РЕФЕРЕНСЫ
 //    (инлайн-картинки) → консистентные персонажи. Модель напр. gemini-2.5-flash-image.
-//  • openai  — OpenAI-совместимый /images/generations (текст→картинка, без рефов).
+//  • openai      — OpenAI-совместимый /images/generations (текст→картинка, без рефов).
+//  • openai_chat — OpenAI-совместимый /chat/completions с картинкой В ОТВЕТЕ: так
+//    устроены роутеры-агрегаторы (OpenRouter и клоны), где ручки /images/generations
+//    нет вовсе, а рисует модель вида google/gemini-…-image. Рефы работают.
 // Запросы идут через локальный прокси (netFetch) — без CORS, как остальной ИИ.
 // Ключ — только в localStorage (роль 'image').
 
 const DEFAULT_GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-image';
 const DEFAULT_OPENAI_MODEL = 'gpt-image-1';
+const DEFAULT_CHAT_MODEL = 'google/gemini-2.5-flash-image-preview';
 
 export interface ImageRef {
   mime: string;
@@ -41,16 +45,30 @@ export function effectiveImageBase(cfg: ImageGenConfig): string {
 }
 
 export function effectiveImageModel(cfg: ImageGenConfig): string {
-  return (cfg.model || '').trim() || (cfg.providerKind === 'gemini' ? DEFAULT_GEMINI_MODEL : DEFAULT_OPENAI_MODEL);
+  const m = (cfg.model || '').trim();
+  if (m) return m;
+  if (cfg.providerKind === 'gemini') return DEFAULT_GEMINI_MODEL;
+  return cfg.providerKind === 'openai_chat' ? DEFAULT_CHAT_MODEL : DEFAULT_OPENAI_MODEL;
 }
 
 // Ошибка image-API с точным адресом, по которому мы стучались: 404 почти всегда
 // значит «этот адрес не умеет картинки» (вписан текстовый шлюз) или опечатку в пути.
-function imageHttpError(status: number, url: string, body: string): Error {
+function imageHttpError(status: number, url: string, body: string, cfg?: ImageGenConfig): Error {
   const detail = cleanErr(body);
+  // Самая частая причина 404 — выбран не тот ПРОТОКОЛ для этого шлюза. Родной путь
+  // Google на OpenAI-совместимом шлюзе (и наоборот) не существует — отсюда 404,
+  // хотя ключ рабочий и список моделей тот же адрес отдаёт без проблем.
+  const googleBase = /generativelanguage\.googleapis\.com/i.test(url);
+  const protocolHint =
+    cfg?.providerKind === 'gemini' && !googleBase
+      ? 'выбран родной протокол Google, но адрес — сторонний шлюз (он такого пути не знает). Переключите провайдер на «OpenAI-совместимый чат» — так рисуют роутеры вроде OpenRouter.'
+      : cfg?.providerKind === 'openai'
+        ? 'у этого шлюза нет ручки /images/generations. Если он роутер (модели вида google/…, openai/…), выберите «OpenAI-совместимый чат».'
+        : '';
   const hint =
     status === 404
-      ? 'адрес не найден. Обычно это значит, что в Base URL вписан текстовый LLM-шлюз, который генерацию картинок не поддерживает, либо неверный путь/модель.'
+      ? protocolHint ||
+        'адрес не найден. Обычно это значит, что в Base URL вписан текстовый LLM-шлюз, который генерацию картинок не поддерживает, либо неверный путь/модель.'
       : status === 401 || status === 403
         ? 'ключ не принят (неверный, не тот провайдер или нет доступа к image-модели).'
         : status === 429
@@ -69,7 +87,14 @@ function b64ToBlob(b64: string, mime = 'image/png'): Blob {
 }
 
 export async function generateImage(cfg: ImageGenConfig, input: ImageGenInput): Promise<Blob> {
-  return cfg.providerKind === 'gemini' ? generateGemini(cfg, input) : generateOpenAI(cfg, input);
+  if (cfg.providerKind === 'gemini') return generateGemini(cfg, input);
+  if (cfg.providerKind === 'openai_chat') return generateOpenAiChat(cfg, input);
+  return generateOpenAI(cfg, input);
+}
+
+// Рефы поддерживают родной Gemini и чат-путь (картинка уходит частью сообщения).
+export function supportsReferences(cfg: ImageGenConfig): boolean {
+  return cfg.providerKind === 'gemini' || cfg.providerKind === 'openai_chat';
 }
 
 // ---- Gemini (Nano Banana) ----
@@ -98,7 +123,7 @@ async function generateGemini(cfg: ImageGenConfig, input: ImageGenInput): Promis
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw imageHttpError(res.status, url, text);
+    throw imageHttpError(res.status, url, text, cfg);
   }
   const data = await res.json();
   const cand = data?.candidates?.[0];
@@ -110,6 +135,82 @@ async function generateGemini(cfg: ImageGenConfig, input: ImageGenInput): Promis
   // Модель могла вернуть только текст (напр. отказ) — покажем его.
   const txt = outParts.find((p) => typeof p.text === 'string')?.text;
   throw new Error(`Image-провайдер не вернул картинку${txt ? `: ${txt.slice(0, 200)}` : ''}`);
+}
+
+// ---- OpenAI-совместимый ЧАТ с картинкой в ответе ----
+// Так рисуют роутеры-агрегаторы (OpenRouter и его клоны): ручки /images/generations
+// у них нет, картинка приходит в ответе /chat/completions от модели вида
+// google/gemini-…-image. Референсы уходят частями сообщения (data-URL), как в чате.
+async function generateOpenAiChat(cfg: ImageGenConfig, input: ImageGenInput): Promise<Blob> {
+  const key = getApiKey('image');
+  const base = effectiveImageBase(cfg);
+  const model = effectiveImageModel(cfg);
+
+  const parts: any[] = [{ type: 'text', text: input.prompt }];
+  for (const r of input.references || []) {
+    parts.push({ type: 'image_url', image_url: { url: `data:${r.mime};base64,${r.b64}` } });
+  }
+  const url = `${base}/chat/completions`;
+  const body: Record<string, unknown> = {
+    model,
+    messages: [{ role: 'user', content: parts }],
+    modalities: ['image', 'text'],
+  };
+  const post = (b: Record<string, unknown>) =>
+    netFetch(url, {
+      method: 'POST',
+      signal: input.signal,
+      headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+      body: JSON.stringify(b),
+    });
+
+  let res = await post(body);
+  // Часть шлюзов не знает поля modalities и отвечает 400 — повторяем без него.
+  if (res.status === 400) {
+    const errText = await res.text().catch(() => '');
+    if (!/modalit/i.test(errText)) throw imageHttpError(400, url, errText, cfg);
+    const b2 = { ...body };
+    delete b2.modalities;
+    res = await post(b2);
+  }
+  if (!res.ok) throw imageHttpError(res.status, url, await res.text().catch(() => ''), cfg);
+
+  const data = await res.json();
+  const msg = data?.choices?.[0]?.message;
+  const blob = extractChatImage(msg);
+  if (blob) return blob;
+  const txt = typeof msg?.content === 'string' ? msg.content : '';
+  throw new Error(
+    `Модель не вернула картинку${txt ? `: ${txt.slice(0, 200)}` : ''}\n` +
+      'Убедитесь, что выбрана ИМЕННО картиночная модель (напр. …-image / …-image-preview).'
+  );
+}
+
+// Картинка в ответе чата приходит в разных формах — разбираем все известные:
+// message.images[], message.content[] с image_url / b64_json, голый data-URL.
+function extractChatImage(msg: any): Blob | null {
+  const fromUrl = (u: unknown): Blob | null => {
+    if (typeof u !== 'string') return null;
+    const m = /^data:([^;]+);base64,(.+)$/i.exec(u.trim());
+    return m ? b64ToBlob(m[2], m[1]) : null;
+  };
+  const fromPart = (p: any): Blob | null => {
+    if (!p || typeof p !== 'object') return null;
+    if (typeof p.b64_json === 'string') return b64ToBlob(p.b64_json);
+    if (typeof p.data === 'string' && p.mime_type) return b64ToBlob(p.data, p.mime_type);
+    const inline = p.inline_data || p.inlineData;
+    if (inline?.data) return b64ToBlob(inline.data, inline.mime_type || inline.mimeType || 'image/png');
+    return fromUrl(p.image_url?.url ?? p.url ?? p.image);
+  };
+  for (const p of Array.isArray(msg?.images) ? msg.images : []) {
+    const b = fromPart(p);
+    if (b) return b;
+  }
+  for (const p of Array.isArray(msg?.content) ? msg.content : []) {
+    const b = fromPart(p);
+    if (b) return b;
+  }
+  return fromUrl(msg?.content);
 }
 
 // ---- OpenAI-совместимый /images/generations ----
@@ -136,7 +237,7 @@ async function generateOpenAI(cfg: ImageGenConfig, input: ImageGenInput): Promis
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw imageHttpError(res.status, url, text);
+    throw imageHttpError(res.status, url, text, cfg);
   }
   const data = await res.json();
   const item = data?.data?.[0];
@@ -167,7 +268,7 @@ export async function listImageModels(cfg: ImageGenConfig, apiKey: string): Prom
           ? { Authorization: `Bearer ${apiKey}` }
           : {},
   });
-  if (!res.ok) throw imageHttpError(res.status, url, await res.text().catch(() => ''));
+  if (!res.ok) throw imageHttpError(res.status, url, await res.text().catch(() => ''), cfg);
   const data = await res.json();
   const list: any[] = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
   const ids = list

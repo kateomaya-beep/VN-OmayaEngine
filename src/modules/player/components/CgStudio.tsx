@@ -3,7 +3,7 @@ import { Modal, AssetImage } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
 import { usePlayerStore } from '../playerStore';
 import { composeCgPrompt } from '../../../ai/imagePrompt';
-import { generateImage, blobToRef, type ImageRef } from '../../../ai/imageProvider';
+import { generateImage, blobToRef, supportsReferences, type ImageRef } from '../../../ai/imageProvider';
 import { useStylePresets } from '../../../ai/imageStyles';
 import { ImageConnectionField } from '../../shared/ImageConnectionField';
 import { getAssetBlob, putAsset, deleteAsset } from '../../../storage/db';
@@ -108,7 +108,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
 
       // Референсы: инлайн-картинки присутствующих персонажей (только gemini + вкл.).
       const refs: ImageRef[] = [];
-      if (ig.providerKind === 'gemini' && ig.sendReferences) {
+      if (supportsReferences(ig) && ig.sendReferences) {
         const seen = new Set<string>();
         for (const os of state.onScreen) {
           if (seen.has(os.characterId)) continue;
@@ -311,10 +311,15 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
             </label>
           </div>
           <p className="text-[11px] text-gray-500 mb-2">
-            {L(
-              'По умолчанию — нейтральный спрайт в базовой одежде. Можно переопределить своей картинкой. Рефы работают на провайдере Gemini.',
-              'By default — the neutral base-outfit sprite. You can override with your own image. References work on the Gemini provider.'
-            )}
+            {supportsReferences(ig)
+              ? L(
+                  'По умолчанию — нейтральный спрайт в базовой одежде. Можно переопределить своей картинкой.',
+                  'By default — the neutral base-outfit sprite. You can override it with your own image.'
+                )
+              : L(
+                  'Выбранный провайдер (images/generations) рефы не принимает — картинка рисуется только по тексту. Рефы работают на Google напрямую и на шлюзах через chat/completions.',
+                  'The selected provider (images/generations) takes no references — text only. References work with Google direct and with gateways via chat/completions.'
+                )}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {project.characters.map((c) => {

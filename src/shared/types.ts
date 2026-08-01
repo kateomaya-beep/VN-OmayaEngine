@@ -683,7 +683,12 @@ export function normalizeRandomEvents(v: unknown): RandomEventConfig {
 // или OpenAI-совместимый). Хранится в проекте: у каждой игры свой воркер-промпт,
 // стиль, референсы и галерея. Ключ image-API — только в localStorage (роль 'image').
 export interface ImageGenConfig {
-  providerKind: 'gemini' | 'openai'; // gemini — с рефами (generateContent); openai — /images/generations без рефов
+  // Как именно шлюз рисует картинки:
+  //  • gemini      — родной Google generateContent (с рефами);
+  //  • openai      — /images/generations (текст→картинка, без рефов);
+  //  • openai_chat — /chat/completions с картинкой в ОТВЕТЕ (OpenRouter и клоны:
+  //    google/gemini-…-image, modalities:['image','text']). Рефы работают.
+  providerKind: 'gemini' | 'openai' | 'openai_chat';
   baseUrl?: string; // пусто — дефолт под providerKind
   model?: string; // пусто — дефолт под providerKind
   availableModels?: string[]; // подтянутый ⟳ список моделей image-провайдера (как у основного подключения)
@@ -725,7 +730,8 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     }
   }
   return {
-    providerKind: o.providerKind === 'openai' ? 'openai' : 'gemini',
+    providerKind:
+      o.providerKind === 'openai' ? 'openai' : o.providerKind === 'openai_chat' ? 'openai_chat' : 'gemini',
     baseUrl: typeof o.baseUrl === 'string' && o.baseUrl.trim() ? o.baseUrl.trim() : undefined,
     model: typeof o.model === 'string' && o.model.trim() ? o.model.trim() : undefined,
     availableModels: Array.isArray(o.availableModels)

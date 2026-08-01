@@ -6,7 +6,7 @@ import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { generatePhoneReply } from '../../ai/phoneChat';
 import { generateDeliveryItems } from '../../ai/deliveryGen';
-import { generateImage, blobToRef, type ImageRef } from '../../ai/imageProvider';
+import { generateImage, blobToRef, supportsReferences, type ImageRef } from '../../ai/imageProvider';
 import { getApiKey } from '../../ai/keys';
 import { resolveSprite } from '../../shared/outfits';
 import { expandMacros } from '../../ai/macros';
@@ -653,7 +653,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       const finalPrompt = [basePrompt, ig.style.trim()].filter(Boolean).join('\n\nStyle: ');
       // Референс — спрайт протагониста (neutral в текущем наряде), только для gemini.
       const refs: ImageRef[] = [];
-      if (ig.providerKind === 'gemini' && ig.sendReferences) {
+      if (supportsReferences(ig) && ig.sendReferences) {
         const blobKey = project.assets.find((a) => a.id === spriteAssetId)?.blobKey;
         if (blobKey) {
           const b = await getAssetBlob(blobKey);
