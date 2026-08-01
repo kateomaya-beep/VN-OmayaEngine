@@ -33,12 +33,12 @@ export interface ImageGenInput {
   signal?: AbortSignal;
 }
 
-// Кадр запроса: соотношение из вызова → из настроек проекта → 16:9.
+// Кадр запроса: соотношение из вызова (воркер / фон / селфи) → из настроек
+// проекта → 16:9. 'auto' в настройках здесь уже не встречается: его разрешает
+// вызывающий, подставляя выбор воркера, — но подстрахуемся.
 function frame(cfg: ImageGenConfig, input: ImageGenInput): { ratio: ImageAspectRatio; tier: ImageSizeTier } {
-  return {
-    ratio: input.aspectRatio || cfg.aspectRatio || '16:9',
-    tier: cfg.imageSize || '1K',
-  };
+  const fromCfg = cfg.aspectRatio && cfg.aspectRatio !== 'auto' ? cfg.aspectRatio : '16:9';
+  return { ratio: input.aspectRatio || fromCfg, tier: cfg.imageSize || '1K' };
 }
 
 // Пиксели для /images/generations. У OpenAI список размеров закрытый (три варианта),

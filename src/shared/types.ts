@@ -685,6 +685,8 @@ export const IMAGE_ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', 
 export type ImageAspectRatio = (typeof IMAGE_ASPECT_RATIOS)[number];
 export const IMAGE_SIZE_TIERS = ['1K', '2K', '4K'] as const;
 export type ImageSizeTier = (typeof IMAGE_SIZE_TIERS)[number];
+// 'auto' — кадр выбирает воркер: он заканчивает промпт строкой «ASPECT: 16:9».
+export type ImageAspectSetting = ImageAspectRatio | 'auto';
 export const IMAGE_ASPECT_LABELS: Record<ImageAspectRatio, string> = {
   '1:1': '1:1 — квадрат',
   '16:9': '16:9 — широкий (как экран игры)',
@@ -710,7 +712,7 @@ export interface ImageGenConfig {
   model?: string; // пусто — дефолт под providerKind
   // Кадр: соотношение сторон и разрешение (у Nano Banana это родные параметры).
   // Применяются к CG; фон движок всегда просит горизонтальным, селфи — вертикальным.
-  aspectRatio?: ImageAspectRatio;
+  aspectRatio?: ImageAspectSetting;
   imageSize?: ImageSizeTier;
   availableModels?: string[]; // подтянутый ⟳ список моделей image-провайдера (как у основного подключения)
   systemPrompt: string; // редактируемый шаблон ВОРКЕРА: как превратить сцену в image-промпт
@@ -720,22 +722,37 @@ export interface ImageGenConfig {
   gallery: string[]; // сохранённые в галерею CG (assetId), новые в конце
 }
 
-export const DEFAULT_IMAGE_SYSTEM_PROMPT = `You turn the CURRENT visual-novel scene into ONE image-generation prompt for a text-to-image model.
-Output ONLY the prompt text — a single vivid paragraph in English, no quotes, no headings, no explanations.
-Cover, when relevant:
-- WHO is in frame: use the exact character NAMES given, and describe their appearance faithfully (hair, eyes, build, current outfit) from their cards. If a reference image is provided for a character, keep them consistent with it.
-- WHAT is happening: the key dramatic beat right now — pose, expression, action, interaction — tell the story through the image.
-- WHERE: location, time of day, lighting, atmosphere.
-- Framing: a polished cinematic visual-novel CG illustration, tasteful composition.
-Do NOT add an art-style tag — the style is appended separately. Keep it under ~120 words.`;
+export const DEFAULT_IMAGE_SYSTEM_PROMPT = `You turn the CURRENT visual-novel scene into ONE prompt for a text-to-image model.
+Output ONLY the prompt text: a single English paragraph of 100+ words. No quotes, no headings, no markdown, no explanations.
+
+Write it in this exact order:
+1. CAMERA — shot type, angle and lens. E.g. "Medium shot, 85mm, f/2.0 shallow depth of field, slight low angle".
+2. SUBJECT — who or what is in the foreground. If a character is in frame, START with their FIRST NAME exactly as given, then their appearance: hair, eyes, build, current outfit. Name EVERY character who appears; if a reference image is supplied for them, stay consistent with it.
+3. ACTION AND COMPOSITION — what is happening right now: pose, gesture, expression, interaction, and where each subject sits in the frame.
+4. ENVIRONMENT — location, props, background depth, time of day, weather.
+5. LIGHTING AND ATMOSPHERE — the mood carried by light: golden hour, dramatic backlighting, soft diffused light, harsh contrast, practical lamps, haze, rim light.
+
+Rules:
+- Pick something worth looking at: a charged moment, a telling detail, an unusual angle — never a flat centred headshot. Let the frame tell part of the story.
+- No nudity and no explicit private parts — suggestion, framing and cropping instead.
+- Do NOT name an art style or medium — the style line is appended separately by the engine.
+- On the LAST line, alone, state the frame you want: "ASPECT: 16:9". Allowed: 1:1, 2:3, 3:2, 3:4, 4:3, 9:16, 16:9, 21:9. Wide for landscapes, interiors and group scenes; tall for portraits and single figures. The engine uses this only when the aspect ratio is set to "auto".`;
+
+// Стиль по умолчанию — дописывается к промпту воркера отдельной строкой.
+export const DEFAULT_IMAGE_STYLE =
+  'masterpiece, 8k, best quality, semi realism anime inspired style, loose painterly brushwork, atmospheric perspective, cinematic dramatic lighting, muted earth tones with color accents, concept art quality, environmental storytelling';
+
+// Обрывок ПРЕЖНЕГО дефолтного воркер-промпта: если в проекте лежит он (значит,
+// пользователь его не правил) — подменяем на актуальный, как с блоками пресета.
+const OUTDATED_IMAGE_PROMPT_MARK = 'Do NOT add an art-style tag';
 
 export function defaultImageGenConfig(): ImageGenConfig {
   return {
     providerKind: 'gemini',
-    aspectRatio: '16:9',
-    imageSize: '1K',
+    aspectRatio: 'auto',
+    imageSize: '2K',
     systemPrompt: DEFAULT_IMAGE_SYSTEM_PROMPT,
-    style: '',
+    style: DEFAULT_IMAGE_STYLE,
     references: {},
     sendReferences: true,
     gallery: [],
@@ -760,14 +777,22 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     availableModels: Array.isArray(o.availableModels)
       ? o.availableModels.filter((x): x is string => typeof x === 'string' && !!x)
       : undefined,
-    aspectRatio: (IMAGE_ASPECT_RATIOS as readonly string[]).includes(o.aspectRatio as string)
-      ? (o.aspectRatio as ImageAspectRatio)
-      : d.aspectRatio,
+    aspectRatio:
+      o.aspectRatio === 'auto' || (IMAGE_ASPECT_RATIOS as readonly string[]).includes(o.aspectRatio as string)
+        ? (o.aspectRatio as ImageAspectSetting)
+        : d.aspectRatio,
     imageSize: (IMAGE_SIZE_TIERS as readonly string[]).includes(o.imageSize as string)
       ? (o.imageSize as ImageSizeTier)
       : d.imageSize,
-    systemPrompt: typeof o.systemPrompt === 'string' && o.systemPrompt.trim() ? o.systemPrompt : d.systemPrompt,
-    style: typeof o.style === 'string' ? o.style : '',
+    // Лежит прежний дефолтный воркер-промпт (значит, его не правили) → обновляем.
+    systemPrompt:
+      typeof o.systemPrompt === 'string' &&
+      o.systemPrompt.trim() &&
+      !o.systemPrompt.includes(OUTDATED_IMAGE_PROMPT_MARK)
+        ? o.systemPrompt
+        : d.systemPrompt,
+    // Пустой стиль неотличим от «ни разу не задавали» — подставляем дефолтный.
+    style: typeof o.style === 'string' && o.style.trim() ? o.style : d.style,
     references: refs,
     sendReferences: typeof o.sendReferences === 'boolean' ? o.sendReferences : true,
     gallery: Array.isArray(o.gallery) ? o.gallery.filter((x): x is string => typeof x === 'string') : [],

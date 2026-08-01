@@ -16,7 +16,7 @@ import {
   IMAGE_SIZE_TIERS,
   type AssetMeta,
   type ImageGenConfig,
-  type ImageAspectRatio,
+  type ImageAspectSetting,
   type ImageSizeTier,
 } from '../../../shared/types';
 
@@ -110,7 +110,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const p = await composeCgPrompt(project, state, ig.systemPrompt);
+      const { prompt: p, aspectRatio: workerAspect } = await composeCgPrompt(project, state, ig.systemPrompt);
       if (controller.signal.aborted) return;
       setPrompt(p);
       setStage('draw');
@@ -130,7 +130,13 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
         }
       }
       const finalPrompt = [p, ig.style.trim()].filter(Boolean).join('\n\nStyle: ');
-      const blob = await generateImage(ig, { prompt: finalPrompt, references: refs, signal: controller.signal });
+      const blob = await generateImage(ig, {
+        prompt: finalPrompt,
+        references: refs,
+        // «Авто» — кадр выбрал воркер (строка ASPECT в конце промпта).
+        aspectRatio: ig.aspectRatio === 'auto' ? workerAspect || '16:9' : undefined,
+        signal: controller.signal,
+      });
       if (controller.signal.aborted) return;
       const blobKey = uid('blob');
       await putAsset(blobKey, blob);
@@ -301,9 +307,10 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
               <label className="label">{L('Соотношение сторон', 'Aspect ratio')}</label>
               <select
                 className="input"
-                value={ig.aspectRatio || '16:9'}
-                onChange={(e) => patchIG({ aspectRatio: e.target.value as ImageAspectRatio })}
+                value={ig.aspectRatio || 'auto'}
+                onChange={(e) => patchIG({ aspectRatio: e.target.value as ImageAspectSetting })}
               >
+                <option value="auto">{L('Авто — выбирает ИИ по сцене', 'Auto — the AI picks it')}</option>
                 {IMAGE_ASPECT_RATIOS.map((r) => (
                   <option key={r} value={r}>
                     {lang === 'en' ? r : IMAGE_ASPECT_LABELS[r]}
