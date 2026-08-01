@@ -208,6 +208,25 @@ function attachImagesOpenAi(
   };
 }
 
+// Шлюзы, которые НЕ принимают запрос, оканчивающийся ходом ассистента (префилл):
+// «Requests ending with a model turn are not supported». Узнаём это только по 400,
+// поэтому запоминаем на сессию — иначе каждый ход платили бы двойным запросом.
+const noPrefillTargets = new Set<string>();
+const targetKey = (base: string, model: string) => `${base}::${model}`;
+
+// Префилл как инструкция вместо хода ассистента — для таких шлюзов.
+function prefillAsInstruction(
+  msgs: { role: string; content: unknown }[],
+  prefill: string
+): { role: string; content: unknown }[] {
+  const out = msgs.map((m) => ({ ...m }));
+  const idx = out.map((m) => m.role).lastIndexOf('user');
+  const hint = `\n\n(Start your reply with exactly: ${prefill.trim()})`;
+  if (idx >= 0 && typeof out[idx].content === 'string') out[idx].content = (out[idx].content as string) + hint;
+  else out.push({ role: 'user', content: hint.trim() });
+  return out;
+}
+
 const openAiCompatible: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
@@ -217,7 +236,13 @@ const openAiCompatible: Provider = {
       ...sanitizeMessages(req.messages),
     ];
     if (req.attachments?.length) attachImagesOpenAi(messages, req.attachments);
-    if (req.prefill?.trim()) messages.push({ role: 'assistant', content: req.prefill });
+    // Префилл шлём ходом ассистента, только если этот шлюз его уже не отверг.
+    let prefill = req.prefill?.trim() ? req.prefill : '';
+    if (prefill && noPrefillTargets.has(targetKey(base, model))) {
+      messages.splice(0, messages.length, ...prefillAsInstruction(messages, prefill));
+      prefill = '';
+    }
+    if (prefill) messages.push({ role: 'assistant', content: prefill });
     const body: Record<string, unknown> = {
       model,
       temperature: req.temperature,
@@ -256,6 +281,31 @@ const openAiCompatible: Provider = {
         delete b2.temperature;
         fixes.push('без temperature');
       }
+      // Шлюз не принимает запрос, оканчивающийся ходом ассистента (наш префилл).
+      // Повторяем без него, перенеся смысл префилла в инструкцию последнего хода
+      // игрока, и запоминаем шлюз — дальше сразу шлём в этой форме.
+      if (
+        prefill &&
+        /model turn|ending with (a |an )?(model|assistant)|last message.*(user|assistant)|must end with/i.test(errText)
+      ) {
+        noPrefillTargets.add(targetKey(base, model));
+        logEvent(
+          'warn',
+          'llm',
+          'Шлюз не принимает префилл (запрос не может заканчиваться ходом модели) — повторяю без него и больше не шлю его этому шлюзу'
+        );
+        const msgs2 = prefillAsInstruction(
+          messages.filter((m) => !(m.role === 'assistant' && m.content === prefill)),
+          prefill
+        );
+        res = await post({ ...b2, messages: msgs2 });
+        if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => errText));
+        const data = await res.json();
+        const content = normalizeContent(data?.choices?.[0]?.message?.content);
+        if (content === null) throw new Error('Пустой ответ провайдера');
+        // Префилла в ответе нет (его не было в запросе) — не приклеиваем.
+        return content;
+      }
       // Модель не умеет картинки — повторяем без вложений: пусть ответит хотя бы
       // по текстовой пометке «герой прислал фото», а не роняет всю переписку.
       if (req.attachments?.length && /image|vision|multimodal|content.*type|unsupported/i.test(errText)) {
@@ -263,14 +313,14 @@ const openAiCompatible: Provider = {
           role: string;
           content: unknown;
         }[];
-        if (req.prefill?.trim()) plain.push({ role: 'assistant', content: req.prefill });
+        if (prefill) plain.push({ role: 'assistant', content: prefill });
         logEvent('warn', 'llm', 'Модель не приняла картинку — повторяю запрос без вложения');
         res = await post({ ...b2, messages: plain });
         if (res.ok) {
           const data = await res.json();
           const content = normalizeContent(data?.choices?.[0]?.message?.content);
           if (content === null) throw new Error('Пустой ответ провайдера');
-          return req.prefill ? req.prefill + content : content;
+          return prefill ? prefill + content : content;
         }
         throw providerHttpError(res.status, await res.text().catch(() => errText));
       }
@@ -303,7 +353,7 @@ const openAiCompatible: Provider = {
           'Вероятно, весь бюджет токенов ушёл на reasoning — увеличьте лимит или снизьте глубину размышления.'
       );
     }
-    return req.prefill ? req.prefill + content : content;
+    return prefill ? prefill + content : content;
   },
   async listModels(conn, apiKey) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
