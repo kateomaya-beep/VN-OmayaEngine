@@ -27,6 +27,11 @@ export function historyTokens(history: LlmMessage[]): number {
   return history.reduce((sum, m) => sum + estimateTokens(m.content), 0);
 }
 
+// Свёртке нужен явный потолок ответа: без него шлюзы режут по своему дефолту
+// (512/1024 токена), и двухсекционный ответ обрывается на середине — это одна из
+// причин «пустых» и половинчатых саммари.
+const SUMMARY_MAX_TOKENS = 3000;
+
 async function summarize(project: Project, prompt: string, transcript: string): Promise<string> {
   return (
     await runCompletionWith(project.aiConfig.summaryConnection, 'summary', {
@@ -34,8 +39,34 @@ async function summarize(project: Project, prompt: string, transcript: string): 
       messages: [{ role: 'user', content: transcript }],
       model: project.aiConfig.summarizerModel || undefined,
       temperature: 0.3,
+      maxTokens: SUMMARY_MAX_TOKENS,
     })
   ).trim();
+}
+
+// Свёртка с НЕМЕДЛЕННЫМ повтором. Первая попытка — как есть; если ответ пустой
+// или обрезанный, пробуем ещё раз тем же ходом: с нажимом на формат и без
+// прежнего снапшота на входе (частая причина пустоты — слишком длинный вход).
+// Ждать следующего хода ради второй попытки незачем — история и так не режется,
+// но чем раньше свёртка получится, тем меньше растёт живое окно.
+async function summarizeWithRetry(
+  project: Project,
+  prompt: string,
+  input: string,
+  transcriptOnly: string
+): Promise<{ raw: string; episode: string; storyState: string }> {
+  const first = await summarize(project, prompt, input);
+  const a = splitSummarySections(first);
+  if (a.episode.trim().length >= MIN_EPISODE_CHARS) return { raw: first, ...a };
+
+  logEvent('warn', 'memory', 'Свёртка вышла пустой — повторяю сразу же (короче вход, жёстче формат)');
+  const second = await summarize(
+    project,
+    `${prompt}\n\nIMPORTANT: output BOTH marked sections and never return an empty answer. Facts only, no preamble.`,
+    transcriptOnly
+  );
+  const b = splitSummarySections(second);
+  return { raw: second, ...b };
 }
 
 // Summarize the oldest turns that fall outside the live window into a new
@@ -97,8 +128,7 @@ export async function maybeCompress(
     const input = prevState
       ? `CURRENT STORY STATE (snapshot to update):\n${prevState}\n\n=== NEW TURNS SINCE THAT SNAPSHOT ===\n${transcript}`
       : transcript;
-    const raw = await summarize(project, prompt, input);
-    const { episode, storyState } = splitSummarySections(raw);
+    const { raw, episode, storyState } = await summarizeWithRetry(project, prompt, input, transcript);
 
     // КРИТИЧНО: историю режем ТОЛЬКО если свёртка реально получилась. Пустой,
     // обрезанный или мусорный ответ раньше проходил дальше по коду — запись в
@@ -111,8 +141,8 @@ export async function maybeCompress(
         toastId,
         'error',
         tt(
-          'Свёртка не удалась (пустой ответ) — история сохранена, повторю на следующем ходу',
-          'Summarization failed (empty answer) — history kept, will retry next turn'
+          'Свёртка не удалась (две попытки) — история ЦЕЛА, ни одно сообщение не скрыто. Повторю на следующем ходу.',
+          'Summarization failed (two attempts) — history is INTACT, nothing hidden. Will retry next turn.'
         )
       );
       logEvent(
