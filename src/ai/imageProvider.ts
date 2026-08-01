@@ -125,6 +125,31 @@ export function supportsReferences(cfg: ImageGenConfig): boolean {
   return cfg.providerKind === 'gemini' || cfg.providerKind === 'openai_chat';
 }
 
+// Сборка финального текста для художника — одна на все вызовы (CG-студия, фоны,
+// селфи), чтобы стиль и запреты не терялись где-то по дороге.
+//  • Style  — строка стиля проекта;
+//  • Avoid  — «чего быть не должно»: параметра negative prompt у Gemini и роутеров
+//    нет, но текстовую формулировку модели понимают;
+//  • про референсы — прямое указание брать оттуда ЛИЦО и ОДЕЖДУ, но не позу:
+//    спрайты стоят по стойке смирно, и без этой строки поза с них и копируется.
+export function composeFinalPrompt(
+  cfg: ImageGenConfig,
+  prompt: string,
+  opts?: { refCount?: number }
+): string {
+  const parts = [prompt.trim()];
+  if (cfg.style?.trim()) parts.push(`Style: ${cfg.style.trim()}`);
+  if (cfg.negativePrompt?.trim()) parts.push(`Avoid: ${cfg.negativePrompt.trim()}`);
+  if (opts?.refCount) {
+    parts.push(
+      `The ${opts.refCount} attached reference image${opts.refCount > 1 ? 's' : ''} show the named characters: ` +
+        'match their face, hair and outfit exactly, but do NOT copy the pose, framing or background from them — ' +
+        'build the pose described above, with natural anatomy and believable weight.'
+    );
+  }
+  return parts.join('\n\n');
+}
+
 // ---- Gemini (Nano Banana) ----
 async function generateGemini(cfg: ImageGenConfig, input: ImageGenInput): Promise<Blob> {
   const key = getApiKey('image');

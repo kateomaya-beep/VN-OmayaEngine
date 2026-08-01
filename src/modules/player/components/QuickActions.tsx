@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { usePlayerStore } from '../playerStore';
 import { composeImagePrompt } from '../../../ai/imagePrompt';
-import { generateImage } from '../../../ai/imageProvider';
+import { generateImage, composeFinalPrompt } from '../../../ai/imageProvider';
 import { putAsset } from '../../../storage/db';
 import { uid, autoTagsFromName } from '../../../shared/utils';
 import { defaultImageGenConfig, type AssetMeta } from '../../../shared/types';
@@ -28,7 +28,7 @@ export function QuickActions({ open, onClose }: { open: boolean; onClose: () => 
       setBusy('Рисую изображение…');
       const cfg = project.imageGen ?? defaultImageGenConfig();
       const blob = await generateImage(cfg, {
-        prompt: [prompt, cfg.style].filter(Boolean).join('\n\nStyle: '),
+        prompt: composeFinalPrompt(cfg, prompt),
         // Фон всегда горизонтальный — он растягивается на весь экран сцены.
         // У CG кадр берётся из настроек CG-студии.
         aspectRatio: kind === 'background' ? '16:9' : undefined,

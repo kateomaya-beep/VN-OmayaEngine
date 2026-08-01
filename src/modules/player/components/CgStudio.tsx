@@ -3,7 +3,13 @@ import { Modal, AssetImage } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
 import { usePlayerStore } from '../playerStore';
 import { composeCgPrompt } from '../../../ai/imagePrompt';
-import { generateImage, blobToRef, supportsReferences, type ImageRef } from '../../../ai/imageProvider';
+import {
+  generateImage,
+  blobToRef,
+  supportsReferences,
+  composeFinalPrompt,
+  type ImageRef,
+} from '../../../ai/imageProvider';
 import { useStylePresets } from '../../../ai/imageStyles';
 import { ImageConnectionField } from '../../shared/ImageConnectionField';
 import { getAssetBlob, putAsset, deleteAsset } from '../../../storage/db';
@@ -129,7 +135,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           if (b) refs.push(await blobToRef(b));
         }
       }
-      const finalPrompt = [p, ig.style.trim()].filter(Boolean).join('\n\nStyle: ');
+      const finalPrompt = composeFinalPrompt(ig, p, { refCount: refs.length });
       const blob = await generateImage(ig, {
         prompt: finalPrompt,
         references: refs,
@@ -363,6 +369,20 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
             onPickPreset={(style) => patchIG({ style })}
             onDeletePreset={removePreset}
           />
+          <div className="mt-3">
+            <label className="label">{L('Чего быть не должно', 'What to avoid')}</label>
+            <p className="text-[11px] text-gray-500 mb-1">
+              {L(
+                'Уходит в промпт строкой «Avoid: …» — отдельного параметра negative prompt у этих провайдеров нет. Здесь держат список типовых артефактов: кривые руки, невозможные позы, лишние конечности.',
+                'Sent as an "Avoid: …" line — these providers have no negative-prompt parameter. Keep the usual artefacts here: broken hands, impossible poses, extra limbs.'
+              )}
+            </p>
+            <textarea
+              className="input h-20 text-sm"
+              value={ig.negativePrompt || ''}
+              onChange={(e) => patchIG({ negativePrompt: e.target.value })}
+            />
+          </div>
         </div>
 
         {/* Референсы персонажей */}

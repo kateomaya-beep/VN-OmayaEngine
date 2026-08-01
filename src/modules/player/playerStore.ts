@@ -6,7 +6,13 @@ import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { generatePhoneReply } from '../../ai/phoneChat';
 import { generateDeliveryItems } from '../../ai/deliveryGen';
-import { generateImage, blobToRef, supportsReferences, type ImageRef } from '../../ai/imageProvider';
+import {
+  generateImage,
+  blobToRef,
+  supportsReferences,
+  composeFinalPrompt,
+  type ImageRef,
+} from '../../ai/imageProvider';
 import { getApiKey } from '../../ai/keys';
 import { resolveSprite } from '../../shared/outfits';
 import { expandMacros } from '../../ai/macros';
@@ -650,8 +656,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       const basePrompt = tmpl
         .replace(/\{protagonist_name\}/g, heroName)
         .replace(/\{user_prompt\}/g, userPrompt.trim() || 'casual selfie');
-      const finalPrompt = [basePrompt, ig.style.trim()].filter(Boolean).join('\n\nStyle: ');
-      // Референс — спрайт протагониста (neutral в текущем наряде), только для gemini.
+      // Референс — спрайт протагониста (neutral в текущем наряде), где он поддержан.
       const refs: ImageRef[] = [];
       if (supportsReferences(ig) && ig.sendReferences) {
         const blobKey = project.assets.find((a) => a.id === spriteAssetId)?.blobKey;
@@ -660,6 +665,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           if (b) refs.push(await blobToRef(b));
         }
       }
+      // Стиль, запреты и правило про референсы — общей сборкой (как в CG-студии).
+      const finalPrompt = composeFinalPrompt(ig, basePrompt, { refCount: refs.length });
       // Селфи — вертикальное: это фото с телефона, а не кат-сцена.
       const blob = await generateImage(ig, { prompt: finalPrompt, references: refs, aspectRatio: '3:4' });
       const blobKey = uid('blob');

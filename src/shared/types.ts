@@ -714,6 +714,7 @@ export interface ImageGenConfig {
   // Применяются к CG; фон движок всегда просит горизонтальным, селфи — вертикальным.
   aspectRatio?: ImageAspectSetting;
   imageSize?: ImageSizeTier;
+  negativePrompt?: string; // «чего в кадре быть не должно» — уходит строкой Avoid: …
   availableModels?: string[]; // подтянутый ⟳ список моделей image-провайдера (как у основного подключения)
   systemPrompt: string; // редактируемый шаблон ВОРКЕРА: как превратить сцену в image-промпт
   style: string; // текущий стиль изображения (независим от systemPrompt)
@@ -728,23 +729,37 @@ Output ONLY the prompt text: a single English paragraph of 100+ words. No quotes
 Write it in this exact order:
 1. CAMERA — shot type, angle and lens. E.g. "Medium shot, 85mm, f/2.0 shallow depth of field, slight low angle".
 2. SUBJECT — who or what is in the foreground. If a character is in frame, START with their FIRST NAME exactly as given, then their appearance: hair, eyes, build, current outfit. Name EVERY character who appears; if a reference image is supplied for them, stay consistent with it.
-3. ACTION AND COMPOSITION — what is happening right now: pose, gesture, expression, interaction, and where each subject sits in the frame.
+3. POSE AND COMPOSITION — the single most important part. For EVERY person in frame describe a pose a real person could actually hold, and spell out the CONTACT POINTS that carry their weight: which foot is planted, what the hand grips or leans on, what the body rests against. Say where BOTH hands are and where the eyes look. Then place each subject in the frame (left / centre / right, foreground / behind).
 4. ENVIRONMENT — location, props, background depth, time of day, weather.
 5. LIGHTING AND ATMOSPHERE — the mood carried by light: golden hour, dramatic backlighting, soft diffused light, harsh contrast, practical lamps, haze, rim light.
 
 Rules:
 - Pick something worth looking at: a charged moment, a telling detail, an unusual angle — never a flat centred headshot. Let the frame tell part of the story.
+- ANATOMY BEATS DRAMA. A simple, readable, physically possible pose always wins over an acrobatic one — twisted torsos, straddling in cramped spaces, arms bent behind bodies and floating limbs come out mangled. If the moment is physically awkward to draw, choose a tighter crop (hands, faces, shoulders) or a calmer instant just before or after it.
+- Keep at most THREE people in frame. Crop the rest out or leave them off-screen; crowds turn into deformed faces.
+- In cramped settings (car interior, doorway, stairwell, bed) state explicitly how the bodies fit: who sits, who leans, what their knees and elbows touch.
+- Reference images define a character's FACE, HAIR and OUTFIT only. Never copy the pose or framing of a reference — build the pose from this description.
 - No nudity and no explicit private parts — suggestion, framing and cropping instead.
 - Do NOT name an art style or medium — the style line is appended separately by the engine.
 - On the LAST line, alone, state the frame you want: "ASPECT: 16:9". Allowed: 1:1, 2:3, 3:2, 3:4, 4:3, 9:16, 16:9, 21:9. Wide for landscapes, interiors and group scenes; tall for portraits and single figures. The engine uses this only when the aspect ratio is set to "auto".`;
 
 // Стиль по умолчанию — дописывается к промпту воркера отдельной строкой.
+// Ориентир — кат-сцены романтических новелл: полуреализм с живыми цветами,
+// правильная анатомия, аккуратная живописная отделка (не аниме-плоскость).
 export const DEFAULT_IMAGE_STYLE =
-  'masterpiece, 8k, best quality, semi realism anime inspired style, loose painterly brushwork, atmospheric perspective, cinematic dramatic lighting, muted earth tones with color accents, concept art quality, environmental storytelling';
+  'masterpiece, best quality, 8k, semi-realistic digital painting in the style of a modern romance visual novel cut-scene, realistic human proportions and anatomy, lifelike faces with subtle expressions, rich saturated colors, warm natural skin tones, soft volumetric cinematic lighting, glossy polished rendering with fine painterly detail, shallow depth of field';
+
+// Чего в кадре быть НЕ должно. Отдельным полем: у Gemini и роутеров нет параметра
+// negative prompt, поэтому движок дописывает это строкой «Avoid: …» — модели
+// такую формулировку понимают, а пользователь может править список под себя.
+export const DEFAULT_IMAGE_NEGATIVE =
+  'distorted anatomy, deformed or fused hands, extra fingers, extra limbs, broken joints, twisted spine, impossible or contorted pose, floating limbs, disproportionate body, stiff mannequin posing, melted faces, duplicated characters, cluttered composition, blurry, lowres, watermark, text, signature';
 
 // Обрывок ПРЕЖНЕГО дефолтного воркер-промпта: если в проекте лежит он (значит,
 // пользователь его не правил) — подменяем на актуальный, как с блоками пресета.
 const OUTDATED_IMAGE_PROMPT_MARK = 'Do NOT add an art-style tag';
+// То же для стиля: прежний дефолт (аниме-полуреализм) → новый, реалистичнее.
+const OUTDATED_IMAGE_STYLE_MARK = 'semi realism anime inspired style';
 
 export function defaultImageGenConfig(): ImageGenConfig {
   return {
@@ -753,6 +768,7 @@ export function defaultImageGenConfig(): ImageGenConfig {
     imageSize: '2K',
     systemPrompt: DEFAULT_IMAGE_SYSTEM_PROMPT,
     style: DEFAULT_IMAGE_STYLE,
+    negativePrompt: DEFAULT_IMAGE_NEGATIVE,
     references: {},
     sendReferences: true,
     gallery: [],
@@ -792,7 +808,13 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
         ? o.systemPrompt
         : d.systemPrompt,
     // Пустой стиль неотличим от «ни разу не задавали» — подставляем дефолтный.
-    style: typeof o.style === 'string' && o.style.trim() ? o.style : d.style,
+    // Прежний дефолтный стиль (аниме-полуреализм) обновляем на актуальный.
+    style:
+      typeof o.style === 'string' && o.style.trim() && !o.style.includes(OUTDATED_IMAGE_STYLE_MARK)
+        ? o.style
+        : d.style,
+    negativePrompt:
+      typeof o.negativePrompt === 'string' && o.negativePrompt.trim() ? o.negativePrompt : d.negativePrompt,
     references: refs,
     sendReferences: typeof o.sendReferences === 'boolean' ? o.sendReferences : true,
     gallery: Array.isArray(o.gallery) ? o.gallery.filter((x): x is string => typeof x === 'string') : [],
