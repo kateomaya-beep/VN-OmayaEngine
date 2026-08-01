@@ -2,6 +2,7 @@ import type { LlmMessage, ApiConnection } from '../../shared/types';
 import { getApiKey } from '../keys';
 import { getConnection } from '../connection';
 import { logEvent } from '../../shared/logStore';
+import { pushToast } from '../../shared/toast';
 
 export interface CompletionRequest {
   system: string;
@@ -238,18 +239,11 @@ function rememberNoPrefill(key: string): void {
   }
 }
 
-// Префилл как инструкция вместо хода ассистента — для таких шлюзов.
-function prefillAsInstruction(
-  msgs: { role: string; content: unknown }[],
-  prefill: string
-): { role: string; content: unknown }[] {
-  const out = msgs.map((m) => ({ ...m }));
-  const idx = out.map((m) => m.role).lastIndexOf('user');
-  const hint = `\n\n(Start your reply with exactly: ${prefill.trim()})`;
-  if (idx >= 0 && typeof out[idx].content === 'string') out[idx].content = (out[idx].content as string) + hint;
-  else out.push({ role: 'user', content: hint.trim() });
-  return out;
-}
+// НАСТОЯЩИЙ префилл — это ход ассистента в конце запроса, который модель
+// продолжает. Подменять его инструкцией «начни ответ с …» нельзя: это уже не
+// префилл, а просьба, которую модель вольна проигнорировать. Поэтому там, где
+// шлюз такой запрос отвергает, префилл ОТКЛЮЧАЕТСЯ для этой модели — честно и
+// заметно (тост + лог), а не подделывается.
 
 const openAiCompatible: Provider = {
   async complete(conn, apiKey, req) {
@@ -260,12 +254,9 @@ const openAiCompatible: Provider = {
       ...sanitizeMessages(req.messages),
     ];
     if (req.attachments?.length) attachImagesOpenAi(messages, req.attachments);
-    // Префилл шлём ходом ассистента, только если этот шлюз его уже не отверг.
-    let prefill = req.prefill?.trim() ? req.prefill : '';
-    if (prefill && noPrefillTargets.has(targetKey(base, model))) {
-      messages.splice(0, messages.length, ...prefillAsInstruction(messages, prefill));
-      prefill = '';
-    }
+    // Префилл шлём ходом ассистента — как и положено. Не шлём только той модели,
+    // которая уже ответила на него отказом (см. noPrefillTargets).
+    let prefill = req.prefill?.trim() && !noPrefillTargets.has(targetKey(base, model)) ? req.prefill : '';
     if (prefill) messages.push({ role: 'assistant', content: prefill });
     const body: Record<string, unknown> = {
       model,
@@ -326,13 +317,17 @@ const openAiCompatible: Provider = {
         logEvent(
           'warn',
           'llm',
-          `Модель «${model}» не принимает префилл (запрос не может заканчиваться ходом модели) — ` +
-            'повторяю без него и запоминаю. На других моделях этого же провайдера префилл продолжит работать.'
+          `Модель «${model}» не поддерживает настоящий префилл (запрос не может заканчиваться ходом ` +
+            'модели). Префилл отключён для неё — подделывать его инструкцией не будем. На других ' +
+            'моделях этого провайдера префилл продолжит работать.'
         );
-        const msgs2 = prefillAsInstruction(
-          messages.filter((m) => !(m.role === 'assistant' && m.content === prefill)),
-          prefill
+        pushToast(
+          'error',
+          `Модель «${model}» не поддерживает префилл — он отключён для неё. Возьмите модель с поддержкой префилла или снимите его в пресете.`
         );
+        // Тот же запрос, но без хвостового хода ассистента. Ничего взамен не
+        // подставляем: формат и так задан ремайндером в конце хода игрока.
+        const msgs2 = messages.filter((m) => !(m.role === 'assistant' && m.content === prefill));
         res = await post({ ...b2, messages: msgs2 });
         if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => errText));
         const data = await res.json();
