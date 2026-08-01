@@ -1,4 +1,4 @@
-import type { ImageGenConfig } from '../shared/types';
+import type { ImageGenConfig, ImageAspectRatio, ImageSizeTier } from '../shared/types';
 import { getApiKey } from './keys';
 import { getConnection } from './connection';
 import { netFetch } from './providers';
@@ -25,9 +25,37 @@ export interface ImageRef {
 
 export interface ImageGenInput {
   prompt: string; // финальный текст (воркер-промпт + стиль)
-  references?: ImageRef[]; // только для gemini
-  size?: string;
+  references?: ImageRef[]; // gemini и openai_chat
+  // Переопределение кадра для конкретного вызова: фон просим горизонтальным,
+  // селфи — вертикальным, независимо от настройки проекта.
+  aspectRatio?: ImageAspectRatio;
+  size?: string; // явный WxH (побеждает расчёт по соотношению) — редко нужен
   signal?: AbortSignal;
+}
+
+// Кадр запроса: соотношение из вызова → из настроек проекта → 16:9.
+function frame(cfg: ImageGenConfig, input: ImageGenInput): { ratio: ImageAspectRatio; tier: ImageSizeTier } {
+  return {
+    ratio: input.aspectRatio || cfg.aspectRatio || '16:9',
+    tier: cfg.imageSize || '1K',
+  };
+}
+
+// Пиксели для /images/generations. У OpenAI список размеров закрытый (три варианта),
+// поэтому на 1K отдаём канонические значения; выше — считаем по соотношению и
+// округляем до кратного 64 (так принимают шлюзы с произвольными размерами).
+function pixelSize(ratio: ImageAspectRatio, tier: ImageSizeTier): string {
+  if (tier === '1K') {
+    const [w, h] = ratio.split(':').map(Number);
+    if (w === h) return '1024x1024';
+    return w > h ? '1536x1024' : '1024x1536';
+  }
+  const base = tier === '4K' ? 4096 : 2048;
+  const [rw, rh] = ratio.split(':').map(Number);
+  const round64 = (n: number) => Math.max(256, Math.round(n / 64) * 64);
+  return rw >= rh
+    ? `${round64(base)}x${round64((base * rh) / rw)}`
+    : `${round64((base * rw) / rh)}x${round64(base)}`;
 }
 
 // Эффективный Base URL. ВАЖНО: у openai-пути пустое поле раньше молча подставляло
@@ -108,19 +136,30 @@ async function generateGemini(cfg: ImageGenConfig, input: ImageGenInput): Promis
     parts.push({ inline_data: { mime_type: r.mime, data: r.b64 } });
   }
 
+  // Кадр — родными параметрами Nano Banana: imageConfig.aspectRatio + imageSize
+  // (2K/4K умеет только Pro-модель, поэтому на отказ повторяем без размера).
+  const { ratio, tier } = frame(cfg, input);
   const url = `${base}/models/${model}:generateContent`;
-  const res = await netFetch(url, {
-    method: 'POST',
-    signal: input.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(key ? { 'x-goog-api-key': key } : {}),
-    },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts }],
-      generationConfig: { responseModalities: ['IMAGE'] },
-    }),
-  });
+  const send = (imageConfig: Record<string, unknown>) =>
+    netFetch(url, {
+      method: 'POST',
+      signal: input.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(key ? { 'x-goog-api-key': key } : {}),
+      },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts }],
+        generationConfig: { responseModalities: ['IMAGE'], imageConfig },
+      }),
+    });
+
+  let res = await send(tier === '1K' ? { aspectRatio: ratio } : { aspectRatio: ratio, imageSize: tier });
+  if (res.status === 400 && tier !== '1K') {
+    const errText = await res.text().catch(() => '');
+    if (!/imageSize|image_size/i.test(errText)) throw imageHttpError(400, url, errText, cfg);
+    res = await send({ aspectRatio: ratio }); // модель не умеет 2K/4K — рисуем в 1K
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw imageHttpError(res.status, url, text, cfg);
@@ -146,7 +185,12 @@ async function generateOpenAiChat(cfg: ImageGenConfig, input: ImageGenInput): Pr
   const base = effectiveImageBase(cfg);
   const model = effectiveImageModel(cfg);
 
-  const parts: any[] = [{ type: 'text', text: input.prompt }];
+  // Единого поля кадра у роутеров нет: просим соотношение и текстом (модель его
+  // понимает), и полем image_config — а если шлюз поля не знает, повторяем без него.
+  const { ratio, tier } = frame(cfg, input);
+  const parts: any[] = [
+    { type: 'text', text: `${input.prompt}\n\nOutput image aspect ratio: ${ratio} (${tier} resolution).` },
+  ];
   for (const r of input.references || []) {
     parts.push({ type: 'image_url', image_url: { url: `data:${r.mime};base64,${r.b64}` } });
   }
@@ -155,6 +199,7 @@ async function generateOpenAiChat(cfg: ImageGenConfig, input: ImageGenInput): Pr
     model,
     messages: [{ role: 'user', content: parts }],
     modalities: ['image', 'text'],
+    image_config: { aspect_ratio: ratio },
   };
   const post = (b: Record<string, unknown>) =>
     netFetch(url, {
@@ -165,12 +210,16 @@ async function generateOpenAiChat(cfg: ImageGenConfig, input: ImageGenInput): Pr
     });
 
   let res = await post(body);
-  // Часть шлюзов не знает поля modalities и отвечает 400 — повторяем без него.
+  // Часть шлюзов не знает необязательных полей (modalities / image_config) и
+  // отвечает 400 — повторяем без них: соотношение всё равно уйдёт текстом.
   if (res.status === 400) {
     const errText = await res.text().catch(() => '');
-    if (!/modalit/i.test(errText)) throw imageHttpError(400, url, errText, cfg);
+    if (!/modalit|image_config|unknown|unrecognized|unsupported|invalid.*(field|parameter)/i.test(errText)) {
+      throw imageHttpError(400, url, errText, cfg);
+    }
     const b2 = { ...body };
     delete b2.modalities;
+    delete b2.image_config;
     res = await post(b2);
   }
   if (!res.ok) throw imageHttpError(res.status, url, await res.text().catch(() => ''), cfg);
@@ -231,7 +280,8 @@ async function generateOpenAI(cfg: ImageGenConfig, input: ImageGenInput): Promis
       model,
       prompt: input.prompt,
       n: 1,
-      size: input.size || '1024x1024',
+      // Здесь кадр задаётся только пикселями — пересчитываем соотношение в WxH.
+      size: input.size || pixelSize(frame(cfg, input).ratio, frame(cfg, input).tier),
       response_format: 'b64_json',
     }),
   });

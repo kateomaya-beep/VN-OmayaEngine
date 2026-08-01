@@ -679,6 +679,23 @@ export function normalizeRandomEvents(v: unknown): RandomEventConfig {
   };
 }
 
+// Кадр картинки. Списки закрытые: это ровно то, что принимает imageConfig у Gemini
+// (Nano Banana), а для остальных путей движок пересчитывает их в пиксели/подсказку.
+export const IMAGE_ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'] as const;
+export type ImageAspectRatio = (typeof IMAGE_ASPECT_RATIOS)[number];
+export const IMAGE_SIZE_TIERS = ['1K', '2K', '4K'] as const;
+export type ImageSizeTier = (typeof IMAGE_SIZE_TIERS)[number];
+export const IMAGE_ASPECT_LABELS: Record<ImageAspectRatio, string> = {
+  '1:1': '1:1 — квадрат',
+  '16:9': '16:9 — широкий (как экран игры)',
+  '9:16': '9:16 — вертикальный (телефон)',
+  '4:3': '4:3 — классический',
+  '3:4': '3:4 — портрет',
+  '3:2': '3:2 — фото',
+  '2:3': '2:3 — постер',
+  '21:9': '21:9 — кинематограф',
+};
+
 // CG-студия — генерация кат-сцен по текущей сцене через image-API (Nano Banana/Gemini
 // или OpenAI-совместимый). Хранится в проекте: у каждой игры свой воркер-промпт,
 // стиль, референсы и галерея. Ключ image-API — только в localStorage (роль 'image').
@@ -691,6 +708,10 @@ export interface ImageGenConfig {
   providerKind: 'gemini' | 'openai' | 'openai_chat';
   baseUrl?: string; // пусто — дефолт под providerKind
   model?: string; // пусто — дефолт под providerKind
+  // Кадр: соотношение сторон и разрешение (у Nano Banana это родные параметры).
+  // Применяются к CG; фон движок всегда просит горизонтальным, селфи — вертикальным.
+  aspectRatio?: ImageAspectRatio;
+  imageSize?: ImageSizeTier;
   availableModels?: string[]; // подтянутый ⟳ список моделей image-провайдера (как у основного подключения)
   systemPrompt: string; // редактируемый шаблон ВОРКЕРА: как превратить сцену в image-промпт
   style: string; // текущий стиль изображения (независим от systemPrompt)
@@ -711,6 +732,8 @@ Do NOT add an art-style tag — the style is appended separately. Keep it under 
 export function defaultImageGenConfig(): ImageGenConfig {
   return {
     providerKind: 'gemini',
+    aspectRatio: '16:9',
+    imageSize: '1K',
     systemPrompt: DEFAULT_IMAGE_SYSTEM_PROMPT,
     style: '',
     references: {},
@@ -737,6 +760,12 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     availableModels: Array.isArray(o.availableModels)
       ? o.availableModels.filter((x): x is string => typeof x === 'string' && !!x)
       : undefined,
+    aspectRatio: (IMAGE_ASPECT_RATIOS as readonly string[]).includes(o.aspectRatio as string)
+      ? (o.aspectRatio as ImageAspectRatio)
+      : d.aspectRatio,
+    imageSize: (IMAGE_SIZE_TIERS as readonly string[]).includes(o.imageSize as string)
+      ? (o.imageSize as ImageSizeTier)
+      : d.imageSize,
     systemPrompt: typeof o.systemPrompt === 'string' && o.systemPrompt.trim() ? o.systemPrompt : d.systemPrompt,
     style: typeof o.style === 'string' ? o.style : '',
     references: refs,

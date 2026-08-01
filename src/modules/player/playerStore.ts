@@ -660,7 +660,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           if (b) refs.push(await blobToRef(b));
         }
       }
-      const blob = await generateImage(ig, { prompt: finalPrompt, references: refs });
+      // Селфи — вертикальное: это фото с телефона, а не кат-сцена.
+      const blob = await generateImage(ig, { prompt: finalPrompt, references: refs, aspectRatio: '3:4' });
       const blobKey = uid('blob');
       await putAsset(blobKey, blob);
       const asset: AssetMeta = {

@@ -9,7 +9,16 @@ import { ImageConnectionField } from '../../shared/ImageConnectionField';
 import { getAssetBlob, putAsset, deleteAsset } from '../../../storage/db';
 import { uploadAsset } from '../../../storage/assetOps';
 import { uid } from '../../../shared/utils';
-import { defaultImageGenConfig, type AssetMeta, type ImageGenConfig } from '../../../shared/types';
+import {
+  defaultImageGenConfig,
+  IMAGE_ASPECT_RATIOS,
+  IMAGE_ASPECT_LABELS,
+  IMAGE_SIZE_TIERS,
+  type AssetMeta,
+  type ImageGenConfig,
+  type ImageAspectRatio,
+  type ImageSizeTier,
+} from '../../../shared/types';
 
 type Stage = 'idle' | 'analyze' | 'draw' | 'done' | 'error';
 interface Result {
@@ -282,6 +291,58 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
               ))}
             </div>
           )}
+        </div>
+
+        {/* Кадр: соотношение сторон + разрешение (у Nano Banana — родные параметры) */}
+        <div>
+          <div className="text-xs uppercase tracking-wide text-gray-500 mb-2">{L('Кадр', 'Frame')}</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="label">{L('Соотношение сторон', 'Aspect ratio')}</label>
+              <select
+                className="input"
+                value={ig.aspectRatio || '16:9'}
+                onChange={(e) => patchIG({ aspectRatio: e.target.value as ImageAspectRatio })}
+              >
+                {IMAGE_ASPECT_RATIOS.map((r) => (
+                  <option key={r} value={r}>
+                    {lang === 'en' ? r : IMAGE_ASPECT_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">{L('Разрешение', 'Resolution')}</label>
+              <select
+                className="input"
+                value={ig.imageSize || '1K'}
+                onChange={(e) => patchIG({ imageSize: e.target.value as ImageSizeTier })}
+              >
+                {IMAGE_SIZE_TIERS.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                    {t === '1K' ? ' · ~1024px' : t === '2K' ? ' · ~2048px' : ' · ~4096px'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-1">
+            {ig.providerKind === 'gemini'
+              ? L(
+                  '2K/4K умеет только Pro-модель Nano Banana — на остальных движок сам вернётся к 1K. Фон всегда рисуется горизонтальным, селфи — вертикальным.',
+                  'Only the Nano Banana Pro model supports 2K/4K — others fall back to 1K automatically. Backgrounds are always landscape, selfies portrait.'
+                )
+              : ig.providerKind === 'openai_chat'
+                ? L(
+                    'На шлюзах-роутерах единого поля кадра нет: соотношение уходит и параметром, и текстом промпта — модель обычно его соблюдает. Фон рисуется горизонтальным, селфи — вертикальным.',
+                    'Router gateways have no standard frame field: the ratio is sent both as a parameter and in the prompt. Backgrounds are landscape, selfies portrait.'
+                  )
+                : L(
+                    'Соотношение и разрешение пересчитываются в размер в пикселях. Часть провайдеров принимает только свой список размеров.',
+                    'Ratio and resolution are converted to a pixel size. Some providers accept only their own fixed sizes.'
+                  )}
+          </p>
         </div>
 
         {/* Стиль + пресеты */}

@@ -29,7 +29,9 @@ export function QuickActions({ open, onClose }: { open: boolean; onClose: () => 
       const cfg = project.imageGen ?? defaultImageGenConfig();
       const blob = await generateImage(cfg, {
         prompt: [prompt, cfg.style].filter(Boolean).join('\n\nStyle: '),
-        size: kind === 'background' ? '1536x1024' : '1024x1024',
+        // Фон всегда горизонтальный — он растягивается на весь экран сцены.
+        // У CG кадр берётся из настроек CG-студии.
+        aspectRatio: kind === 'background' ? '16:9' : undefined,
       });
       const blobKey = uid('blob');
       await putAsset(blobKey, blob);
