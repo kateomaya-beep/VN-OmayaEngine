@@ -718,7 +718,11 @@ export interface ImageGenConfig {
   availableModels?: string[]; // подтянутый ⟳ список моделей image-провайдера (как у основного подключения)
   systemPrompt: string; // редактируемый шаблон ВОРКЕРА: как превратить сцену в image-промпт
   style: string; // текущий стиль изображения (независим от systemPrompt)
-  references: Record<string, string>; // charId → assetId переопределённого рефа; нет ⇒ авто (нейтральный базовый спрайт)
+  references: Record<string, string>; // charId → assetId рефа ВНЕШНОСТИ; нет ⇒ авто (нейтральный базовый спрайт)
+  // charId → assetId рефа ОДЕЖДЫ (отдельная картинка: наряд, а не лицо). Уходит
+  // вторым изображением с явной пометкой «отсюда бери только одежду». Авто нет:
+  // пусто ⇒ одежду модель берёт из описания и рефа внешности.
+  outfitReferences?: Record<string, string>;
   sendReferences: boolean; // отправлять ли референсы (для gemini)
   gallery: string[]; // сохранённые в галерею CG (assetId), новые в конце
 }
@@ -770,6 +774,7 @@ export function defaultImageGenConfig(): ImageGenConfig {
     style: DEFAULT_IMAGE_STYLE,
     negativePrompt: DEFAULT_IMAGE_NEGATIVE,
     references: {},
+    outfitReferences: {},
     sendReferences: true,
     gallery: [],
   };
@@ -779,12 +784,16 @@ export function defaultImageGenConfig(): ImageGenConfig {
 export function normalizeImageGen(v: unknown): ImageGenConfig {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   const d = defaultImageGenConfig();
-  const refs: Record<string, string> = {};
-  if (o.references && typeof o.references === 'object') {
-    for (const [k, val] of Object.entries(o.references as Record<string, unknown>)) {
-      if (typeof val === 'string' && val) refs[k] = val;
+  const pickRefs = (v: unknown): Record<string, string> => {
+    const out: Record<string, string> = {};
+    if (v && typeof v === 'object') {
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof val === 'string' && val) out[k] = val;
+      }
     }
-  }
+    return out;
+  };
+  const refs = pickRefs(o.references);
   return {
     providerKind:
       o.providerKind === 'openai' ? 'openai' : o.providerKind === 'openai_chat' ? 'openai_chat' : 'gemini',
@@ -816,6 +825,7 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     negativePrompt:
       typeof o.negativePrompt === 'string' && o.negativePrompt.trim() ? o.negativePrompt : d.negativePrompt,
     references: refs,
+    outfitReferences: pickRefs(o.outfitReferences),
     sendReferences: typeof o.sendReferences === 'boolean' ? o.sendReferences : true,
     gallery: Array.isArray(o.gallery) ? o.gallery.filter((x): x is string => typeof x === 'string') : [],
   };

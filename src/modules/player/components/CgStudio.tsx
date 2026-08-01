@@ -76,31 +76,40 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
       p.imageGen = { ...(p.imageGen ?? defaultImageGenConfig()), ...patch };
     });
   }
-  function setRef(charId: string, assetId?: string) {
+  // Два независимых слота на персонажа: внешность (лицо/волосы/телосложение) и
+  // одежда (наряд). Одежда без авто-подстановки: спрайт как реф одежды бесполезен.
+  type RefKind = 'appearance' | 'outfit';
+  const refMap = (cur: ImageGenConfig, kind: RefKind) =>
+    kind === 'outfit' ? { ...(cur.outfitReferences || {}) } : { ...cur.references };
+  const withRefMap = (cur: ImageGenConfig, kind: RefKind, refs: Record<string, string>): ImageGenConfig =>
+    kind === 'outfit' ? { ...cur, outfitReferences: refs } : { ...cur, references: refs };
+
+  function setRef(charId: string, kind: RefKind, assetId?: string) {
     s.patchProject((p) => {
       const cur = p.imageGen ?? defaultImageGenConfig();
-      const refs = { ...cur.references };
+      const refs = refMap(cur, kind);
       if (assetId) refs[charId] = assetId;
       else delete refs[charId];
-      p.imageGen = { ...cur, references: refs };
+      p.imageGen = withRefMap(cur, kind, refs);
     });
   }
 
-  // Нейтральный базовый спрайт персонажа — авто-референс.
+  // Нейтральный базовый спрайт персонажа — авто-референс внешности.
   const autoRefAsset = (charId: string): string | undefined => {
     const c = project.characters.find((x) => x.id === charId);
     if (!c) return undefined;
     return c.sprites.neutral || Object.values(c.sprites)[0];
   };
   const effRefAsset = (charId: string): string | undefined => ig.references[charId] || autoRefAsset(charId);
+  const outfitRefAsset = (charId: string): string | undefined => ig.outfitReferences?.[charId];
 
-  async function uploadRef(charId: string, file: File) {
+  async function uploadRef(charId: string, kind: RefKind, file: File) {
     const asset = await uploadAsset(file, 'icon'); // 'icon' — не попадает в манифест сцены ИИ
-    asset.name = `ref_${charId}`;
+    asset.name = `ref_${kind}_${charId}`;
     await s.patchProject((p) => {
       if (!p.assets.some((a) => a.id === asset.id)) p.assets.push(asset);
       const cur = p.imageGen ?? defaultImageGenConfig();
-      p.imageGen = { ...cur, references: { ...cur.references, [charId]: asset.id } };
+      p.imageGen = withRefMap(cur, kind, { ...refMap(cur, kind), [charId]: asset.id });
     });
   }
 
@@ -121,21 +130,25 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
       setPrompt(p);
       setStage('draw');
 
-      // Референсы: инлайн-картинки присутствующих персонажей (только gemini + вкл.).
+      // Референсы присутствующих персонажей: сначала внешность, следом одежда —
+      // порядок важен, промпт ссылается на картинки по номерам.
       const refs: ImageRef[] = [];
       if (supportsReferences(ig) && ig.sendReferences) {
         const seen = new Set<string>();
         for (const os of state.onScreen) {
           if (seen.has(os.characterId)) continue;
           seen.add(os.characterId);
-          const aid = effRefAsset(os.characterId);
-          const blobKey = project.assets.find((a) => a.id === aid)?.blobKey;
-          if (!blobKey) continue;
-          const b = await getAssetBlob(blobKey);
-          if (b) refs.push(await blobToRef(b));
+          const who = project.characters.find((c) => c.id === os.characterId)?.name || os.characterId;
+          for (const kind of ['appearance', 'outfit'] as const) {
+            const aid = kind === 'outfit' ? outfitRefAsset(os.characterId) : effRefAsset(os.characterId);
+            const blobKey = project.assets.find((a) => a.id === aid)?.blobKey;
+            if (!blobKey) continue;
+            const b = await getAssetBlob(blobKey);
+            if (b) refs.push(await blobToRef(b, { who, kind }));
+          }
         }
       }
-      const finalPrompt = composeFinalPrompt(ig, p, { refCount: refs.length });
+      const finalPrompt = composeFinalPrompt(ig, p, { refs });
       const blob = await generateImage(ig, {
         prompt: finalPrompt,
         references: refs,
@@ -401,8 +414,8 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           <p className="text-[11px] text-gray-500 mb-2">
             {supportsReferences(ig)
               ? L(
-                  'По умолчанию — нейтральный спрайт в базовой одежде. Можно переопределить своей картинкой.',
-                  'By default — the neutral base-outfit sprite. You can override it with your own image.'
+                  'На каждого — два слота. ВНЕШНОСТЬ: лицо, волосы, телосложение (по умолчанию нейтральный спрайт). ОДЕЖДА: отдельная картинка наряда — уходит вторым изображением с пометкой «отсюда только одежда».',
+                  'Two slots each. APPEARANCE: face, hair, build (defaults to the neutral sprite). OUTFIT: a separate clothing image, sent as a second reference marked "clothes only".'
                 )
               : L(
                   'Выбранный провайдер (images/generations) рефы не принимает — картинка рисуется только по тексту. Рефы работают на Google напрямую и на шлюзах через chat/completions.',
@@ -410,40 +423,35 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
                 )}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {project.characters.map((c) => {
-              const overridden = !!ig.references[c.id];
-              return (
-                <div key={c.id} className="card flex items-center gap-3 !p-2">
-                  <AssetImage
+            {project.characters.map((c) => (
+              <div key={c.id} className="card !p-2">
+                <div className="text-sm truncate mb-1.5">{c.name}</div>
+                <div className="flex gap-2">
+                  <RefSlot
+                    L={L}
+                    title={L('Внешность', 'Appearance')}
                     blobKey={project.assets.find((a) => a.id === effRefAsset(c.id))?.blobKey}
-                    className="w-10 h-10 rounded object-cover shrink-0"
+                    note={
+                      ig.references[c.id]
+                        ? L('своя картинка', 'custom image')
+                        : L('авто (спрайт)', 'auto (sprite)')
+                    }
+                    custom={!!ig.references[c.id]}
+                    onUpload={(f) => void uploadRef(c.id, 'appearance', f)}
+                    onReset={() => setRef(c.id, 'appearance')}
                   />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm truncate">{c.name}</div>
-                    <div className="text-[11px] text-gray-500">
-                      {overridden ? L('своя картинка', 'custom image') : L('авто (нейтр. спрайт)', 'auto (neutral sprite)')}
-                    </div>
-                  </div>
-                  <label className="btn-ghost !px-2 !py-1 text-xs cursor-pointer shrink-0">
-                    ⬆
-                    <input
-                      type="file"
-                      accept="image/*"
-                      hidden
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) void uploadRef(c.id, f);
-                      }}
-                    />
-                  </label>
-                  {overridden && (
-                    <button className="btn-ghost !px-2 !py-1 text-xs shrink-0" title={L('Сбросить на авто', 'Reset to auto')} onClick={() => setRef(c.id)}>
-                      ↺
-                    </button>
-                  )}
+                  <RefSlot
+                    L={L}
+                    title={L('Одежда', 'Outfit')}
+                    blobKey={project.assets.find((a) => a.id === outfitRefAsset(c.id))?.blobKey}
+                    note={outfitRefAsset(c.id) ? L('своя картинка', 'custom image') : L('не задан', 'not set')}
+                    custom={!!outfitRefAsset(c.id)}
+                    onUpload={(f) => void uploadRef(c.id, 'outfit', f)}
+                    onReset={() => setRef(c.id, 'outfit')}
+                  />
                 </div>
-              );
-            })}
+              </div>
+            ))}
             {project.characters.length === 0 && (
               <p className="text-sm text-gray-600">{L('Нет персонажей.', 'No characters.')}</p>
             )}
@@ -475,6 +483,60 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
         </details>
       </div>
     </Modal>
+  );
+}
+
+// Один слот референса: превью, подпись, загрузка и сброс.
+function RefSlot({
+  L,
+  title,
+  blobKey,
+  note,
+  custom,
+  onUpload,
+  onReset,
+}: {
+  L: (ru: string, en: string) => string;
+  title: string;
+  blobKey?: string;
+  note: string;
+  custom: boolean;
+  onUpload: (file: File) => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className="flex-1 min-w-0 rounded-lg bg-black/25 border border-white/10 p-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">{title}</div>
+      <div className="flex items-center gap-1.5">
+        {blobKey ? (
+          <AssetImage blobKey={blobKey} className="w-9 h-9 rounded object-cover shrink-0" />
+        ) : (
+          <div className="w-9 h-9 rounded bg-white/5 border border-dashed border-white/15 shrink-0" />
+        )}
+        <div className="min-w-0 flex-1 text-[10px] text-gray-500 truncate">{note}</div>
+        <label className="btn-ghost !px-1.5 !py-1 text-xs cursor-pointer shrink-0" title={L('Загрузить', 'Upload')}>
+          ⬆
+          <input
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onUpload(f);
+            }}
+          />
+        </label>
+        {custom && (
+          <button
+            className="btn-ghost !px-1.5 !py-1 text-xs shrink-0"
+            title={L('Убрать картинку', 'Remove image')}
+            onClick={onReset}
+          >
+            ↺
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

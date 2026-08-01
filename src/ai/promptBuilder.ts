@@ -389,6 +389,32 @@ function phoneBlock(project: Project, state: RuntimeState): string {
     '  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone\'s number (characters who appear are auto-added; use only for someone met off-screen).',
   ];
   if (contacts.length) parts.push(`Saved phone contacts: ${contacts.join(', ')}.`);
+
+  // ПЕРЕПИСКА — часть сюжета. Без этого блока всё, что игрок написал персонажу в
+  // мессенджере, для основного движка не существовало: следующий ход шёл так,
+  // будто разговора не было. Берём последние сообщения по всем веткам в
+  // хронологическом порядке (по времени), помечая их как уже произошедшие.
+  const heroName = state.protagonistName || 'the hero';
+  const chatLines: { at: number; line: string }[] = [];
+  for (const [charId, msgs] of Object.entries(state.phone?.conversations || {})) {
+    const nm = project.characters.find((x) => x.id === charId)?.name || charId;
+    for (const m of msgs) {
+      const body = m.text?.trim() || (m.attachedAssetId ? '[sent a photo]' : '');
+      if (!body) continue;
+      chatLines.push({
+        at: m.at || 0,
+        line: `  ${m.from === 'protagonist' ? `${heroName} → ${nm}` : `${nm} → ${heroName}`}: ${body.slice(0, 200)}`,
+      });
+    }
+  }
+  if (chatLines.length) {
+    const tail = chatLines.sort((a, b) => a.at - b.at).slice(-14);
+    parts.push(
+      'RECENT TEXT MESSAGES (these already happened on the phone — both sides remember them; ' +
+        'treat them as canon, refer back to them naturally, and do NOT replay them as new):\n' +
+        tail.map((x) => x.line).join('\n')
+    );
+  }
   const orders = state.phone?.activeOrders || [];
   if (orders.length) {
     parts.push(

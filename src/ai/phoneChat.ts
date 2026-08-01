@@ -1,4 +1,6 @@
 import type { Project, RuntimeState, LlmMessage, PhoneMessage } from '../shared/types';
+import { getAssetBlob } from '../storage/db';
+import { blobToRef } from './imageProvider';
 import { PHONE_BALANCE_STAT } from '../shared/types';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
@@ -73,11 +75,45 @@ export async function generatePhoneReply(
     .slice(-MAX_HISTORY)
     .map((m) => ({
       role: m.from === 'protagonist' ? ('user' as const) : ('assistant' as const),
-      // Фото без текста (селфи из камеры) — модель vision не видит, даём словесную пометку.
+      // Текстовая пометка остаётся всегда: если модель картинки не принимает,
+      // персонаж хотя бы знает, что ему прислали фото.
       content: m.text || (m.attachedAssetId ? '[the hero sent you a photo]' : '…'),
     }));
-  const raw = await completeWithRetry(system, normalizeChatHistory(messages), ps.temperature ?? 0.8, signal);
+
+  // VISION: последнее фото герой отправил только что — прикладываем саму картинку,
+  // чтобы персонаж отвечал на то, что НА фото, а не на пометку о нём. Модель без
+  // поддержки картинок отбракует вложение, провайдер повторит запрос без него.
+  const attachments = await loadLastPhoto(project, conversation);
+  const raw = await completeWithRetry(
+    system,
+    normalizeChatHistory(messages),
+    ps.temperature ?? 0.8,
+    signal,
+    attachments
+  );
   return splitReplies(raw, charName);
+}
+
+// Фото из ПОСЛЕДНЕГО сообщения героя (если это фото) → вложение для vision-модели.
+// Только одно и только свежее: старые фото раздували бы каждый запрос, а отвечает
+// персонаж всегда на последнее. blobToRef заодно ужимает картинку до 768px.
+async function loadLastPhoto(
+  project: Project,
+  conversation: PhoneMessage[]
+): Promise<{ mime: string; b64: string }[] | undefined> {
+  const last = conversation[conversation.length - 1];
+  if (!last || last.from !== 'protagonist' || !last.attachedAssetId) return undefined;
+  try {
+    const blobKey = project.assets.find((a) => a.id === last.attachedAssetId)?.blobKey;
+    if (!blobKey) return undefined;
+    const blob = await getAssetBlob(blobKey);
+    if (!blob) return undefined;
+    const ref = await blobToRef(blob);
+    return [{ mime: ref.mime, b64: ref.b64 }];
+  } catch (e) {
+    logEvent('warn', 'phone', 'Не удалось приложить фото к запросу: ' + (e as Error).message);
+    return undefined;
+  }
 }
 
 // Приводит историю переписки к виду, который принимают все провайдеры.
@@ -124,7 +160,8 @@ async function completeWithRetry(
   system: string,
   messages: LlmMessage[],
   temperature: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  attachments?: { mime: string; b64: string }[]
 ): Promise<string> {
   const first = await runCompletion({
     system,
@@ -133,6 +170,7 @@ async function completeWithRetry(
     maxTokens: 2400,
     reasoningEffort: 'none',
     signal,
+    attachments,
   });
   if (first.trim()) return first;
 
@@ -149,6 +187,7 @@ async function completeWithRetry(
     temperature: Math.min(temperature, 1),
     maxTokens: 6000,
     signal, // reasoningEffort не задаём — пусть провайдер решает сам
+    attachments,
   });
   return second;
 }

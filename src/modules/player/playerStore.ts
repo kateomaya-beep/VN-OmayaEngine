@@ -656,17 +656,24 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       const basePrompt = tmpl
         .replace(/\{protagonist_name\}/g, heroName)
         .replace(/\{user_prompt\}/g, userPrompt.trim() || 'casual selfie');
-      // Референс — спрайт протагониста (neutral в текущем наряде), где он поддержан.
+      // Референсы протагониста: внешность (свой реф или спрайт) + одежда, если
+      // задана в CG-студии. Порядок как там же — промпт ссылается по номерам.
       const refs: ImageRef[] = [];
       if (supportsReferences(ig) && ig.sendReferences) {
-        const blobKey = project.assets.find((a) => a.id === spriteAssetId)?.blobKey;
-        if (blobKey) {
+        const who = heroName;
+        const slots: { id?: string; kind: 'appearance' | 'outfit' }[] = [
+          { id: ig.references[protagonist.id] || spriteAssetId, kind: 'appearance' },
+          { id: ig.outfitReferences?.[protagonist.id], kind: 'outfit' },
+        ];
+        for (const slot of slots) {
+          const blobKey = slot.id ? project.assets.find((a) => a.id === slot.id)?.blobKey : undefined;
+          if (!blobKey) continue;
           const b = await getAssetBlob(blobKey);
-          if (b) refs.push(await blobToRef(b));
+          if (b) refs.push(await blobToRef(b, { who, kind: slot.kind }));
         }
       }
       // Стиль, запреты и правило про референсы — общей сборкой (как в CG-студии).
-      const finalPrompt = composeFinalPrompt(ig, basePrompt, { refCount: refs.length });
+      const finalPrompt = composeFinalPrompt(ig, basePrompt, { refs });
       // Селфи — вертикальное: это фото с телефона, а не кат-сцена.
       const blob = await generateImage(ig, { prompt: finalPrompt, references: refs, aspectRatio: '3:4' });
       const blobKey = uid('blob');

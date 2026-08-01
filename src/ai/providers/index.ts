@@ -17,6 +17,10 @@ export interface CompletionRequest {
   maxTokens?: number;
   // Глубина размышления reasoning-моделей → reasoning_effort. Меньше = быстрее.
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+  // Картинки к ПОСЛЕДНЕМУ ходу игрока (vision): фото, которое герой отправил в
+  // мессенджере. Модель без поддержки картинок отвечает 400 — тогда провайдер
+  // повторяет запрос без вложений, и переписка продолжается по текстовой пометке.
+  attachments?: { mime: string; b64: string }[];
   // Отмена генерации: сигнал прерывания fetch (кнопка «Отменить» в игре).
   signal?: AbortSignal;
 }
@@ -186,11 +190,33 @@ function sanitizeMessages(msgs: LlmMessage[]): LlmMessage[] {
   return msgs.filter((m) => typeof m.content === 'string' && m.content.trim().length > 0);
 }
 
+// Прикрепляет картинки к последнему сообщению игрока. Формат частей — общий для
+// OpenAI-совместимых (image_url с data-URL); у Anthropic своя форма (см. ниже).
+function attachImagesOpenAi(
+  msgs: { role: string; content: unknown }[],
+  attachments: { mime: string; b64: string }[]
+): void {
+  const idx = msgs.map((m) => m.role).lastIndexOf('user');
+  if (idx < 0) return;
+  const text = typeof msgs[idx].content === 'string' ? (msgs[idx].content as string) : '';
+  msgs[idx] = {
+    role: 'user',
+    content: [
+      { type: 'text', text },
+      ...attachments.map((a) => ({ type: 'image_url', image_url: { url: `data:${a.mime};base64,${a.b64}` } })),
+    ],
+  };
+}
+
 const openAiCompatible: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
     const model = requireModel(req.model || conn.model);
-    const messages = [{ role: 'system', content: req.system }, ...sanitizeMessages(req.messages)];
+    const messages: { role: string; content: unknown }[] = [
+      { role: 'system', content: req.system },
+      ...sanitizeMessages(req.messages),
+    ];
+    if (req.attachments?.length) attachImagesOpenAi(messages, req.attachments);
     if (req.prefill?.trim()) messages.push({ role: 'assistant', content: req.prefill });
     const body: Record<string, unknown> = {
       model,
@@ -229,6 +255,24 @@ const openAiCompatible: Provider = {
       if (/temperature/i.test(errText) && 'temperature' in b2) {
         delete b2.temperature;
         fixes.push('без temperature');
+      }
+      // Модель не умеет картинки — повторяем без вложений: пусть ответит хотя бы
+      // по текстовой пометке «герой прислал фото», а не роняет всю переписку.
+      if (req.attachments?.length && /image|vision|multimodal|content.*type|unsupported/i.test(errText)) {
+        const plain = [{ role: 'system', content: req.system }, ...sanitizeMessages(req.messages)] as {
+          role: string;
+          content: unknown;
+        }[];
+        if (req.prefill?.trim()) plain.push({ role: 'assistant', content: req.prefill });
+        logEvent('warn', 'llm', 'Модель не приняла картинку — повторяю запрос без вложения');
+        res = await post({ ...b2, messages: plain });
+        if (res.ok) {
+          const data = await res.json();
+          const content = normalizeContent(data?.choices?.[0]?.message?.content);
+          if (content === null) throw new Error('Пустой ответ провайдера');
+          return req.prefill ? req.prefill + content : content;
+        }
+        throw providerHttpError(res.status, await res.text().catch(() => errText));
       }
       // Контекст не влез: повторяем с тем же телом смысла нет — объясняем прямо.
       if (/context length|context_length|too many tokens|input token|maximum context|token count/i.test(errText)) {
@@ -274,10 +318,26 @@ const anthropic: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
     const model = requireModel(req.model || conn.model);
-    const messages = sanitizeMessages(req.messages).map((m) => ({
+    const messages: { role: string; content: unknown }[] = sanitizeMessages(req.messages).map((m) => ({
       role: m.role === 'assistant' ? 'assistant' : 'user',
       content: m.content,
     }));
+    // Anthropic: картинки — блоки {type:'image', source:{type:'base64',…}}.
+    if (req.attachments?.length) {
+      const idx = messages.map((m) => m.role).lastIndexOf('user');
+      if (idx >= 0) {
+        messages[idx] = {
+          role: 'user',
+          content: [
+            { type: 'text', text: String(messages[idx].content ?? '') },
+            ...req.attachments.map((a) => ({
+              type: 'image',
+              source: { type: 'base64', media_type: a.mime, data: a.b64 },
+            })),
+          ],
+        };
+      }
+    }
     // Anthropic ЖЁСТКО отклоняет финальное assistant-сообщение с хвостовым пробелом/
     // переводом строки (напр. префилл "<thinking>\n") — обрезаем хвост.
     const pf = req.prefill ? req.prefill.replace(/\s+$/, '') : '';

@@ -22,6 +22,10 @@ const DEFAULT_CHAT_MODEL = 'google/gemini-2.5-flash-image-preview';
 export interface ImageRef {
   mime: string;
   b64: string; // base64 без префикса data:
+  // Чей это реф и что с него брать — попадает в промпт нумерованным списком,
+  // иначе модель не знает, что вторая картинка это одежда, а не второй персонаж.
+  who?: string;
+  kind?: 'appearance' | 'outfit';
 }
 
 export interface ImageGenInput {
@@ -159,15 +163,22 @@ export function supportsReferences(cfg: ImageGenConfig): boolean {
 export function composeFinalPrompt(
   cfg: ImageGenConfig,
   prompt: string,
-  opts?: { refCount?: number }
+  opts?: { refs?: ImageRef[] }
 ): string {
   const parts = [prompt.trim()];
   if (cfg.style?.trim()) parts.push(`Style: ${cfg.style.trim()}`);
   if (cfg.negativePrompt?.trim()) parts.push(`Avoid: ${cfg.negativePrompt.trim()}`);
-  if (opts?.refCount) {
+  const refs = opts?.refs || [];
+  if (refs.length) {
+    const lines = refs.map((r, i) => {
+      const who = r.who || 'the character';
+      return r.kind === 'outfit'
+        ? `${i + 1}. ${who} — OUTFIT reference: reproduce this clothing on them (cut, colour, fabric, details, accessories). Take the clothes from here, nothing else.`
+        : `${i + 1}. ${who} — APPEARANCE reference: match their face, hair and body type.`;
+    });
     parts.push(
-      `The ${opts.refCount} attached reference image${opts.refCount > 1 ? 's' : ''} show the named characters: ` +
-        'match their face, hair and outfit exactly, but do NOT copy the pose, framing or background from them — ' +
+      `Attached reference images, in order:\n${lines.join('\n')}\n` +
+        'Use them for identity and clothing ONLY. Do NOT copy their pose, camera angle, framing or background — ' +
         'build the pose described above, with natural anatomy and believable weight.'
     );
   }
@@ -414,7 +425,10 @@ function cleanErr(s: string): string {
 }
 
 // Blob картинки → base64-реф (без data:-префикса) для gemini.
-export async function blobToRef(blob: Blob): Promise<ImageRef> {
+export async function blobToRef(
+  blob: Blob,
+  meta?: { who?: string; kind?: ImageRef['kind'] }
+): Promise<ImageRef> {
   const small = await downscaleRef(blob);
   const b64: string = await new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -422,7 +436,7 @@ export async function blobToRef(blob: Blob): Promise<ImageRef> {
     fr.onerror = () => reject(fr.error);
     fr.readAsDataURL(small);
   });
-  return { mime: small.type || 'image/png', b64 };
+  return { mime: small.type || 'image/png', b64, who: meta?.who, kind: meta?.kind };
 }
 
 // Референс уходит в теле запроса как base64 — а спрайты бывают по несколько
