@@ -425,7 +425,8 @@ export interface PhoneConfig {
   showFloatingIcon: boolean;
   iconPosition: { x: number; y: number }; // проценты 0..100 от экрана
   wallpaperAssetId?: string;
-  cameraPromptTemplate: string;
+  cameraPromptTemplate: string; // фронталка (селфи героя)
+  rearCameraPromptTemplate: string; // основная камера: снимок того, что вокруг
   popupNotifications: boolean;
   currencyName: string; // «$», «кредиты» и т.п.
   priceGuide: string; // ориентиры цен сеттинга (уходят в контекст ИИ)
@@ -472,6 +473,11 @@ export interface PhoneState {
 const DEFAULT_CAMERA_PROMPT =
   'semi-realistic front-camera selfie of {protagonist_name}, {user_prompt}, painterly semi-realism art style, soft cinematic lighting, natural skin texture, subtle bokeh background, shot at arm’s length on a smartphone, high detail, tasteful composition';
 
+// Основная (задняя) камера: снимает не героя, а то, что перед ним — улицу, кофе,
+// комнату. Никаких референсов и позирования; {location} и {time} подставляет движок.
+const DEFAULT_REAR_CAMERA_PROMPT =
+  'photo taken on a smartphone by {protagonist_name}: {user_prompt}. Location: {location}, {time}. Casual amateur phone photography, natural available light, realistic colours, slight handheld imperfection, no one posing for the camera, no selfie';
+
 // Прежний дефолт — чтобы при загрузке старых проектов молча обновить его на новый
 // (семи-реализм), не затирая пользовательские правки.
 const LEGACY_CAMERA_PROMPT =
@@ -495,6 +501,7 @@ export function defaultPhoneConfig(): PhoneConfig {
     showFloatingIcon: true,
     iconPosition: { x: 84, y: 62 },
     cameraPromptTemplate: DEFAULT_CAMERA_PROMPT,
+    rearCameraPromptTemplate: DEFAULT_REAR_CAMERA_PROMPT,
     popupNotifications: true,
     currencyName: '$',
     priceGuide: DEFAULT_PRICE_GUIDE,
@@ -570,6 +577,10 @@ export function normalizePhoneConfig(v: unknown): PhoneConfig {
           ? d.cameraPromptTemplate // молча апгрейдим прежний дефолт до семи-реализма
           : o.cameraPromptTemplate
         : d.cameraPromptTemplate,
+    rearCameraPromptTemplate:
+      typeof o.rearCameraPromptTemplate === 'string' && o.rearCameraPromptTemplate.trim()
+        ? o.rearCameraPromptTemplate
+        : d.rearCameraPromptTemplate,
     popupNotifications: typeof o.popupNotifications === 'boolean' ? o.popupNotifications : true,
     currencyName: typeof o.currencyName === 'string' && o.currencyName.trim() ? o.currencyName : '$',
     priceGuide: typeof o.priceGuide === 'string' && o.priceGuide.trim() ? o.priceGuide : d.priceGuide,

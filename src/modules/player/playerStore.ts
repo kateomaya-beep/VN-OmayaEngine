@@ -15,6 +15,8 @@ import {
 } from '../../ai/imageProvider';
 import { getApiKey } from '../../ai/keys';
 import { resolveSprite } from '../../shared/outfits';
+import { formatClock } from '../../ai/gameMaster';
+import { uploadAsset } from '../../storage/assetOps';
 import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, saveProject, deleteSave, getAssetBlob, putAsset } from '../../storage/db';
 import {
@@ -129,8 +131,12 @@ interface PlayerStore {
   orderDelivery: (item: PhoneShopItem) => void;
   // Камера (Batch 7 §5): генерация селфи протагониста через image-API + отправка фото.
   cameraBusy: boolean;
-  takeSelfie: (userPrompt: string) => Promise<void>;
-  sendPhoto: (characterId: string, assetId: string) => Promise<void>;
+  // mode: 'front' — селфи героя (с рефами), 'rear' — снимок того, что вокруг.
+  takeSelfie: (userPrompt: string, mode?: 'front' | 'rear') => Promise<void>;
+  // caption — подпись к фото (текст сообщения рядом с картинкой).
+  sendPhoto: (characterId: string, assetId: string, caption?: string) => Promise<void>;
+  // Своя картинка с устройства → в галерею телефона. Возвращает assetId.
+  uploadPhonePhoto: (file: File) => Promise<string | null>;
   // Тест подключения image-API (для камеры/CG). '' = успех, иначе текст ошибки.
   testImageApi: () => Promise<string>;
   // Ручная правка баланса в «Банке» (Batch 8 §III.1) — записывает корректировку в выписку.
@@ -636,30 +642,41 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     void get().autosave();
   },
 
-  async takeSelfie(userPrompt) {
+  async takeSelfie(userPrompt, mode = 'front') {
     const st = get();
     if (!st.project || !st.state || st.cameraBusy) return;
     const project = st.project;
     const state = st.state;
     const protagonist = project.characters.find((c) => c.role === 'protagonist');
     const spriteAssetId = protagonist ? resolveSprite(protagonist, undefined, 'neutral') : undefined;
-    // Fallback (Batch 7 §5.5): нет спрайта протагониста ИЛИ нет ключа image-API — мягкий отказ.
-    if (!protagonist || !spriteAssetId || !getApiKey('image')) {
-      set({ error: 'Настройте генерацию изображений и загрузите спрайт протагониста.' });
+    const rear = mode === 'rear';
+    // Fallback (Batch 7 §5.5): нет ключа image-API — мягкий отказ. Спрайт нужен
+    // только фронталке: основная камера снимает мир, а не героя.
+    if (!getApiKey('image') || (!rear && (!protagonist || !spriteAssetId))) {
+      set({
+        error: rear
+          ? 'Настройте генерацию изображений (🎬 CG-студия → подключение).'
+          : 'Настройте генерацию изображений и загрузите спрайт протагониста.',
+      });
       return;
     }
     set({ cameraBusy: true, error: null });
     try {
       const ig = project.imageGen ?? defaultImageGenConfig();
-      const heroName = state.protagonistName || protagonist.name;
-      const tmpl = project.phone?.cameraPromptTemplate || 'selfie photo of {protagonist_name}, {user_prompt}';
+      const heroName = state.protagonistName || protagonist?.name || 'the hero';
+      const tmpl = rear
+        ? project.phone?.rearCameraPromptTemplate || 'photo taken on a phone by {protagonist_name}: {user_prompt}'
+        : project.phone?.cameraPromptTemplate || 'selfie photo of {protagonist_name}, {user_prompt}';
       const basePrompt = tmpl
         .replace(/\{protagonist_name\}/g, heroName)
-        .replace(/\{user_prompt\}/g, userPrompt.trim() || 'casual selfie');
+        .replace(/\{user_prompt\}/g, userPrompt.trim() || (rear ? 'what is in front of the hero right now' : 'casual selfie'))
+        .replace(/\{location\}/g, state.gm.clock.location || 'wherever the hero is now')
+        .replace(/\{time\}/g, formatClock(state.gm.clock) || 'now');
       // Референсы протагониста: внешность (свой реф или спрайт) + одежда, если
       // задана в CG-студии. Порядок как там же — промпт ссылается по номерам.
+      // Основной камере рефы не нужны: героя в кадре нет.
       const refs: ImageRef[] = [];
-      if (supportsReferences(ig) && ig.sendReferences) {
+      if (!rear && protagonist && supportsReferences(ig) && ig.sendReferences) {
         const who = heroName;
         const slots: { id?: string; kind: 'appearance' | 'outfit' }[] = [
           { id: ig.references[protagonist.id] || spriteAssetId, kind: 'appearance' },
@@ -674,14 +691,18 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       }
       // Стиль, запреты и правило про референсы — общей сборкой (как в CG-студии).
       const finalPrompt = composeFinalPrompt(ig, basePrompt, { refs });
-      // Селфи — вертикальное: это фото с телефона, а не кат-сцена.
-      const blob = await generateImage(ig, { prompt: finalPrompt, references: refs, aspectRatio: '3:4' });
+      // Кадр как у телефона: селфи вертикальное, основная камера — горизонтальная.
+      const blob = await generateImage(ig, {
+        prompt: finalPrompt,
+        references: refs,
+        aspectRatio: rear ? '4:3' : '3:4',
+      });
       const blobKey = uid('blob');
       await putAsset(blobKey, blob);
       const asset: AssetMeta = {
         id: uid('cg'),
         type: 'cg',
-        name: `Селфи: ${(userPrompt.trim() || 'фото').slice(0, 24)}`,
+        name: `${rear ? 'Фото' : 'Селфи'}: ${(userPrompt.trim() || 'фото').slice(0, 24)}`,
         generated: true,
         blobKey,
         mime: blob.type || 'image/png',
@@ -910,13 +931,33 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
   },
 
-  async sendPhoto(characterId, assetId) {
+  // Скрепка в мессенджере: своя картинка с устройства (галерея/камера телефона)
+  // кладётся в ассеты проекта и в галерею телефона — дальше её видно как любое фото.
+  async uploadPhonePhoto(file) {
+    try {
+      const asset = await uploadAsset(file, 'cg');
+      asset.name = `Фото: ${file.name.replace(/\.[^.]+$/, '').slice(0, 24) || 'из галереи'}`;
+      await get().patchProject((p) => {
+        if (!p.assets.some((a) => a.id === asset.id)) p.assets.push(asset);
+      });
+      get().patchPhone((p) => {
+        p.gallery = [...p.gallery, asset.id];
+      });
+      return asset.id;
+    } catch (e) {
+      logEvent('error', 'phone', 'Не удалось загрузить фото: ' + (e as Error).message);
+      set({ error: 'Не удалось загрузить фото.' });
+      return null;
+    }
+  },
+
+  async sendPhoto(characterId, assetId, caption) {
     const st = get();
     if (!st.project || !st.state || st.phoneTypingFrom) return;
     get().patchPhone((p) => {
       (p.conversations[characterId] ||= []).push({
         from: 'protagonist',
-        text: '',
+        text: caption?.trim() || '',
         attachedAssetId: assetId,
         at: Date.now(),
       });

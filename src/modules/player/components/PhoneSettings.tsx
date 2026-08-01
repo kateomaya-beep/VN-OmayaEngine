@@ -104,7 +104,7 @@ export function PhoneSettingsContent({
           </div>
 
           <div>
-            <label className="label">Шаблон промпта камеры</label>
+            <label className="label">Шаблон промпта: фронталка (селфи)</label>
             <textarea
               className="input h-20 text-xs font-mono"
               value={cfg.cameraPromptTemplate}
@@ -112,6 +112,17 @@ export function PhoneSettingsContent({
             />
             <p className="text-[11px] text-gray-500 mt-1">
               Плейсхолдеры: <code>{'{protagonist_name}'}</code>, <code>{'{user_prompt}'}</code>. Дефолт — семи-реализм, фронталка смартфона.
+            </p>
+
+            <label className="label mt-3">Шаблон промпта: основная камера</label>
+            <textarea
+              className="input h-20 text-xs font-mono"
+              value={cfg.rearCameraPromptTemplate}
+              onChange={(e) => patch({ rearCameraPromptTemplate: e.target.value })}
+            />
+            <p className="text-[11px] text-gray-500 mt-1">
+              Снимок того, что вокруг героя (улица, кофе, комната) — без него самого и без референсов.
+              Дополнительно доступны <code>{'{location}'}</code> и <code>{'{time}'}</code> из текущей сцены.
             </p>
             <div className="flex items-center gap-2 mt-2">
               <button

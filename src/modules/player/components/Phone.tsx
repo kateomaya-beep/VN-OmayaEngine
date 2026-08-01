@@ -246,9 +246,13 @@ export function PhoneWindow({ open, onClose }: { open: boolean; onClose: () => v
 function ChatThread({ characterId, name, onBack }: { characterId: string; name: string; onBack: () => void }) {
   const s = usePlayerStore();
   const [draft, setDraft] = useState('');
+  // Прикреплённое фото ждёт отправки вместе с текстом (как в обычном мессенджере).
+  const [attach, setAttach] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const msgs = s.state?.phone?.conversations[characterId] || [];
   const typing = s.phoneTypingFrom === characterId;
+  const attachKey = attach ? s.project?.assets.find((a) => a.id === attach)?.blobKey : undefined;
 
   // Автопрокрутка вниз при новых сообщениях / индикаторе печати.
   useEffect(() => {
@@ -256,8 +260,16 @@ function ChatThread({ characterId, name, onBack }: { characterId: string; name: 
   }, [msgs.length, typing]);
 
   const send = () => {
+    if (typing) return;
     const t = draft.trim();
-    if (!t || typing) return;
+    if (attach) {
+      // Фото + подпись одним сообщением.
+      setDraft('');
+      setAttach(null);
+      void s.sendPhoto(characterId, attach, t);
+      return;
+    }
+    if (!t) return;
     setDraft('');
     void s.sendPhoneMessage(characterId, t);
   };
@@ -347,12 +359,32 @@ function ChatThread({ characterId, name, onBack }: { characterId: string; name: 
         <div ref={endRef} />
       </div>
 
+      {/* Прикреплённое фото — превью над строкой ввода */}
+      {attach && (
+        <div className="flex items-center gap-2 px-2 pt-2 bg-[#1f2c34]">
+          <AssetImage blobKey={attachKey} className="w-12 h-12 rounded-lg object-cover" />
+          <div className="text-xs text-white/60 flex-1">Фото прикреплено — добавьте подпись или отправьте так.</div>
+          <button className="text-white/60 text-lg px-2" onClick={() => setAttach(null)} title="Убрать">
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Панель ввода */}
       <div className="flex items-end gap-2 p-2 bg-[#1f2c34]">
+        <button
+          className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 text-white/70 hover:text-white hover:bg-white/10 active:scale-95 transition"
+          onClick={() => setPickerOpen(true)}
+          title="Прикрепить фото"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+          </svg>
+        </button>
         <textarea
           rows={1}
           className="flex-1 resize-none max-h-24 rounded-2xl bg-[#2a3942] px-4 py-2.5 text-sm text-white placeholder-white/40 outline-none scrollbar-thin"
-          placeholder="Сообщение"
+          placeholder={attach ? 'Подпись к фото (можно пусто)' : 'Сообщение'}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -365,11 +397,87 @@ function ChatThread({ characterId, name, onBack }: { characterId: string; name: 
         <button
           className="w-11 h-11 rounded-full bg-[#00a884] flex items-center justify-center shrink-0 disabled:opacity-40 active:scale-95 transition-transform"
           onClick={send}
-          disabled={!draft.trim() || typing}
+          disabled={(!draft.trim() && !attach) || typing}
           title="Отправить"
         >
           <svg width="20" height="20" viewBox="0 0 24 24"><path d="M3 11.5 21 3l-8.5 18-2.2-7.3L3 11.5Z" fill="#fff" /></svg>
         </button>
+      </div>
+
+      {pickerOpen && (
+        <PhotoPicker
+          onClose={() => setPickerOpen(false)}
+          onPick={(assetId) => {
+            setAttach(assetId);
+            setPickerOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Выбор фото для отправки: из галереи телефона (всё, что снято камерой или
+// загружено раньше) или с устройства — на телефоне системный диалог сам предложит
+// и камеру, и галерею.
+function PhotoPicker({ onClose, onPick }: { onClose: () => void; onPick: (assetId: string) => void }) {
+  const s = usePlayerStore();
+  const [busy, setBusy] = useState(false);
+  const gallery = [...(s.state?.phone?.gallery || [])].reverse();
+
+  async function upload(file: File) {
+    setBusy(true);
+    const id = await s.uploadPhonePhoto(file);
+    setBusy(false);
+    if (id) onPick(id);
+    else onClose();
+  }
+
+  return (
+    <div className="absolute inset-0 z-20 bg-black/70 flex items-end" onClick={onClose}>
+      <div
+        className="w-full rounded-t-2xl bg-[#141019] border-t border-white/10 p-3 max-h-[75%] overflow-y-auto scrollbar-thin"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-semibold text-white">Прикрепить фото</div>
+          <button className="text-white/50 text-lg px-1" onClick={onClose}>✕</button>
+        </div>
+
+        <label className="w-full flex items-center gap-3 rounded-xl bg-white/5 hover:bg-white/10 px-3 py-2.5 text-left text-white cursor-pointer mb-3">
+          <span className="text-lg">{busy ? '…' : '📷'}</span>
+          <span className="text-sm">{busy ? 'Загружаю…' : 'Снять или выбрать на устройстве'}</span>
+          <input
+            type="file"
+            accept="image/*"
+            hidden
+            disabled={busy}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void upload(f);
+            }}
+          />
+        </label>
+
+        <div className="text-xs uppercase tracking-wide text-white/50 mb-2">Галерея телефона · {gallery.length}</div>
+        {gallery.length === 0 ? (
+          <div className="text-sm text-white/40">Пока пусто — снимите фото камерой или загрузите своё.</div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {gallery.map((assetId) => {
+              const blobKey = s.project?.assets.find((a) => a.id === assetId)?.blobKey;
+              return (
+                <button
+                  key={assetId}
+                  className="rounded-xl overflow-hidden border border-white/10 bg-black/40 active:scale-95 transition-transform"
+                  onClick={() => onPick(assetId)}
+                >
+                  <AssetImage blobKey={blobKey} className="w-full aspect-square object-cover" />
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -473,6 +581,8 @@ function CameraScreen({ onBack }: { onBack: () => void }) {
   const project = s.project;
   const [prompt, setPrompt] = useState('');
   const [pickFor, setPickFor] = useState<string | null>(null); // assetId, который отправляем
+  const [caption, setCaption] = useState(''); // подпись к отправляемому фото
+  const [mode, setMode] = useState<'front' | 'rear'>('front');
   const busy = s.cameraBusy;
   const gallery = s.state?.phone?.gallery || [];
   const contacts = (s.state?.phone?.contacts || []).filter((c) => !c.hidden);
@@ -481,11 +591,12 @@ function CameraScreen({ onBack }: { onBack: () => void }) {
   const protagonist = project?.characters.find((c) => c.role === 'protagonist');
   const hasSprite = !!protagonist && !!resolveSprite(protagonist, undefined, 'neutral');
   const hasKey = !!getApiKey('image');
-  const ready = hasSprite && hasKey;
+  // Основной камере спрайт не нужен: она снимает не героя, а то, что вокруг.
+  const ready = hasKey && (mode === 'rear' || hasSprite);
 
   const shoot = () => {
     if (!ready || busy) return;
-    void s.takeSelfie(prompt);
+    void s.takeSelfie(prompt, mode);
     setPrompt('');
   };
 
@@ -497,15 +608,42 @@ function CameraScreen({ onBack }: { onBack: () => void }) {
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin p-3 text-white">
+        {/* Переключатель камер — как на настоящем телефоне */}
+        <div className="flex gap-1 p-1 rounded-xl bg-white/5 border border-white/10 mb-2">
+          {(
+            [
+              { id: 'front', label: '🤳 Фронталка', hint: 'селфи героя' },
+              { id: 'rear', label: '📷 Основная', hint: 'что вокруг' },
+            ] as const
+          ).map((m) => (
+            <button
+              key={m.id}
+              className={`flex-1 py-2 rounded-lg text-sm transition-colors ${
+                mode === m.id ? 'bg-white/15 text-white' : 'text-white/60 hover:bg-white/5'
+              }`}
+              onClick={() => setMode(m.id)}
+            >
+              {m.label}
+              <span className="block text-[10px] text-white/40">{m.hint}</span>
+            </button>
+          ))}
+        </div>
+
         {!ready ? (
           <div className="rounded-xl bg-amber-500/12 border border-amber-400/30 px-3 py-3 text-sm text-amber-100">
-            Настройте генерацию изображений (🎬 CG-студия → подключение) и загрузите нейтральный спрайт протагониста — тогда камера заработает.
+            {hasKey
+              ? 'Загрузите нейтральный спрайт протагониста — тогда фронталка заработает. Основная камера работает и без него.'
+              : 'Настройте генерацию изображений (🎬 CG-студия → подключение) — тогда камера заработает.'}
           </div>
         ) : (
           <div className="space-y-2">
             <textarea
               className="w-full rounded-xl bg-white/10 border border-white/15 px-3 py-2 text-sm text-white placeholder-white/40 outline-none focus:border-fuchsia-400/50 h-16"
-              placeholder="Что на фото? напр.: на фоне заката, улыбаюсь, в кафе"
+              placeholder={
+                mode === 'front'
+                  ? 'Что на фото? напр.: на фоне заката, улыбаюсь, в кафе'
+                  : 'Что снимаем? напр.: кофе на столике, вечерняя улица под дождём, вид из окна'
+              }
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
             />
@@ -519,10 +657,17 @@ function CameraScreen({ onBack }: { onBack: () => void }) {
                   <span className="inline-block w-4 h-4 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
                   Снимаю…
                 </>
-              ) : (
+              ) : mode === 'front' ? (
                 '📸 Сделать селфи'
+              ) : (
+                '📸 Снять фото'
               )}
             </button>
+            {mode === 'rear' && (
+              <p className="text-[11px] text-white/40">
+                Основная камера снимает то, что перед героем: локация и время подставляются из сцены, герой в кадр не попадает.
+              </p>
+            )}
           </div>
         )}
 
@@ -553,12 +698,25 @@ function CameraScreen({ onBack }: { onBack: () => void }) {
 
       {/* Выбор контакта для отправки фото */}
       {pickFor && (
-        <div className="absolute inset-0 z-10 bg-black/70 flex items-end" onClick={() => setPickFor(null)}>
+        <div
+          className="absolute inset-0 z-10 bg-black/70 flex items-end"
+          onClick={() => {
+            setPickFor(null);
+            setCaption('');
+          }}
+        >
           <div
             className="w-full rounded-t-2xl bg-[#141019] border-t border-white/10 p-3 max-h-[70%] overflow-y-auto scrollbar-thin"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-sm font-semibold text-white mb-2">Кому отправить фото?</div>
+            {/* Подпись к фото — уходит текстом того же сообщения. */}
+            <textarea
+              className="w-full rounded-xl bg-white/10 border border-white/15 px-3 py-2 text-sm text-white placeholder-white/40 outline-none focus:border-fuchsia-400/50 h-14 mb-2"
+              placeholder="Подпись к фото (необязательно): смотри что у меня тут…"
+              value={caption}
+              onChange={(e) => setCaption(e.target.value)}
+            />
             <div className="space-y-1.5">
               {contacts.map((c) => {
                 const nm = project?.characters.find((x) => x.id === c.characterId)?.name || c.characterId;
@@ -567,8 +725,9 @@ function CameraScreen({ onBack }: { onBack: () => void }) {
                     key={c.characterId}
                     className="w-full flex items-center gap-3 rounded-xl bg-white/5 hover:bg-white/10 px-3 py-2.5 text-left text-white"
                     onClick={() => {
-                      void s.sendPhoto(c.characterId, pickFor);
+                      void s.sendPhoto(c.characterId, pickFor, caption);
                       setPickFor(null);
+                      setCaption('');
                     }}
                   >
                     <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm">{nm[0]}</div>
