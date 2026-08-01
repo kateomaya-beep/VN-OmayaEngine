@@ -922,6 +922,7 @@ function RawArchiveList({
   const [busy, setBusy] = useState<number | null>(null);
   const [err, setErr] = useState<string>('');
   const [open, setOpen] = useState<number | null>(null);
+  const restore = usePlayerStore((st) => st.restoreArchivedPeriod);
   if (!memory.rawArchive?.length) return null;
 
   async function rebuild(i: number) {
@@ -946,8 +947,8 @@ function RawArchiveList({
       </h4>
       <p className="text-[11px] text-gray-500">
         {L(
-          'Полный текст каждого свёрнутого куска истории. Если запись в журнале вышла куцей или её нет совсем — пересоберите свёртку отсюда: движок заново попросит модель сделать выжимку из этого текста.',
-          'The full text of every folded chunk. If a log entry came out poor — or is missing entirely — rebuild it here: the model will summarize this text again.'
+          'Полный текст каждого свёрнутого куска истории — страховка от потери. «Пересобрать» просит модель сделать выжимку заново. «В историю» возвращает сообщения периода в живой контекст ДОСЛОВНО: так восстанавливается даже то, что пропало из журнала. Учтите, что вернувшиеся сообщения занимают бюджет контекста — после них стоит дать движку свернуть период заново.',
+          'The full text of every folded chunk — your safety net. "Rebuild" asks the model to summarize it again. "To history" puts the period back into live context VERBATIM, recovering even what vanished from the log. Restored messages count against the context budget — let the engine fold the period again afterwards.'
         )}
       </p>
       {err && <p className="text-xs text-red-400">{err}</p>}
@@ -967,6 +968,16 @@ function RawArchiveList({
               </button>
               <button className="btn-ghost !px-2 !py-0.5 text-xs" disabled={busy !== null} onClick={() => rebuild(i)}>
                 {busy === i ? '…' : `↻ ${has ? L('пересобрать', 'rebuild') : L('восстановить', 'restore')}`}
+              </button>
+              <button
+                className="btn-ghost !px-2 !py-0.5 text-xs"
+                title={L(
+                  'Вернуть сообщения этого периода в живую историю — ИИ снова увидит их дословно',
+                  'Put this period back into live history — the AI will see it verbatim again'
+                )}
+                onClick={() => restore(i)}
+              >
+                ⤴ {L('в историю', 'to history')}
               </button>
             </div>
             {open === i && (

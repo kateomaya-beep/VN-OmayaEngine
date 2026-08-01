@@ -29,6 +29,8 @@ import {
 import { playMusic, playSfx, toggleMute } from './audio';
 import { parseSlash, SLASH_HELP } from './slashCommands';
 import { logEvent } from '../../shared/logStore';
+import { pushToast } from '../../shared/toast';
+import { parseArchivedTranscript } from '../../ai/memoryEngine';
 import { uid } from '../../shared/utils';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -152,6 +154,8 @@ interface PlayerStore {
   mergeCharacters: (survivorId: string, dupId: string) => void;
   // Правка памяти (список свёрток/саммари) прямо в игре.
   patchMemory: (mutator: (m: MemoryState) => void) => void;
+  // Вернуть свёрнутый период из архива обратно в живую историю (дословно).
+  restoreArchivedPeriod: (archiveIndex: number) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
   setAuthorNotes: (notes: AuthorNote[]) => void;
 }
@@ -1015,6 +1019,35 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     mutator(memory);
     const nextState = { ...st.state, memory };
     set({ state: nextState });
+    void get().autosave();
+  },
+
+  // Возврат свёрнутого периода в живую историю. Архив хранит текст периода
+  // построчно («ИГРОК: …» / «ИГРА: …»), поэтому сообщения восстанавливаются
+  // дословно и встают в начало истории — ИИ снова их видит. Нужно, когда свёртка
+  // не удалась и период выпал из памяти: пересказ уже не восстановить, а текст —
+  // можно. Повторный клик ничего не дублирует.
+  restoreArchivedPeriod(archiveIndex) {
+    const st = get();
+    if (!st.state) return;
+    const chunk = st.state.memory.rawArchive[archiveIndex];
+    if (!chunk?.text?.trim()) {
+      pushToast('error', 'В архиве нет текста этого периода.');
+      return;
+    }
+    const msgs = parseArchivedTranscript(chunk.text);
+    if (!msgs.length) {
+      pushToast('error', 'Не удалось разобрать архив периода.');
+      return;
+    }
+    if (st.state.history.some((h) => h.content === msgs[0].content)) {
+      pushToast('info', 'Этот период уже в живой истории.');
+      return;
+    }
+    const next: RuntimeState = { ...st.state, history: [...msgs, ...st.state.history] };
+    set({ state: next });
+    logEvent('info', 'memory', `Период (ход ${chunk.turn}) возвращён в живую историю: ${msgs.length} сообщений`);
+    pushToast('success', `Вернула ${msgs.length} сообщений периода в живую историю.`);
     void get().autosave();
   },
 
