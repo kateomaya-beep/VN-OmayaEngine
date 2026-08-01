@@ -208,11 +208,35 @@ function attachImagesOpenAi(
   };
 }
 
-// Шлюзы, которые НЕ принимают запрос, оканчивающийся ходом ассистента (префилл):
-// «Requests ending with a model turn are not supported». Узнаём это только по 400,
-// поэтому запоминаем на сессию — иначе каждый ход платили бы двойным запросом.
-const noPrefillTargets = new Set<string>();
+// Ограничение НЕ провайдерское, а МОДЕЛЬНОЕ: семейство Gemini на OpenAI-совместимой
+// ручке отвечает «Requests ending with a model turn are not supported» — то есть
+// запрос не может заканчиваться ходом ассистента, а именно так уходит префилл. На
+// том же шлюзе GPT/Claude-модели префилл принимают, поэтому ключ — base + МОДЕЛЬ,
+// а не провайдер целиком. Узнаём только по 400, поэтому запоминаем и сохраняем
+// между перезагрузками: иначе после каждого F5 первый ход снова стоил бы двух
+// запросов. Список чинится сам — если модель начнёт принимать префилл, достаточно
+// очистить его в настройках браузера.
+const NO_PREFILL_LS_KEY = 'nf_no_prefill_targets';
 const targetKey = (base: string, model: string) => `${base}::${model}`;
+
+function loadNoPrefill(): Set<string> {
+  try {
+    const raw = localStorage.getItem(NO_PREFILL_LS_KEY);
+    const v = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+const noPrefillTargets = loadNoPrefill();
+function rememberNoPrefill(key: string): void {
+  noPrefillTargets.add(key);
+  try {
+    localStorage.setItem(NO_PREFILL_LS_KEY, JSON.stringify([...noPrefillTargets]));
+  } catch {
+    /* приватный режим — переживём, обойдёмся памятью сессии */
+  }
+}
 
 // Префилл как инструкция вместо хода ассистента — для таких шлюзов.
 function prefillAsInstruction(
@@ -264,6 +288,16 @@ const openAiCompatible: Provider = {
     //  - новые модели OpenAI требуют max_completion_tokens вместо max_tokens.
     if (res.status === 400) {
       const errText = await res.text().catch(() => '');
+      // Отпечаток запроса в лог: по нему видно, ЧЕМ именно не понравился запрос —
+      // ролями (последняя роль важна), префиллом, вложениями или размером.
+      logEvent(
+        'warn',
+        'llm',
+        `HTTP 400 · модель ${model} · роли: ${messages.map((m) => m.role[0]).join('')} · ` +
+          `префилл: ${prefill ? 'да' : 'нет'} · вложений: ${req.attachments?.length ?? 0} · ` +
+          `~${Math.round(JSON.stringify(body).length / 4)} ток.`,
+        providerMessage(errText)
+      );
       const b2 = { ...body };
       let fixes: string[] = [];
       if ('reasoning_effort' in b2 && (/reason/i.test(errText) || !/max_tokens|max_completion|temperature|context|token/i.test(errText))) {
@@ -288,11 +322,12 @@ const openAiCompatible: Provider = {
         prefill &&
         /model turn|ending with (a |an )?(model|assistant)|last message.*(user|assistant)|must end with/i.test(errText)
       ) {
-        noPrefillTargets.add(targetKey(base, model));
+        rememberNoPrefill(targetKey(base, model));
         logEvent(
           'warn',
           'llm',
-          'Шлюз не принимает префилл (запрос не может заканчиваться ходом модели) — повторяю без него и больше не шлю его этому шлюзу'
+          `Модель «${model}» не принимает префилл (запрос не может заканчиваться ходом модели) — ` +
+            'повторяю без него и запоминаю. На других моделях этого же провайдера префилл продолжит работать.'
         );
         const msgs2 = prefillAsInstruction(
           messages.filter((m) => !(m.role === 'assistant' && m.content === prefill)),
