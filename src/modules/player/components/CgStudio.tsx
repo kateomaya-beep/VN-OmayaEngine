@@ -5,6 +5,7 @@ import { usePlayerStore } from '../playerStore';
 import { composeCgPrompt } from '../../../ai/imagePrompt';
 import { generateImage, blobToRef, type ImageRef } from '../../../ai/imageProvider';
 import { useStylePresets } from '../../../ai/imageStyles';
+import { ImageConnectionField } from '../../shared/ImageConnectionField';
 import { getAssetBlob, putAsset, deleteAsset } from '../../../storage/db';
 import { uploadAsset } from '../../../storage/assetOps';
 import { uid } from '../../../shared/utils';
@@ -356,10 +357,29 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           </div>
         </div>
 
-        {/* Подключение image-API (провайдер/модель/ключ/промпт-воркер) — в 🧩 Расширения → Картинки. */}
-        <p className="text-[11px] text-gray-500">
-          {L('Подключение к image-API и промпт-воркер — в панели «Расширения» → «Картинки».', 'Image-API connection & prompt worker are in Extensions → Images.')}
-        </p>
+        {/* Подключение к image-API и промпт-воркер — здесь же: всё про картинки в одном месте. */}
+        <details className="rounded-xl border border-white/10 bg-panel2/60 p-3" open={!ig.model}>
+          <summary className="cursor-pointer text-sm font-semibold select-none">
+            🔌 {L('Подключение к image-API', 'Image API connection')}
+          </summary>
+          <div className="mt-3">
+            <ImageConnectionField cfg={ig} onChange={patchIG} />
+            <div className="mt-3">
+              <label className="label">{L('Системный промпт воркера', 'Prompt-worker system prompt')}</label>
+              <p className="text-[11px] text-gray-500 mb-1">
+                {L(
+                  'Как превратить текущую сцену в промпт для картинки. Работает через ОСНОВНОЕ подключение (текстовая модель), не через image-API.',
+                  'How the current scene is turned into an image prompt. Runs on the MAIN (text) connection, not the image API.'
+                )}
+              </p>
+              <textarea
+                className="input h-32 font-mono text-xs"
+                value={ig.systemPrompt}
+                onChange={(e) => patchIG({ systemPrompt: e.target.value })}
+              />
+            </div>
+          </div>
+        </details>
       </div>
     </Modal>
   );

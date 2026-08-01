@@ -1,21 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Modal, Field } from '../../shared/ui';
-import { getApiKey, setApiKey } from '../../ai/keys';
 import {
   defaultRandomEvents,
   defaultRandomSms,
-  defaultImageGenConfig,
   RANDOM_EVENT_LABELS,
   type Project,
-  type ImageGenConfig,
 } from '../../shared/types';
 import { usePlayerStore } from '../player/playerStore';
 import { LorebookEntriesEditor } from './LorebookEntriesEditor';
 import { PhoneSettingsContent } from '../player/components/PhoneSettings';
 
-// Панель «Расширения» — единый хаб настроек проекта: Лорбук, Телефон, Картинки,
-// События. Память живёт в Game Master; здесь её больше нет.
-type Ext = 'lorebook' | 'phone' | 'image' | 'events';
+// Панель «Расширения» — единый хаб настроек проекта: Лорбук, Телефон, События.
+// Память живёт в Game Master, а всё про картинки (подключение к image-API, модель,
+// ключ, промпт-воркер, стиль, рефы, галерея) — в CG-студии 🎬; здесь их больше нет.
+type Ext = 'lorebook' | 'phone' | 'events';
 
 export function ExtensionsPanel({
   open,
@@ -29,13 +27,8 @@ export function ExtensionsPanel({
   onPatch?: (mutator: (p: Project) => void) => void;
 }) {
   const [tab, setTab] = useState<Ext>('lorebook');
-  const [imageKey, setImageKey] = useState('');
   // Индикатор «ходов с последнего события» — только в живой игре.
   const since = usePlayerStore((s) => s.state?.turnsSinceLastEvent);
-
-  useEffect(() => {
-    setImageKey(getApiKey('image'));
-  }, [open]);
 
   if (!open) return null;
 
@@ -50,17 +43,9 @@ export function ExtensionsPanel({
     );
   }
 
-  const cfg = project.aiConfig;
-  const ig: ImageGenConfig = project.imageGen ?? defaultImageGenConfig();
-  const patchIG = (patch: Partial<ImageGenConfig>) =>
-    onPatch((p) => {
-      p.imageGen = { ...(p.imageGen ?? defaultImageGenConfig()), ...patch };
-    });
-
   const TABS: { id: Ext; label: string; icon: string }[] = [
     { id: 'lorebook', label: 'Лорбук', icon: '📖' },
     { id: 'phone', label: 'Телефон', icon: '📱' },
-    { id: 'image', label: 'Картинки', icon: '🎨' },
     { id: 'events', label: 'События', icon: '🎲' },
   ];
 
@@ -245,88 +230,6 @@ export function ExtensionsPanel({
         </div>
       )}
 
-      {tab === 'image' && (
-        <div className="space-y-4 max-h-[74vh] overflow-y-auto scrollbar-thin pr-1">
-          <div>
-            <h4 className="font-semibold mb-1">Генерация изображений (CG-студия, камера)</h4>
-            <p className="text-xs text-gray-500 mb-3">
-              Подключение к image-API. Ключ хранится только в этом браузере. Стиль и референсы — в самой CG-студии.
-            </p>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <Field label="Провайдер">
-                <select
-                  className="input"
-                  value={ig.providerKind}
-                  onChange={(e) => patchIG({ providerKind: e.target.value as ImageGenConfig['providerKind'] })}
-                >
-                  <option value="gemini">Gemini / Nano Banana (с рефами)</option>
-                  <option value="openai">OpenAI-совместимый (без рефов)</option>
-                </select>
-              </Field>
-              <Field label="Модель">
-                <input
-                  className="input"
-                  placeholder={ig.providerKind === 'gemini' ? 'gemini-2.5-flash-image' : 'gpt-image-1'}
-                  value={ig.model || ''}
-                  onChange={(e) => patchIG({ model: e.target.value || undefined })}
-                />
-              </Field>
-            </div>
-            <Field label="Base URL">
-              <input
-                className="input"
-                placeholder={ig.providerKind === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'}
-                value={ig.baseUrl || ''}
-                onChange={(e) => patchIG({ baseUrl: e.target.value || undefined })}
-              />
-            </Field>
-            <Field label="Image API-ключ" hint="localStorage, уходит только к image-провайдеру.">
-              <input
-                className="input"
-                type="password"
-                value={imageKey}
-                placeholder="sk-… / AIza…"
-                onChange={(e) => {
-                  setImageKey(e.target.value);
-                  setApiKey('image', e.target.value);
-                }}
-              />
-            </Field>
-            <Field label="Системный промпт воркера" hint="Как превратить сцену в image-промпт (CG-студия).">
-              <textarea
-                className="input h-32 font-mono text-xs"
-                value={ig.systemPrompt}
-                onChange={(e) => patchIG({ systemPrompt: e.target.value })}
-              />
-            </Field>
-          </div>
-
-          <div className="pt-2 border-t border-white/10">
-            <h4 className="font-semibold mb-1">Фоны через основное подключение (быстрые действия)</h4>
-            <p className="text-xs text-gray-500 mb-2">
-              Кнопки «Создать фон/CG» используют OpenAI-совместимый /images/generations. Пусто — берётся основное подключение.
-            </p>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <Field label="Image Base URL">
-                <input
-                  className="input"
-                  value={cfg.imageBaseUrl || ''}
-                  placeholder="https://api.openai.com/v1"
-                  onChange={(e) => onPatch((p) => (p.aiConfig.imageBaseUrl = e.target.value || undefined))}
-                />
-              </Field>
-              <Field label="Image модель">
-                <input
-                  className="input"
-                  value={cfg.imageModel || ''}
-                  placeholder="gpt-image-1"
-                  onChange={(e) => onPatch((p) => (p.aiConfig.imageModel = e.target.value || undefined))}
-                />
-              </Field>
-            </div>
-          </div>
-        </div>
-      )}
     </Modal>
   );
 }

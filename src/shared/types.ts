@@ -686,6 +686,7 @@ export interface ImageGenConfig {
   providerKind: 'gemini' | 'openai'; // gemini — с рефами (generateContent); openai — /images/generations без рефов
   baseUrl?: string; // пусто — дефолт под providerKind
   model?: string; // пусто — дефолт под providerKind
+  availableModels?: string[]; // подтянутый ⟳ список моделей image-провайдера (как у основного подключения)
   systemPrompt: string; // редактируемый шаблон ВОРКЕРА: как превратить сцену в image-промпт
   style: string; // текущий стиль изображения (независим от systemPrompt)
   references: Record<string, string>; // charId → assetId переопределённого рефа; нет ⇒ авто (нейтральный базовый спрайт)
@@ -727,6 +728,9 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     providerKind: o.providerKind === 'openai' ? 'openai' : 'gemini',
     baseUrl: typeof o.baseUrl === 'string' && o.baseUrl.trim() ? o.baseUrl.trim() : undefined,
     model: typeof o.model === 'string' && o.model.trim() ? o.model.trim() : undefined,
+    availableModels: Array.isArray(o.availableModels)
+      ? o.availableModels.filter((x): x is string => typeof x === 'string' && !!x)
+      : undefined,
     systemPrompt: typeof o.systemPrompt === 'string' && o.systemPrompt.trim() ? o.systemPrompt : d.systemPrompt,
     style: typeof o.style === 'string' ? o.style : '',
     references: refs,

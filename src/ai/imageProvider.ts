@@ -26,6 +26,41 @@ export interface ImageGenInput {
   signal?: AbortSignal;
 }
 
+// Эффективный Base URL. ВАЖНО: у openai-пути пустое поле раньше молча подставляло
+// адрес ОСНОВНОГО (текстового) подключения — обычный LLM-шлюз, который /images/
+// generations не умеет и отвечает 404. Теперь адрес виден в UI и в тексте ошибки.
+export function effectiveImageBase(cfg: ImageGenConfig): string {
+  const raw = (cfg.baseUrl || '').trim().replace(/\/+$/, '');
+  if (cfg.providerKind === 'gemini') {
+    if (!raw) return DEFAULT_GEMINI_BASE;
+    // Частая опечатка: адрес Google без версии — тогда любой путь даёт 404.
+    if (/generativelanguage\.googleapis\.com$/i.test(raw)) return `${raw}/v1beta`;
+    return raw;
+  }
+  return raw || getConnection().baseUrl?.replace(/\/+$/, '') || 'https://api.openai.com/v1';
+}
+
+export function effectiveImageModel(cfg: ImageGenConfig): string {
+  return (cfg.model || '').trim() || (cfg.providerKind === 'gemini' ? DEFAULT_GEMINI_MODEL : DEFAULT_OPENAI_MODEL);
+}
+
+// Ошибка image-API с точным адресом, по которому мы стучались: 404 почти всегда
+// значит «этот адрес не умеет картинки» (вписан текстовый шлюз) или опечатку в пути.
+function imageHttpError(status: number, url: string, body: string): Error {
+  const detail = cleanErr(body);
+  const hint =
+    status === 404
+      ? 'адрес не найден. Обычно это значит, что в Base URL вписан текстовый LLM-шлюз, который генерацию картинок не поддерживает, либо неверный путь/модель.'
+      : status === 401 || status === 403
+        ? 'ключ не принят (неверный, не тот провайдер или нет доступа к image-модели).'
+        : status === 429
+          ? 'лимит запросов у провайдера — подождите и повторите.'
+          : '';
+  return new Error(
+    `Image-провайдер вернул ${status}${hint ? `: ${hint}` : ''}\nЗапрос: ${url}${detail ? `\nОтвет: ${detail}` : ''}`
+  );
+}
+
 function b64ToBlob(b64: string, mime = 'image/png'): Blob {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -40,15 +75,16 @@ export async function generateImage(cfg: ImageGenConfig, input: ImageGenInput): 
 // ---- Gemini (Nano Banana) ----
 async function generateGemini(cfg: ImageGenConfig, input: ImageGenInput): Promise<Blob> {
   const key = getApiKey('image');
-  const base = (cfg.baseUrl || DEFAULT_GEMINI_BASE).replace(/\/$/, '');
-  const model = cfg.model || DEFAULT_GEMINI_MODEL;
+  const base = effectiveImageBase(cfg);
+  const model = effectiveImageModel(cfg);
 
   const parts: any[] = [{ text: input.prompt }];
   for (const r of input.references || []) {
     parts.push({ inline_data: { mime_type: r.mime, data: r.b64 } });
   }
 
-  const res = await netFetch(`${base}/models/${model}:generateContent`, {
+  const url = `${base}/models/${model}:generateContent`;
+  const res = await netFetch(url, {
     method: 'POST',
     signal: input.signal,
     headers: {
@@ -62,7 +98,7 @@ async function generateGemini(cfg: ImageGenConfig, input: ImageGenInput): Promis
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Image-провайдер вернул ${res.status}: ${cleanErr(text)}`);
+    throw imageHttpError(res.status, url, text);
   }
   const data = await res.json();
   const cand = data?.candidates?.[0];
@@ -79,10 +115,11 @@ async function generateGemini(cfg: ImageGenConfig, input: ImageGenInput): Promis
 // ---- OpenAI-совместимый /images/generations ----
 async function generateOpenAI(cfg: ImageGenConfig, input: ImageGenInput): Promise<Blob> {
   const key = getApiKey('image');
-  const base = (cfg.baseUrl || getConnection().baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
-  const model = cfg.model || DEFAULT_OPENAI_MODEL;
+  const base = effectiveImageBase(cfg);
+  const model = effectiveImageModel(cfg);
 
-  const res = await netFetch(`${base}/images/generations`, {
+  const url = `${base}/images/generations`;
+  const res = await netFetch(url, {
     method: 'POST',
     signal: input.signal,
     headers: {
@@ -99,7 +136,7 @@ async function generateOpenAI(cfg: ImageGenConfig, input: ImageGenInput): Promis
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Image-провайдер вернул ${res.status}: ${cleanErr(text)}`);
+    throw imageHttpError(res.status, url, text);
   }
   const data = await res.json();
   const item = data?.data?.[0];
@@ -110,6 +147,59 @@ async function generateOpenAI(cfg: ImageGenConfig, input: ImageGenInput): Promis
     return img.blob();
   }
   throw new Error('Пустой ответ image-провайдера');
+}
+
+// Список моделей image-провайдера — как ⟳ у основного подключения.
+//  • gemini — GET {base}/models (x-goog-api-key): у Google модели приходят как
+//    "models/gemini-…"; оставляем только те, что умеют generateContent, и
+//    поднимаем картиночные (image / imagen) наверх списка.
+//  • openai — GET {base}/models (Bearer), терпимый разбор обёрток.
+export async function listImageModels(cfg: ImageGenConfig, apiKey: string): Promise<string[]> {
+  const base = effectiveImageBase(cfg);
+  const url = `${base}/models`;
+  const res = await netFetch(url, {
+    headers:
+      cfg.providerKind === 'gemini'
+        ? apiKey
+          ? { 'x-goog-api-key': apiKey }
+          : {}
+        : apiKey
+          ? { Authorization: `Bearer ${apiKey}` }
+          : {},
+  });
+  if (!res.ok) throw imageHttpError(res.status, url, await res.text().catch(() => ''));
+  const data = await res.json();
+  const list: any[] = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+  const ids = list
+    .filter((m) => {
+      if (cfg.providerKind !== 'gemini') return true;
+      const methods = m?.supportedGenerationMethods;
+      return !Array.isArray(methods) || methods.includes('generateContent');
+    })
+    .map((m) => (typeof m === 'string' ? m : m?.id || m?.name || m?.model || m?.slug))
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+    .map((id) => id.replace(/^models\//, ''));
+  const uniq = Array.from(new Set(ids));
+  // Картиночные модели — вперёд: их в общем списке легко не заметить.
+  const isImage = (m: string) => /image|imagen|dall|flux|sd|diffusion/i.test(m);
+  return [...uniq.filter(isImage).sort(), ...uniq.filter((m) => !isImage(m)).sort()];
+}
+
+export async function testImageConnection(
+  cfg: ImageGenConfig,
+  apiKey: string
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const models = await listImageModels(cfg, apiKey);
+    const model = effectiveImageModel(cfg);
+    const known = models.includes(model);
+    return {
+      ok: true,
+      message: `OK · ${models.length} моделей${known ? '' : ` · «${model}» в списке не найдена (возможно, провайдер отдаёт не всё)`}`,
+    };
+  } catch (e) {
+    return { ok: false, message: (e as Error).message };
+  }
 }
 
 function cleanErr(s: string): string {
