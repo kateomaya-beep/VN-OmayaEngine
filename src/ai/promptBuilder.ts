@@ -20,7 +20,7 @@ import { estimateTokens } from '../shared/utils';
 // Сжимает сырой JSON-ход ассистента до чистой прозы (что видел игрок): нарратив/
 // мысли как есть, реплики как «Имя: текст». Возвращает null при неразборе — тогда
 // вызывающий оставит сырой контент. Снимает дублирование JSON-обвязки в контексте.
-function condenseAssistantTurn(raw: string, project: Project, state: RuntimeState): string | null {
+export function condenseAssistantTurn(raw: string, project: Project, state: RuntimeState): string | null {
   const js = extractJson(raw);
   if (!js) return null;
   let obj: any;
@@ -552,11 +552,46 @@ export async function buildRequest(
   const K = Math.max(2, ps.liveWindow);
   const everyN = Math.max(4, project.memoryConfig.summaryEveryN);
   const histCap = (everyN + K + 6) * 2; // сообщений (2 на ход)
-  const window = state.history.slice(-histCap).map((m) =>
+  let window: LlmMessage[] = state.history.slice(-histCap).map((m) =>
     m.role === 'assistant'
       ? { role: 'assistant' as const, content: condenseAssistantTurn(m.content, project, state) ?? m.content }
       : m
   );
+
+  // ЖЁСТКИЙ БЮДЖЕТ КОНТЕКСТА. «Бюджет контекста» из пресета раньше был только
+  // индикатором: запрос собирался без оглядки на него и на длинной истории уходил
+  // в 40–60k токенов. Провайдеры отвечают на это 400/413/429/504 («апи рабочий, а
+  // ошибки сыплются»). Теперь бюджет реально ограничивает ЖИВУЮ ИСТОРИЮ: системная
+  // часть и ход игрока неприкосновенны, старые сообщения срезаются с начала, пока
+  // запрос не уложится. Что срезано — уже в саммари (журнал эпизодов + снапшот).
+  const budget = Math.max(2000, ps.contextBudget || 8000);
+  const fixedTokens =
+    estimateTokens(system) +
+    presetMessages.reduce((n, m) => n + estimateTokens(m.content), 0) +
+    estimateTokens(playerMove) +
+    400; // заметки автора, ремайндеры, директивы
+  const MIN_WINDOW = 4; // минимум 2 хода живой истории — иначе теряется связность
+  let winTokens = window.reduce((n, m) => n + estimateTokens(m.content), 0);
+  let dropped = 0;
+  while (window.length > MIN_WINDOW && fixedTokens + winTokens > budget) {
+    winTokens -= estimateTokens(window[0].content);
+    window = window.slice(1);
+    dropped++;
+  }
+  // Первым в диалоге должно идти сообщение игрока: Gemini (и часть шлюзов) отвечают
+  // 400/пустотой, если история начинается с assistant. Срез сверху может оставить
+  // «висящий» ответ ИИ — убираем его.
+  while (window.length && window[0].role === 'assistant') {
+    window = window.slice(1);
+    dropped++;
+  }
+  if (dropped) {
+    logEvent(
+      'info',
+      'prompt',
+      `Контекст ужат под бюджет ${budget} ток.: убрано ${dropped} старых сообщений (осталось ${window.length})`
+    );
+  }
 
   const messages: LlmMessage[] = [...presetMessages, ...window];
 

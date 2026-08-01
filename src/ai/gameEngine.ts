@@ -545,7 +545,13 @@ export async function runTurn(
   // ниже дефолта шлюза, который иначе режет ход.
   const ps = getPresetSettings();
   const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
-  const maxTokens = Math.min(6000, Math.max(1200, Math.round(tl.max * 2.2) + 700));
+  // Потолок ответа. 2.2 токена на слово хватало для английского, но кириллица у
+  // всех популярных токенайзеров стоит ~3 токена на слово, а JSON добавляет ключи,
+  // id и служебные биты на КАЖДЫЙ бит. При ходе в 900 слов ответ упирался в лимит,
+  // обрывался посреди JSON — и до пользователя это доходило как «ошибка ИИ»
+  // (с обязательными выборами заметнее: choices идут последними и срезались всегда).
+  const perWord = ps.narrativeLanguage === 'en' ? 1.8 : 3;
+  const maxTokens = Math.min(8000, Math.max(1500, Math.round(tl.max * perWord) + 900));
   // При управляемом размышлении родную «думалку» глушим (none) — иначе она сложится
   // с нашим планом и станет только медленнее.
   const reasoningEffort = ps.guidedThinking ? 'none' : ps.reasoningEffort;
@@ -564,6 +570,16 @@ export async function runTurn(
 
   // One automatic retry on invalid JSON.
   if (!parsed.ok) {
+    // Диагностика: обрыв по лимиту токенов выглядит как «невалидный JSON», но
+    // лечится не повтором, а лимитом/длиной хода — так и пишем в лог.
+    const tail = raw.trimEnd().slice(-1);
+    logEvent(
+      'warn',
+      'llm',
+      tail && tail !== '}'
+        ? `Ответ не разобран и обрывается на «${tail}» — похоже, упёрся в лимит ответа (${maxTokens} ток.). Уменьшите длину хода в пресете.`
+        : 'Ответ не разобран — повторяю запрос с пониженной температурой'
+    );
     raw = await runCompletion({
       system: req.system,
       messages: [...req.messages, { role: 'user', content: RETRY_HINT }],

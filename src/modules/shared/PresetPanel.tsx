@@ -292,12 +292,12 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
               onChange={(e) => patch({ liveWindow: Number(e.target.value) })}
             />
           </Field>
-          <Field label={`Бюджет контекста: ${cfg.contextBudget}`}>
+          <Field label={`Бюджет контекста: ${cfg.contextBudget} ток. (жёсткий потолок запроса)`}>
             <input
               type="range"
-              min={2000}
-              max={32000}
-              step={500}
+              min={4000}
+              max={64000}
+              step={1000}
               className="w-full"
               value={cfg.contextBudget}
               onChange={(e) => patch({ contextBudget: Number(e.target.value) })}

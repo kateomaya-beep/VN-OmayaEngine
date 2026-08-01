@@ -2,6 +2,7 @@ import type { Project, RuntimeState, LlmMessage } from '../shared/types';
 import { runCompletionWith } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { SUMMARIZER_PROMPT } from './directorPrompt';
+import { condenseAssistantTurn } from './promptBuilder';
 import { estimateTokens, uid } from '../shared/utils';
 import { pushToast, updateToast } from '../shared/toast';
 import { useLang } from '../shared/i18n';
@@ -53,9 +54,28 @@ export async function maybeCompress(
   const stale = state.history.slice(0, state.history.length - keep);
   if (!stale.length) return state;
 
-  const transcript = stale
-    .map((m) => `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${m.content}`)
-    .join('\n\n');
+  // Транскрипт для саммарайзера — ПРОЗОЙ, а не сырым JSON хода. Сырые ответы несут
+  // служебные поля (id, эмоции, наряды, statChanges) и раздували вход свёртки в 3–5
+  // раз: на 30 ходах это десятки тысяч токенов, отсюда «ошибка автосаммари» на
+  // рабочем API. Плюс жёсткий потолок по символам — режем самые старые.
+  const MAX_TRANSCRIPT_CHARS = 60000;
+  const lines = stale.map(
+    (m) =>
+      `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${
+        m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content
+      }`
+  );
+  let transcript = lines.join('\n\n');
+  if (transcript.length > MAX_TRANSCRIPT_CHARS) {
+    let start = 0;
+    let len = transcript.length;
+    while (start < lines.length - 1 && len > MAX_TRANSCRIPT_CHARS) {
+      len -= lines[start].length + 2;
+      start++;
+    }
+    transcript = lines.slice(start).join('\n\n');
+    logEvent('warn', 'memory', `Транскрипт свёртки обрезан: пропущено ${start} самых старых сообщений`);
+  }
 
   const toastId = pushToast('info', tt('Сжимаю память…', 'Summarizing memory…'));
   logEvent('info', 'memory', `Саммаризация: сворачиваю ${stale.length} сообщений`);

@@ -32,7 +32,10 @@ function defaults(): PresetSettings {
     narrativeLanguage: 'ru',
     temperature: 0.9,
     liveWindow: 12,
-    contextBudget: 8000,
+    // Бюджет контекста теперь ЖЁСТКО ограничивает запрос (см. promptBuilder), а не
+    // только красит счётчик. Прежние 8000 не вмещали даже системную часть со всеми
+    // блоками (мир/персонажи/манифест/память/GM) — живой истории не осталось бы вовсе.
+    contextBudget: 24000,
     turnLength: { ...DEFAULT_TURN_LENGTH },
     choiceMinGap: 0,
     guidedThinking: false,
@@ -52,7 +55,9 @@ function load(): PresetSettings {
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
       liveWindow: num(v.liveWindow, d.liveWindow),
-      contextBudget: num(v.contextBudget, d.contextBudget),
+      // Ровно прежний дефолт (8000) считаем «не настраивал» и поднимаем до нового:
+      // иначе включённый теперь жёсткий бюджет обрезал бы историю почти в ноль.
+      contextBudget: num(v.contextBudget, d.contextBudget) === 8000 ? d.contextBudget : num(v.contextBudget, d.contextBudget),
       turnLength: v.turnLength ? normalizeTurnLength(v.turnLength) : d.turnLength,
       choiceMinGap: Math.max(0, Math.min(20, Math.round(num(v.choiceMinGap, 0)))),
       reasoningEffort: ['none', 'low', 'medium', 'high'].includes(v.reasoningEffort)

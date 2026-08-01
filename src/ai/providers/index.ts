@@ -149,24 +149,49 @@ function htmlToText(s: string): string {
     .slice(0, 300);
 }
 
+// Сообщение провайдера из тела ответа (JSON вида {error:{message}} у большинства
+// OpenAI-совместимых шлюзов). Без него на 400 виден лишь наш общий хинт, а реальная
+// причина («context length exceeded», «unknown model», «temperature not supported»)
+// теряется — именно из-за этого «апи рабочий, а что не так — непонятно».
+function providerMessage(bodyText: string): string {
+  const t = (bodyText || '').trim();
+  if (!t) return '';
+  try {
+    const j = JSON.parse(t);
+    const m = j?.error?.message ?? j?.message ?? j?.error ?? j?.detail;
+    if (typeof m === 'string' && m.trim()) return m.trim().slice(0, 300);
+  } catch {
+    /* не JSON — ниже разберём как текст/HTML */
+  }
+  return htmlToText(t);
+}
+
 function providerHttpError(status: number, bodyText: string): Error {
+  const detail = providerMessage(bodyText);
   const hint = HTTP_HINTS[status];
   if (hint) {
     const tail = RETRYABLE.has(status)
       ? ' Нажмите «Повторить»; если повторяется — возьмите модель побыстрее или уменьшите контекст.'
       : '';
-    return new Error(`Провайдер вернул ${status}: ${hint}${tail}`);
+    // Текст провайдера показываем ВСЕГДА, когда он есть: он точнее нашего хинта.
+    return new Error(`Провайдер вернул ${status}: ${hint}${tail}${detail ? `\nОтвет провайдера: ${detail}` : ''}`);
   }
-  const detail = htmlToText(bodyText);
   return new Error(`Провайдер вернул ${status}${detail ? `: ${detail}` : ''}`);
+}
+
+// Пустые сообщения — частая причина 400 («content must not be empty») у Anthropic,
+// Gemini и ряда шлюзов. В наш промпт они попасть не должны, но подстраховываемся
+// централизованно, чтобы одна пустая заметка не роняла весь ход.
+function sanitizeMessages(msgs: LlmMessage[]): LlmMessage[] {
+  return msgs.filter((m) => typeof m.content === 'string' && m.content.trim().length > 0);
 }
 
 const openAiCompatible: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
     const model = requireModel(req.model || conn.model);
-    const messages = [{ role: 'system', content: req.system }, ...req.messages];
-    if (req.prefill) messages.push({ role: 'assistant', content: req.prefill });
+    const messages = [{ role: 'system', content: req.system }, ...sanitizeMessages(req.messages)];
+    if (req.prefill?.trim()) messages.push({ role: 'assistant', content: req.prefill });
     const body: Record<string, unknown> = {
       model,
       temperature: req.temperature,
@@ -190,7 +215,7 @@ const openAiCompatible: Provider = {
       const errText = await res.text().catch(() => '');
       const b2 = { ...body };
       let fixes: string[] = [];
-      if ('reasoning_effort' in b2 && (/reason/i.test(errText) || !/max_tokens|max_completion/i.test(errText))) {
+      if ('reasoning_effort' in b2 && (/reason/i.test(errText) || !/max_tokens|max_completion|temperature|context|token/i.test(errText))) {
         delete b2.reasoning_effort;
         fixes.push('без reasoning_effort');
       }
@@ -198,6 +223,20 @@ const openAiCompatible: Provider = {
         b2.max_completion_tokens = b2.max_tokens;
         delete b2.max_tokens;
         fixes.push('max_tokens → max_completion_tokens');
+      }
+      // Reasoning-модели (o-series, gpt-5 и их клоны на шлюзах) принимают только
+      // temperature = 1 и отвечают 400 на любое другое значение.
+      if (/temperature/i.test(errText) && 'temperature' in b2) {
+        delete b2.temperature;
+        fixes.push('без temperature');
+      }
+      // Контекст не влез: повторяем с тем же телом смысла нет — объясняем прямо.
+      if (/context length|context_length|too many tokens|input token|maximum context|token count/i.test(errText)) {
+        throw new Error(
+          `Провайдер вернул 400: запрос не помещается в контекст модели.\n` +
+            `Уменьшите «Бюджет контекста» и «Живое окно» в пресете (🎚) или возьмите модель с бо́льшим контекстом.` +
+            `\nОтвет провайдера: ${providerMessage(errText)}`
+        );
       }
       if (!fixes.length) throw providerHttpError(400, errText);
       logEvent('info', 'llm', `HTTP 400 — повторяю (${fixes.join(', ')})`);
@@ -235,7 +274,10 @@ const anthropic: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
     const model = requireModel(req.model || conn.model);
-    const messages = req.messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+    const messages = sanitizeMessages(req.messages).map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content,
+    }));
     // Anthropic ЖЁСТКО отклоняет финальное assistant-сообщение с хвостовым пробелом/
     // переводом строки (напр. префилл "<thinking>\n") — обрезаем хвост.
     const pf = req.prefill ? req.prefill.replace(/\s+$/, '') : '';
