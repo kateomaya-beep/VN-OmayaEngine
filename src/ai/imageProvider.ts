@@ -2,6 +2,7 @@ import type { ImageGenConfig, ImageAspectRatio, ImageSizeTier } from '../shared/
 import { getApiKey } from './keys';
 import { getConnection } from './connection';
 import { netFetch } from './providers';
+import { logEvent } from '../shared/logStore';
 
 // Генерация изображений для CG-студии. Три бэкенда (выбор в CG-студии):
 //  • gemini      — родной Google generateContent («Nano Banana»): принимает РЕФЕРЕНСЫ
@@ -101,10 +102,33 @@ function imageHttpError(status: number, url: string, body: string, cfg?: ImageGe
         ? 'ключ не принят (неверный, не тот провайдер или нет доступа к image-модели).'
         : status === 429
           ? 'лимит запросов у провайдера — подождите и повторите.'
-          : '';
+          : status === 499
+            ? 'соединение оборвалось ДО ответа (шлюз считает, что запрос закрыл клиент). Обычно это мобильная сеть, свернутый браузер или погасший экран на долгой генерации — держите вкладку открытой и активной. Повтор движок уже сделал.'
+            : '';
   return new Error(
     `Image-провайдер вернул ${status}${hint ? `: ${hint}` : ''}\nЗапрос: ${url}${detail ? `\nОтвет: ${detail}` : ''}`
   );
+}
+
+// Обрыв связи на длинном запросе — обычное дело на мобильной сети: свернули
+// браузер, погас экран, переключилась вышка. Шлюз в этот момент пишет 499
+// («Client Closed Request»), реже 502/503/504. Один автоматический повтор.
+const TRANSIENT_STATUSES = new Set([499, 408, 502, 503, 504]);
+async function withTransientRetry(send: () => Promise<Response>, signal?: AbortSignal): Promise<Response> {
+  let res: Response;
+  try {
+    res = await send();
+  } catch (e) {
+    // Отмену пользователем не трогаем; сетевой обрыв — повторяем.
+    if ((e as Error)?.name === 'AbortError' || signal?.aborted) throw e;
+    logEvent('warn', 'image', `Связь оборвалась (${(e as Error)?.message || e}) — повторяю запрос`);
+    return send();
+  }
+  if (TRANSIENT_STATUSES.has(res.status) && !signal?.aborted) {
+    logEvent('warn', 'image', `Image-провайдер вернул ${res.status} — повторяю запрос`);
+    return send();
+  }
+  return res;
 }
 
 function b64ToBlob(b64: string, mime = 'image/png'): Blob {
@@ -179,11 +203,15 @@ async function generateGemini(cfg: ImageGenConfig, input: ImageGenInput): Promis
       }),
     });
 
-  let res = await send(tier === '1K' ? { aspectRatio: ratio } : { aspectRatio: ratio, imageSize: tier });
+  let res = await withTransientRetry(
+    () => send(tier === '1K' ? { aspectRatio: ratio } : { aspectRatio: ratio, imageSize: tier }),
+    input.signal
+  );
   if (res.status === 400 && tier !== '1K') {
     const errText = await res.text().catch(() => '');
     if (!/imageSize|image_size/i.test(errText)) throw imageHttpError(400, url, errText, cfg);
-    res = await send({ aspectRatio: ratio }); // модель не умеет 2K/4K — рисуем в 1K
+    // модель не умеет 2K/4K — рисуем в 1K
+    res = await withTransientRetry(() => send({ aspectRatio: ratio }), input.signal);
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -234,7 +262,7 @@ async function generateOpenAiChat(cfg: ImageGenConfig, input: ImageGenInput): Pr
       body: JSON.stringify(b),
     });
 
-  let res = await post(body);
+  let res = await withTransientRetry(() => post(body), input.signal);
   // Часть шлюзов не знает необязательных полей (modalities / image_config) и
   // отвечает 400 — повторяем без них: соотношение всё равно уйдёт текстом.
   if (res.status === 400) {
@@ -245,7 +273,7 @@ async function generateOpenAiChat(cfg: ImageGenConfig, input: ImageGenInput): Pr
     const b2 = { ...body };
     delete b2.modalities;
     delete b2.image_config;
-    res = await post(b2);
+    res = await withTransientRetry(() => post(b2), input.signal);
   }
   if (!res.ok) throw imageHttpError(res.status, url, await res.text().catch(() => ''), cfg);
 
@@ -387,11 +415,42 @@ function cleanErr(s: string): string {
 
 // Blob картинки → base64-реф (без data:-префикса) для gemini.
 export async function blobToRef(blob: Blob): Promise<ImageRef> {
+  const small = await downscaleRef(blob);
   const b64: string = await new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
     fr.onerror = () => reject(fr.error);
-    fr.readAsDataURL(blob);
+    fr.readAsDataURL(small);
   });
-  return { mime: blob.type || 'image/png', b64 };
+  return { mime: small.type || 'image/png', b64 };
+}
+
+// Референс уходит в теле запроса как base64 — а спрайты бывают по несколько
+// мегабайт. Три персонажа в кадре = многомегабайтный POST, который на мобильной
+// сети рвётся на полпути (шлюз пишет 499 «Client Closed Request»). Для узнавания
+// лица и одежды хватает 768px по длинной стороне, поэтому ужимаем. PNG сохраняем:
+// у спрайтов прозрачный фон, в JPEG он стал бы чёрным и пролез бы в картинку.
+const REF_MAX_SIDE = 768;
+async function downscaleRef(blob: Blob): Promise<Blob> {
+  try {
+    if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return blob;
+    const bmp = await createImageBitmap(blob);
+    const side = Math.max(bmp.width, bmp.height);
+    if (side <= REF_MAX_SIDE) {
+      bmp.close?.();
+      return blob;
+    }
+    const k = REF_MAX_SIDE / side;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * k);
+    canvas.height = Math.round(bmp.height * k);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return blob;
+    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    bmp.close?.();
+    const out = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
+    return out && out.size < blob.size ? out : blob;
+  } catch {
+    return blob; // не вышло ужать — отправим как есть
+  }
 }
