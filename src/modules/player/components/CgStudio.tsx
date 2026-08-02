@@ -60,6 +60,9 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   const [error, setError] = useState('');
   const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState<Result | null>(null);
+  // Состав кадра: null — авто (решает воркер по тексту сцены), массив — ручной выбор.
+  const [castOverride, setCastOverride] = useState<string[] | null>(null);
+  const [lastCast, setLastCast] = useState<string[] | null>(null); // кто попал в прошлый кадр
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -125,10 +128,35 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const { prompt: p, aspectRatio: workerAspect } = await composeCgPrompt(project, state, ig.systemPrompt);
+      const { prompt: p, aspectRatio: workerAspect, cast } = await composeCgPrompt(project, state, ig.systemPrompt, {
+        onlyCharacterIds: castOverride ?? undefined,
+      });
       if (controller.signal.aborted) return;
       setPrompt(p);
       setStage('draw');
+
+      // Кто реально в кадре. Ручной выбор важнее; иначе — строка CAST от воркера
+      // (он прочитал момент и назвал участников); если её нет — все, кто на сцене.
+      // Именно это отсекает NPC, который «на сцене», но в кат-сцене не участвует:
+      // раньше ему всё равно уходил референс, и он лез в каждый кадр.
+      const norm = (x: string) => x.trim().toLowerCase();
+      const nameOf = (c: (typeof project.characters)[number]) =>
+        c.role === 'protagonist' ? state.protagonistName || c.name : c.name;
+      let inFrame = state.onScreen.map((o) => o.characterId);
+      if (castOverride) inFrame = inFrame.filter((id) => castOverride.includes(id));
+      else if (cast) {
+        const wanted = cast.map(norm);
+        inFrame = inFrame.filter((id) => {
+          const c = project.characters.find((x) => x.id === id);
+          return !!c && wanted.some((w) => w.includes(norm(nameOf(c))) || norm(nameOf(c)).includes(w));
+        });
+      }
+      setLastCast(
+        inFrame
+          .map((id) => project.characters.find((c) => c.id === id))
+          .filter(Boolean)
+          .map((c) => nameOf(c!))
+      );
 
       // Референсы присутствующих персонажей: сначала внешность, следом одежда —
       // порядок важен, промпт ссылается на картинки по номерам.
@@ -136,7 +164,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
       if (supportsReferences(ig) && ig.sendReferences) {
         const seen = new Set<string>();
         for (const os of state.onScreen) {
-          if (seen.has(os.characterId)) continue;
+          if (seen.has(os.characterId) || !inFrame.includes(os.characterId)) continue;
           seen.add(os.characterId);
           const who = project.characters.find((c) => c.id === os.characterId)?.name || os.characterId;
           for (const kind of ['appearance', 'outfit'] as const) {
@@ -278,10 +306,52 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
                 <button className="btn-primary" onClick={generate}>
                   🎬 {L('Сгенерировать CG по текущей сцене', 'Generate a CG from the current scene')}
                 </button>
-                <div className="text-xs text-gray-500 mt-2">
-                  {presentChars.length
-                    ? L(`В кадре: ${presentChars.map((c) => c.name).join(', ')}`, `In frame: ${presentChars.map((c) => c.name).join(', ')}`)
-                    : L('В кадре нет персонажей — выйдет CG окружения/настроения.', 'No characters in frame — an environment/mood CG.')}
+                {/* Состав кадра. «Авто» — воркер сам решает по тексту момента, кто
+                    в нём участвует: персонаж может быть «на сцене», но к этой
+                    кат-сцене отношения не иметь. Чипы — ручное переопределение. */}
+                <div className="mt-2.5 flex flex-wrap items-center justify-center gap-1.5">
+                  <span className="text-[11px] text-gray-500">{L('В кадре:', 'In frame:')}</span>
+                  <button
+                    className={`chip !px-2.5 !py-1 text-xs ${castOverride === null ? 'bg-accent2 text-white' : ''}`}
+                    onClick={() => setCastOverride(null)}
+                    title={L('Решает ИИ по тексту сцены', 'The AI decides from the scene text')}
+                  >
+                    ✨ {L('авто', 'auto')}
+                  </button>
+                  {presentChars.map((c) => {
+                    const on = castOverride === null ? false : castOverride.includes(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        className={`chip !px-2.5 !py-1 text-xs ${on ? 'bg-accent2 text-white' : ''}`}
+                        onClick={() =>
+                          setCastOverride((prev) => {
+                            const base = prev ?? [];
+                            return base.includes(c.id) ? base.filter((x) => x !== c.id) : [...base, c.id];
+                          })
+                        }
+                      >
+                        {c.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-1.5">
+                  {presentChars.length === 0
+                    ? L('На сцене никого — выйдет CG окружения/настроения.', 'Nobody on stage — an environment/mood CG.')
+                    : castOverride === null
+                      ? lastCast
+                        ? L(
+                            `В прошлый раз ИИ взял: ${lastCast.length ? lastCast.join(', ') : 'никого (кадр без людей)'}`,
+                            `Last time the AI picked: ${lastCast.length ? lastCast.join(', ') : 'nobody (a shot without people)'}`
+                          )
+                        : L(
+                            'ИИ сам выберет, кто участвует в этом моменте — остальные в кадр не попадут.',
+                            'The AI picks who belongs in this moment — the rest stay out of frame.'
+                          )
+                      : castOverride.length
+                        ? L('Ручной состав кадра.', 'Manual cast.')
+                        : L('Никто не выбран — выйдет кадр без людей.', 'Nobody selected — a shot without people.')}
                 </div>
                 {error && <div className="text-xs text-red-400 mt-2">⚠️ {error}</div>}
               </div>

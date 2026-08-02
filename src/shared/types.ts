@@ -756,7 +756,12 @@ Rules:
 - Reference images define a character's FACE, HAIR and OUTFIT only. Never copy the pose or framing of a reference — build the pose from this description.
 - No nudity and no explicit private parts — suggestion, framing and cropping instead.
 - Do NOT name an art style or medium — the style line is appended separately by the engine.
-- On the LAST line, alone, state the frame you want: "ASPECT: 16:9". Allowed: 1:1, 2:3, 3:2, 3:4, 4:3, 9:16, 16:9, 21:9. Wide for landscapes, interiors and group scenes; tall for portraits and single figures. The engine uses this only when the aspect ratio is set to "auto".`;
+- Not everyone listed as available is in this shot. Include ONLY the people the moment is actually about; a character who is merely somewhere nearby must be left out of both the description and the cast line.
+
+FINISH with two control lines, each alone on its own line:
+CAST: <first names of the people visible in the image, comma-separated — or NONE for a shot without people>
+ASPECT: <1:1 | 2:3 | 3:2 | 3:4 | 4:3 | 9:16 | 16:9 | 21:9>
+CAST decides whose reference photos get attached, so never name someone who is not in the frame. Wide ratios suit landscapes, interiors and group scenes; tall ones suit portraits and single figures.`;
 
 // Стиль по умолчанию — дописывается к промпту воркера отдельной строкой.
 // Ориентир — кат-сцены романтических новелл: полуреализм с живыми цветами,
@@ -772,7 +777,10 @@ export const DEFAULT_IMAGE_NEGATIVE =
 
 // Обрывок ПРЕЖНЕГО дефолтного воркер-промпта: если в проекте лежит он (значит,
 // пользователь его не правил) — подменяем на актуальный, как с блоками пресета.
-const OUTDATED_IMAGE_PROMPT_MARK = 'Do NOT add an art-style tag';
+const OUTDATED_IMAGE_PROMPT_MARKS = [
+  'Do NOT add an art-style tag', // самый первый дефолт
+  'The engine uses this only when the aspect ratio is set to "auto"', // дефолт без строки CAST
+];
 // То же для стиля: прежний дефолт (аниме-полуреализм) → новый, реалистичнее.
 const OUTDATED_IMAGE_STYLE_MARK = 'semi realism anime inspired style';
 
@@ -824,7 +832,7 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     systemPrompt:
       typeof o.systemPrompt === 'string' &&
       o.systemPrompt.trim() &&
-      !o.systemPrompt.includes(OUTDATED_IMAGE_PROMPT_MARK)
+      !OUTDATED_IMAGE_PROMPT_MARKS.some((mark) => (o.systemPrompt as string).includes(mark))
         ? o.systemPrompt
         : d.systemPrompt,
     // Пустой стиль неотличим от «ни разу не задавали» — подставляем дефолтный.
