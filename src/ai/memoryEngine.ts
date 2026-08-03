@@ -216,6 +216,13 @@ export async function maybeCompress(
       );
       return state;
     }
+    // Журнал эпизодов: append-only, хронологический (нужен и для пересборки снапшота).
+    const fromMsg = state.memory.foldedMsgCount + 1;
+    const toMsg = state.memory.foldedMsgCount + stale.length;
+    const chronicle = episode
+      ? [...state.memory.chronicle, { id: uid('chr'), text: episode, atTurn: state.turnCount, fromMsg, toMsg }]
+      : state.memory.chronicle;
+
     updateToast(toastId, 'success', tt('Память обновлена', 'Memory updated'));
     logEvent(
       'info',
@@ -226,27 +233,34 @@ export async function maybeCompress(
     // Снапшот несёт отношения и «где мы сейчас». Пустая секция при непустом
     // эпизоде — почти всегда обрыв ответа по лимиту токенов: эпизод успел, а
     // состояние нет. Молча оставлять прежний снапшот нельзя — он устареет.
-    if (!storyState.trim()) {
+    // Снапшот НЕ ОБНОВИЛСЯ (обрыв ответа). Оставлять прежний нельзя: он объявляет
+    // себя «положением дел сейчас» и тянет сюжет назад, к моменту старой свёртки —
+    // отсюда «ход идёт сразу после старого саммари, хотя прошёл кусок истории» и
+    // хождение сюжета по кругу. Пересобираем снапшот отдельным запросом по журналу.
+    let freshState = storyState.trim();
+    if (!freshState) {
       logEvent(
         'warn',
         'memory',
-        'Секция STORY STATE пуста — снапшот состояния (отношения, текущее положение) НЕ обновился. ' +
-          'Обычно это обрыв ответа: возьмите модель подлиннее или уменьшите частоту свёрток.'
+        'Секция STORY STATE пуста (обрыв ответа) — пересобираю снапшот отдельным запросом по журналу эпизодов'
       );
-      pushToast(
-        'error',
-        tt(
-          'Саммари без блока состояния: отношения и «где мы сейчас» не обновились. Загляните в логи.',
-          'Summary without the state block: relationships and "where we are" did not update. Check the logs.'
-        )
-      );
+      try {
+        freshState = await rebuildStoryState(project, { ...state.memory, chronicle });
+      } catch (e) {
+        logEvent(
+          'error',
+          'memory',
+          'Пересборка снапшота не удалась: ' + (e as Error).message + '. Прежний снапшот помечен устаревшим.'
+        );
+        pushToast(
+          'error',
+          tt(
+            'Снапшот состояния не обновился — он помечен устаревшим. Пересоберите его в Game Master → Саммари.',
+            'The state snapshot did not update — it is marked stale. Rebuild it in Game Master → Summary.'
+          )
+        );
+      }
     }
-    // Журнал эпизодов: append-only, хронологический.
-    const fromMsg = state.memory.foldedMsgCount + 1;
-    const toMsg = state.memory.foldedMsgCount + stale.length;
-    const chronicle = episode
-      ? [...state.memory.chronicle, { id: uid('chr'), text: episode, atTurn: state.turnCount, fromMsg, toMsg }]
-      : state.memory.chronicle;
     // Сырой кусок сохраняем отдельно — не инжектится целиком, только через
     // векторный подсос релевантного (см. vectorEngine.ts).
     const rawArchive = [
@@ -260,8 +274,10 @@ export async function maybeCompress(
       memory: await recompactChronicle(project, {
         ...state.memory,
         chronicle,
-        // Снапшот заменяется новым; при сбое секции — остаётся прежний.
-        storyState: storyState || state.memory.storyState,
+        // Снапшот заменяется новым (или пересобранным). Метку возраста ставим ТОЛЬКО
+        // при успехе: устаревший снапшот так и останется помеченным старым ходом.
+        storyState: freshState || state.memory.storyState,
+        storyStateAtTurn: freshState ? state.turnCount : state.memory.storyStateAtTurn,
         foldedMsgCount: toMsg,
         rawArchive,
         messagesSinceSummary: 0,

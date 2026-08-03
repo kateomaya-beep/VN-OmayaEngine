@@ -185,9 +185,26 @@ async function memoryBlock(
         .join('\n\n')}`
     );
   }
-  // Живой снапшот состояния — единственное «текущее положение дел».
+  // Снапшот состояния — с ЯВНЫМ возрастом. Раньше он объявлял себя «положением дел
+  // СЕЙЧАС» независимо от того, когда снят. Замороженный снапшот (обрыв ответа при
+  // свёртке) описывал момент десятки ходов назад — и модель продолжала историю
+  // оттуда: «ход идёт сразу после старого саммари», сюжет ходил по кругу.
   if (m.storyState?.trim()) {
-    parts.push(`CURRENT STORY STATE (authoritative living snapshot — the single source of truth for where things stand NOW):\n${m.storyState.trim()}`);
+    const at = m.storyStateAtTurn ?? 0;
+    const age = at ? state.turnCount - at : null;
+    const stamp =
+      age === null
+        ? 'taken at an unknown point'
+        : age <= 0
+          ? 'taken at the current turn'
+          : `taken at turn ${at}; the story has since advanced to turn ${state.turnCount} — ${age} turn(s) of newer events happened AFTER it`;
+    const warn =
+      age !== null && age > 0
+        ? ' Anything in the recent messages or the newest episode-log entries OVERRIDES this snapshot: continue from where the story is NOW, not from the situation described here.'
+        : '';
+    parts.push(
+      `STORY STATE SNAPSHOT (${stamp}) — background on who is who, relationships and open threads.${warn}\n${m.storyState.trim()}`
+    );
   }
   if (m.liveSummary.trim()) {
     parts.push(`CURRENT ARC NOTE (from the author):\n${m.liveSummary}`);
@@ -305,7 +322,17 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   // Время/место.
   const when = [clock.date, clock.time].filter(Boolean).join(', ');
   if (when) parts.push(`Date/time: ${when}`);
-  if (clock.location) parts.push(`Location: ${clock.location}`);
+  if (clock.location) {
+    // Штамп возраста: запись обновляет сама модель, и без пометки она читалась как
+    // «герой сейчас здесь» даже спустя десятки ходов после переезда.
+    const at = state.gm.clock.locationAtTurn ?? 0;
+    const age = at ? state.turnCount - at : null;
+    const note =
+      age !== null && age > 2
+        ? ` (recorded ${age} turns ago — if the story has moved since, the story wins: emit location_change)`
+        : '';
+    parts.push(`Location: ${clock.location}${note}`);
+  }
 
   // Проектные статы с ТЕКУЩИМИ значениями и точными id — чтобы модель могла и читать,
   // и обновлять их через statChanges (частая жалоба: «в тексте стат вырос, в статах нет»).
@@ -363,7 +390,7 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
     // себя «авторитетным» целиком, и модель возвращала героя в прежний город,
     // противореча уже сыгранным сценам. Теперь на месте/времени сюжет главнее.
     'DATE, TIME AND LOCATION are only as fresh as your last update. If the story (recent turns, memory, the episode log) says the hero has since moved elsewhere or time has passed, the STORY WINS: continue from where the story actually is and CORRECT this record the same turn — never drag the hero back to the location written here.',
-    'WHENEVER the hero changes place — a trip, a flight, moving to another room, city or country — send {"worldState":{"clock":{"location":"<where they are NOW>"}}} that same turn. This is not optional bookkeeping: without it the engine keeps showing the old place to you and to the player.',
+    'WHENEVER the hero changes place — a trip, a flight, moving to another room, city or country — emit the control beat {"type":"location_change","location":"<where they are NOW>"} at that point in the beat flow. This is mandatory, not optional bookkeeping: without it the engine keeps showing the old place to you and to the player, and the story gets dragged back there.',
     'TIME: the in-story date is always DD/MM/YYYY. When time passes (a night, "a week later", a jump), emit {"type":"time_advance","newDate":"DD/MM/YYYY","newTime":"HH:MM"}. Never write a date in any other format.',
     'INVENTORY: emit {"type":"inventory_add","name":...,"emoji":"<one emoji>","quantity":1,"category":...,"source":"куплено|получено|найдено"} when the hero acquires something meaningful, and {"type":"inventory_remove","name":...,"quantity":1} when they consume/lose/give it away. Consumables are really spent.',
   ];

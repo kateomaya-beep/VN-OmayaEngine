@@ -351,6 +351,7 @@ export function initialMemory(): MemoryState {
   return {
     chronicle: [],
     storyState: '',
+    storyStateAtTurn: 0,
     foldedMsgCount: 0,
     liveSummary: '',
     facts: [],
@@ -666,6 +667,7 @@ function normalizeMemory(
   return {
     chronicle,
     storyState: str(raw?.storyState),
+    storyStateAtTurn: typeof raw?.storyStateAtTurn === 'number' ? raw.storyStateAtTurn : 0,
     foldedMsgCount: num(raw?.foldedMsgCount, 0),
     liveSummary,
     facts,

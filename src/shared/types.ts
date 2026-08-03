@@ -970,6 +970,10 @@ export type Beat =
   | { type: 'contact_added'; characterId: string }
   // Симулятор жизни (Batch 8): продвижение времени и инвентарь. Все — управляющие.
   | { type: 'time_advance'; newDate?: string; newTime?: string }
+  // Переезд героя. Отдельный ДЕТЕРМИНИРОВАННЫЙ бит: раньше место ехало только через
+  // необязательный worldState.clock, и стоило модели его не прислать — запись
+  // застывала и тянула сюжет обратно в покинутый город.
+  | { type: 'location_change'; location: string }
   | { type: 'inventory_add'; name: string; emoji?: string; quantity?: number; category?: string; source?: string }
   | { type: 'inventory_remove'; name: string; quantity?: number; reason?: string }
   // Реестр персонажей (patch character-registry) — идентичность по id, не по имени.
@@ -1055,6 +1059,9 @@ export interface MemoryState {
   // ЖИВОЙ СНАПШОТ СОСТОЯНИЯ: одно эволюционирующее структурированное саммари
   // (персонажи/отношения/крючки/текущее положение). Заменяется при каждой свёртке.
   storyState?: string;
+  // На каком ходу снят снапшот. Без этого он выдавал себя за «положение дел СЕЙЧАС»
+  // независимо от возраста: замороженный снапшот тянул сюжет назад, к моменту свёртки.
+  storyStateAtTurn?: number;
   foldedMsgCount: number; // всего сообщений свёрнуто (для диапазонов записей)
   liveSummary: string; // ручная заметка о текущей арке (не авто-управляется)
   facts: CanonicalFact[]; // canonical facts store — не проходит через LLM-сжатие
@@ -1158,6 +1165,8 @@ export interface GmClock {
   year: string; // год, напр. "1024"
   time: string; // время суток, напр. "14:30" / "evening"
   location: string; // текущая локация
+  // На каком ходу записана локация — для пометки свежести в промпте.
+  locationAtTurn?: number;
 }
 
 export interface GmCalendar {

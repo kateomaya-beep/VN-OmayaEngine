@@ -268,6 +268,7 @@ export async function applyTurn(
   // Продвижение времени (Batch 8 §II): собираем целевую дату/время из time_advance-битов.
   let pendingDate: string | undefined;
   let pendingTime: string | undefined;
+  let pendingLocation: string | undefined;
 
   let runBg: string | null = turn.scene.backgroundId ?? state.currentBackgroundId;
   let runMood: string | null = turn.scene.musicMood ?? state.currentMusicMood;
@@ -302,6 +303,11 @@ export async function applyTurn(
     if (b.type === 'time_advance') {
       if (b.newDate) pendingDate = b.newDate;
       if (b.newTime) pendingTime = b.newTime;
+      continue;
+    }
+    // Переезд: последняя локация в потоке — итоговая.
+    if (b.type === 'location_change') {
+      if (b.location?.trim()) pendingLocation = b.location.trim();
       continue;
     }
     // Инвентарь (Batch 8 §IV): расходники реально расходуются.
@@ -391,6 +397,13 @@ export async function applyTurn(
   const oldDate = state.gm.clock.date || '';
   if (pendingDate) gm.clock.date = pendingDate;
   if (pendingTime) gm.clock.time = pendingTime;
+  // Переезд: бит location_change авторитетнее необязательного worldState.clock.
+  // Метку хода ставим при ЛЮБОМ обновлении места — по ней промпт показывает, насколько
+  // запись свежа, и модель не принимает старый город за «где герой сейчас».
+  if (pendingLocation) gm.clock.location = pendingLocation;
+  if (gm.clock.location !== state.gm.clock.location || !gm.clock.locationAtTurn) {
+    gm.clock.locationAtTurn = nextTurnNumber;
+  }
   const newDate = gm.clock.date || '';
   // Регулярные начисления за прошедшие периоды (Batch 8 §III.3) — датированные транзакции.
   if (pendingDate && oldDate) {

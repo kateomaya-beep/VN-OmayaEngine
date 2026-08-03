@@ -43,6 +43,7 @@ export const beatSchema = z.union([
   z.object({ type: z.literal('contact_added'), characterId: z.string() }),
   // Симулятор жизни (Batch 8): время + инвентарь.
   z.object({ type: z.literal('time_advance'), newDate: z.string().nullish(), newTime: z.string().nullish() }),
+  z.object({ type: z.literal('location_change'), location: z.string() }),
   z.object({
     type: z.literal('inventory_add'),
     name: z.string(),

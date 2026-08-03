@@ -47,6 +47,7 @@ RESPONSE SCHEMA:
     { "type": "scene_change", "backgroundId": string|null, "musicMood": string|null },
     { "type": "outfit_change", "characterId": string, "outfit": string },
     { "type": "time_advance", "newDate": "DD/MM/YYYY", "newTime": "HH:MM" },
+    { "type": "location_change", "location": "<where the hero is NOW>" },
     { "type": "transaction", "amount": number, "vendor": string, "item": string, "time": string },
     { "type": "inventory_add", "name": string, "emoji": string, "quantity": number, "category": string, "source": string },
     { "type": "inventory_remove", "name": string, "quantity": number, "reason": string },
@@ -310,6 +311,9 @@ const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
   // Контракт без управляющих битов: инвентарь/время/деньги/СМС выглядели вне схемы,
   // и модель их не слала («инвентарь не работает»).
   { key: 'json_contract', signature: '"type": "dialogue", "characterId": string|null, "name": string|null, "emotion": string, "position"' },
+  // Контракт без location_change: место ехало только необязательным worldState,
+  // и застрявшая запись тянула сюжет в покинутый город.
+  { key: 'json_contract', signature: '{ "type": "inventory_remove", "name": string, "quantity": number, "reason": string },\n    { "type": "sms_incoming"' },
 ];
 function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
   let changed = false;

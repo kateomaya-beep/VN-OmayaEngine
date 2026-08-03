@@ -66,6 +66,7 @@ export const CORE_PROMPT = `Ты — движок-режиссёр интера�
     { "type": "scene_change", "backgroundId": string|null, "musicMood": ${JSON.stringify([...AUDIO_MOODS])}|null },
     { "type": "outfit_change", "characterId": string, "outfit": string },
     { "type": "time_advance", "newDate": "ДД/ММ/ГГГГ", "newTime": "ЧЧ:ММ" },
+    { "type": "location_change", "location": "<где герой ТЕПЕРЬ>" },
     { "type": "transaction", "amount": number, "vendor": string, "item": string, "time": string },
     { "type": "inventory_add", "name": string, "emoji": string, "quantity": number, "category": string, "source": string },
     { "type": "inventory_remove", "name": string, "quantity": number, "reason": string },
