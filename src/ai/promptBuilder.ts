@@ -634,15 +634,20 @@ export async function buildRequest(
   // Две категории: УНИВЕРСАЛЬНЫЕ (общие для всех проектов, из localStorage) идут
   // первыми как постоянные правила подачи, затем ПРОЕКТНЫЕ (из сейва) — они
   // конкретнее и стоят ближе к ходу, поэтому весят больше. Пусто — не инжектится.
-  for (const note of getGlobalNotes()) {
-    if (note.text.trim()) {
-      withMove.push({ role: 'user', content: `[AUTHOR NOTE] ${expandMacros(note.text, ctx)}` });
-    }
-  }
-  for (const note of state.authorNotes) {
-    if (note.text.trim()) {
-      withMove.push({ role: 'user', content: `[AUTHOR NOTE] ${expandMacros(note.text, ctx)}` });
-    }
+  const notes = [...getGlobalNotes(), ...state.authorNotes].filter((n) => n.text.trim());
+  if (notes.length) {
+    // Пометка приоритета обязательна: заметка соревнуется с планом (plotOutline,
+    // адженда, крючки снапшота), и без явного «перекрывает» модель раз за разом
+    // возвращалась к запланированному событию, несмотря на запрет игрока.
+    withMove.push({
+      role: 'user',
+      content:
+        '[AUTHOR NOTES — HIGHEST PRIORITY] The following directions come from the player and OVERRIDE ' +
+        'the plot outline, the open agenda, any plot hooks in memory and your own plans. A prohibition here ' +
+        'applies now and in later turns until the player changes it — never satisfy it indirectly ' +
+        '(through another character, a near-miss, a dream or a conversation about it):\n' +
+        notes.map((n) => `- ${expandMacros(n.text, ctx)}`).join('\n'),
+    });
   }
 
   // Скрытая директива случайного события (Batch 6 §3) — игрок её не видит и она НЕ

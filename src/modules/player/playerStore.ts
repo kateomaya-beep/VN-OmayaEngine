@@ -445,8 +445,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const hist = state.history;
     if (hist.length < 2) return;
     const lastMove = hist[hist.length - 2];
+    // Отклонённый вариант передаём движку: без него реролл возвращал то же самое
+    // (контекст не изменился), и «нежелательное событие» повторялось раз за разом.
+    const rejected = hist[hist.length - 1]?.content;
     const rolledBack: RuntimeState = { ...state, history: hist.slice(0, -2) };
-    await runAndApply(set, get, project, rolledBack, lastMove.content);
+    await runAndApply(set, get, project, rolledBack, lastMove.content, rejected);
   },
 
   clearError() {
@@ -1145,7 +1148,8 @@ async function runAndApply(
   get: () => PlayerStore,
   project: Project,
   baseState: RuntimeState,
-  playerMove: string
+  playerMove: string,
+  rejectedTurn?: string
 ): Promise<boolean> {
   // Новый ход вытесняет предыдущий: если что-то ещё в полёте (напр. регенерация
   // поверх текущей генерации) — сразу абортим его, не дожидаясь завершения. Помечаем
@@ -1171,7 +1175,7 @@ async function runAndApply(
   logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
   try {
     // Обычная (нестриминговая) генерация — один ход целиком, затем показ.
-    const { turn, state } = await runTurn(project, baseState, playerMove, controller.signal);
+    const { turn, state } = await runTurn(project, baseState, playerMove, controller.signal, rejectedTurn);
 
     // Ход вытеснен (отмена/регенерация) пока ждали ответ — результат игнорируем,
     // UI уже приведён в нужное состояние тем, кто нас вытеснил.

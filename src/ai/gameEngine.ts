@@ -5,7 +5,7 @@ import { logEvent } from '../shared/logStore';
 import { resolveEmoji } from '../shared/emojiDict';
 import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
 import { syncRegistry, findRegistryMatch, newRegistryId, normName } from './characterRegistry';
-import { buildRequest } from './promptBuilder';
+import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
@@ -527,7 +527,9 @@ export async function runTurn(
   project: Project,
   state: RuntimeState,
   playerMove: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  // Отклонённый игроком вариант хода (реролл): просим ДРУГОЕ продолжение.
+  rejectedTurn?: string
 ): Promise<TurnResult> {
   // Случайное событие (Batch 6 §3) и случайное СМС (Batch 8-fix) — независимые роллы.
   // Обе скрытые директивы могут прийти в один ход (событие + отдельное входящее СМС).
@@ -536,7 +538,24 @@ export async function runTurn(
   // Небольшой поп-ап, чтобы игрок понимал, что сейчас триггернулось (по просьбе).
   if (evt.fired && evt.type) pushToast('info', `🎲 Случайное событие: ${RANDOM_EVENT_LABELS[evt.type].ru}`);
   if (sms.fired) pushToast('info', '📱 Сейчас придёт входящее сообщение…');
-  const extraDirective = [evt.directive, sms.directive].filter(Boolean).join('\n\n') || undefined;
+  // Реролл без этой директивы возвращал почти тот же ход: контекст тот же, и модель
+  // заново приходила к тому же повороту — особенно если событие «запланировано»
+  // адженда/крючками. Показываем отклонённый вариант и требуем другой.
+  const rejectedText = rejectedTurn?.trim()
+    ? condenseAssistantTurn(rejectedTurn, project, state) ?? rejectedTurn
+    : '';
+  const rerollDirective = rejectedText
+    ? [
+        '[REROLL] The player REJECTED your previous version of this turn and asked for another one.',
+        'This is what you wrote — it must NOT happen again:',
+        rejectedText.slice(0, 1200),
+        'Write a DIFFERENT continuation of the SAME player move: different events, a different turn of the scene, a different outcome.',
+        'Do not merely rephrase the rejected version and do not steer back to the same event by another route.',
+        'If an author note forbids something, that prohibition outranks the plot outline, the agenda and any plot hooks.',
+      ].join('\n')
+    : undefined;
+  const extraDirective =
+    [evt.directive, sms.directive, rerollDirective].filter(Boolean).join('\n\n') || undefined;
   const req = await buildRequest(project, state, playerMove, { extraDirective });
 
   // Потолок токенов — под верхнюю границу длины хода (слова→токены ≈ ×2.2 для
