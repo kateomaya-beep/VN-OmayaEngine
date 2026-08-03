@@ -14,7 +14,7 @@ import type {
   Project, MemoryConfig, VectorizationMode, GmCharacter, GameMasterState, RelationshipStats,
   AssetSelectorSource, CharacterRole, MemoryState,
 } from '../../shared/types';
-import { resummarizeArchived } from '../../ai/memoryEngine';
+import { resummarizeArchived, rebuildStoryState } from '../../ai/memoryEngine';
 
 // Game Master (вдохновлено Horae): динамическое состояние мира — персонажи с
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
@@ -837,6 +837,7 @@ function AgendaTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) {
 function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch?: (m: (p: Project) => void) => void; L: Lf }) {
   const s = usePlayerStore();
   const memory = s.state?.memory ?? null;
+  const [rebuilding, setRebuilding] = useState(false);
   const patchMemory = s.patchMemory;
 
   return (
@@ -848,11 +849,37 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
       {/* Живой снапшот состояния — редактируемый (единый источник «где мы сейчас»). */}
       {memory && (
         <div className="space-y-1">
-          <h4 className="font-semibold text-sm">{L('Состояние истории (живой снапшот)', 'Story state (living snapshot)')}</h4>
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="font-semibold text-sm">{L('Состояние истории (живой снапшот)', 'Story state (living snapshot)')}</h4>
+            {project && (
+              <button
+                className="btn-ghost !px-2 !py-0.5 text-xs shrink-0"
+                disabled={rebuilding}
+                title={L('Собрать заново по всему журналу эпизодов', 'Rebuild from the whole episode log')}
+                onClick={async () => {
+                  setRebuilding(true);
+                  const id = pushToast('info', L('Пересобираю снапшот…', 'Rebuilding the snapshot…'));
+                  try {
+                    const text = await rebuildStoryState(project, memory);
+                    s.patchMemory((m) => {
+                      m.storyState = text;
+                    });
+                    updateToast(id, 'success', L('Снапшот пересобран', 'Snapshot rebuilt'));
+                  } catch (e) {
+                    updateToast(id, 'error', (e as Error).message);
+                  } finally {
+                    setRebuilding(false);
+                  }
+                }}
+              >
+                {rebuilding ? '…' : `↻ ${L('пересобрать', 'rebuild')}`}
+              </button>
+            )}
+          </div>
           <p className="text-[11px] text-gray-500">
             {L(
-              'Обновляется при каждой свёртке (заменяется целиком). Правьте, если ИИ что-то понял не так — это авторитетное «текущее положение дел» для следующих ходов.',
-              'Replaced wholesale on each fold. Edit it if the AI got something wrong — this is the authoritative "where things stand now" for future turns.'
+              'Это НЕ пересказ ходов, а «где всё стоит сейчас»: кто есть кто, отношения и их причины, закрытые арки, открытые крючки, важные предметы, текущая сцена. Заменяется целиком при каждой свёртке. «Пересобрать» — собрать заново по всему журналу эпизодов, если снапшот оборвался или устарел. Правки руками сохраняются: для следующих ходов это авторитетный источник.',
+              'Not a retelling of turns but "where everything stands now": who is who, relationships and their causes, resolved arcs, open hooks, key items, the current scene. Replaced wholesale on each fold. "Rebuild" reassembles it from the whole episode log. Hand edits are kept — this is authoritative for future turns.'
             )}
           </p>
           <textarea
@@ -1015,6 +1042,25 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
           value={mc.minorEventsLimit ?? 10}
           onChange={(e) => patchMem({ minorEventsLimit: Math.max(3, Math.min(40, Number(e.target.value) || 10)) })}
         />
+      </Field>
+      <Field label={L(`Потолок ответа свёртки: ${mc.summaryMaxTokens ?? 8000} токенов`, `Summary answer cap: ${mc.summaryMaxTokens ?? 8000} tokens`)}>
+        <input
+          type="number"
+          min={1000}
+          max={32000}
+          step={500}
+          className="input w-28"
+          value={mc.summaryMaxTokens ?? 8000}
+          onChange={(e) =>
+            patchMem({ summaryMaxTokens: Math.max(1000, Math.min(32000, Number(e.target.value) || 8000)) })
+          }
+        />
+        <p className="text-[11px] text-gray-500 mt-1">
+          {L(
+            'Свёртка отдаёт две части сразу — запись журнала и ПОЛНЫЙ снапшот состояния, — поэтому ответ длинный. Мало токенов = снапшот обрывается на середине (например, на «CURRENT SITUATION»).',
+            'A fold returns two parts at once — the log entry and the FULL state snapshot — so the answer is long. Too few tokens and the snapshot gets cut mid-way.'
+          )}
+        </p>
       </Field>
       <Field label={L('Кастомный промпт саммарайзера (опц.)', 'Custom summarizer prompt (opt.)')}>
         <p className="text-[11px] text-gray-500 mb-1">

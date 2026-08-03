@@ -265,13 +265,16 @@ export type VectorizationMode = 'builtin' | 'custom' | 'off';
 export interface MemoryConfig {
   summaryEveryN: number; // частота свёртки (20/30/40/…) по счётчику сообщений
   summaryPrompt?: string; // кастомный промпт саммарайзера, иначе дефолт
+  // Потолок ответа свёртки в токенах. Двухсекционный ответ (журнал + снапшот
+  // состояния) объёмный: на 3000 снапшот обрывался на середине. undefined = дефолт.
+  summaryMaxTokens?: number;
   minorEventsLimit?: number; // лимит MINOR EVENTS в саммари (Batch 6 §2), дефолт 10
   vectorization: VectorizationMode;
   embeddingsConnection?: ApiConnection; // для 'custom'
 }
 
 export function defaultMemoryConfig(): MemoryConfig {
-  return { summaryEveryN: 30, minorEventsLimit: 10, vectorization: 'off' };
+  return { summaryEveryN: 30, minorEventsLimit: 10, vectorization: 'off', summaryMaxTokens: 8000 };
 }
 
 // Длина хода (слов). Ползунок/ввод ограничены этими границами; дефолт совпадает с

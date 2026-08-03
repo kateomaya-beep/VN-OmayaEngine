@@ -328,6 +328,10 @@ export function normalizeProject(raw: any): Project {
     memoryConfig: {
       summaryEveryN: num(mem.summaryEveryN, 30),
       summaryPrompt: typeof mem.summaryPrompt === 'string' ? mem.summaryPrompt : undefined,
+      summaryMaxTokens:
+        typeof mem.summaryMaxTokens === 'number' && mem.summaryMaxTokens >= 1000
+          ? Math.min(32000, Math.round(mem.summaryMaxTokens))
+          : 8000,
       minorEventsLimit:
         typeof mem.minorEventsLimit === 'number' ? clamp(Math.round(mem.minorEventsLimit), 3, 40) : 10,
       vectorization: vecSet.has(mem.vectorization) ? mem.vectorization : 'off',

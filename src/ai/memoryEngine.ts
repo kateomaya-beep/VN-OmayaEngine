@@ -28,9 +28,11 @@ export function historyTokens(history: LlmMessage[]): number {
 }
 
 // Свёртке нужен явный потолок ответа: без него шлюзы режут по своему дефолту
-// (512/1024 токена), и двухсекционный ответ обрывается на середине — это одна из
-// причин «пустых» и половинчатых саммари.
-const SUMMARY_MAX_TOKENS = 3000;
+// (512/1024 токена). Но и 3000 не хватало — двухсекционный ответ обрывался на
+// «CURRENT SITUATION» в конце снапшота. Дефолт 8000, правится в настройках саммари.
+const SUMMARY_MAX_TOKENS_FALLBACK = 8000;
+const summaryTokens = (project: Project) =>
+  Math.min(32000, Math.max(1000, project.memoryConfig.summaryMaxTokens ?? SUMMARY_MAX_TOKENS_FALLBACK));
 
 async function summarize(project: Project, prompt: string, transcript: string): Promise<string> {
   return (
@@ -39,9 +41,70 @@ async function summarize(project: Project, prompt: string, transcript: string): 
       messages: [{ role: 'user', content: transcript }],
       model: project.aiConfig.summarizerModel || undefined,
       temperature: 0.3,
-      maxTokens: SUMMARY_MAX_TOKENS,
+      maxTokens: summaryTokens(project),
     })
   ).trim();
+}
+
+// Пересборка ТОЛЬКО живого снапшота — по всему, что есть: журнал эпизодов
+// (хронология) + текущий снапшот. Журнал переписывать не нужно, он append-only;
+// а снапшот, наоборот, полезно пересобрать, если он обрезался или устарел.
+const STATE_REBUILD_PROMPT = `You rebuild the living STORY STATE snapshot of an interactive story
+from its chronological episode log and the previous snapshot. Output ONLY the
+snapshot body — no preamble, no episode list, no markers.
+
+Keep this exact section layout and fill every one of them:
+
+## MAIN CHARACTERS
+- [Name]: [status/condition] | [1-2 sentence bio] | Now: [where, doing what, goals, emotional state]
+
+## SECONDARY CHARACTERS
+- [Name]: [role] | [current status/last known location]
+
+## RELATIONSHIPS & DYNAMICS
+Every pair that matters, the hero included.
+- [A] & [B]: [type and current dynamic] | how it got there: [the concrete moments] | unsaid between them: [what neither has admitted]
+
+## RESOLVED ARCS (completed storylines — the story must NOT replay these)
+- [Arc/event]: [how it resolved]
+
+## ACTIVE PLOT HOOKS & UNRESOLVED THREADS
+- [Hook: what, who, why it matters]
+
+## IMPORTANT ITEMS & LOCATIONS
+- [Item/place]: [significance, current state/owner]
+
+## WORLD STATE & CONTEXT
+[Rules and background needed to understand the story]
+
+## CURRENT SITUATION
+Time/Date: … | Location: … | Active scene: … | Immediate tensions: … | Narrative momentum: …
+
+RULES: be thorough — this snapshot is the model's only authoritative picture of
+where things stand, so completeness beats brevity. Never drop a section, never
+lose a fact from the previous snapshot unless the log supersedes it, and finish
+every section (an unfinished snapshot is worse than a short one). Facts only,
+in ENGLISH.`;
+
+export async function rebuildStoryState(
+  project: Project,
+  memory: RuntimeState['memory']
+): Promise<string> {
+  const log = memory.chronicle.map((c, i) => `[Period ${i + 1}${c.atTurn ? `, up to turn ${c.atTurn}` : ''}]\n${c.text}`).join('\n\n');
+  if (!log.trim() && !memory.storyState?.trim()) throw new Error('Нечего пересобирать: нет ни журнала, ни снапшота');
+  const input = [
+    memory.storyState?.trim() ? `PREVIOUS SNAPSHOT:\n${memory.storyState.trim()}` : '',
+    log.trim() ? `EPISODE LOG (oldest → newest):\n${log}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const raw = await summarize(project, STATE_REBUILD_PROMPT, input);
+  // Модель может по привычке обернуть ответ маркерами — снимаем.
+  const { storyState } = splitSummarySections(raw);
+  const text = (storyState || raw).trim();
+  if (text.length < MIN_EPISODE_CHARS) throw new Error('Модель вернула пустой ответ — попробуйте ещё раз');
+  logEvent('info', 'memory', `Снапшот состояния пересобран вручную (${text.length} симв.)`);
+  return text;
 }
 
 // Свёртка с НЕМЕДЛЕННЫМ повтором. Первая попытка — как есть; если ответ пустой
