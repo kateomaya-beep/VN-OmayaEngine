@@ -175,6 +175,14 @@ function nextSlot(): number {
 // Снимок вида сцены, к которому откатываемся при отмене/ошибке хода.
 type PrevView = Pick<PlayerStore, 'visibleBeats' | 'queue' | 'phase' | 'choices' | 'cg'>;
 
+// Состояние ДО применения последнего хода — база для реролла. Реролл обязан
+// откатывать ВЕСЬ ход, а не только историю: иначе статы, инвентарь, деньги, часы,
+// досье GM и счётчик свёртки от отклонённого варианта остаются применёнными, а
+// новый ход накладывается поверх — состояние уплывает (двойные списания, «уже
+// был в Нью-Йорке, а после реролла снова в Китае»). Живёт только в памяти
+// вкладки: после перезагрузки честно откатываемся хотя бы по истории.
+let preTurnState: { move: string; state: RuntimeState } | null = null;
+
 // Текущая генерация в полёте (для «Отменить»/регенерации). Модульная переменная, а не
 // поле стора — чтобы не гонять ре-рендеры и не сериализовать в сейв.
 // `prevView` держим здесь же, чтобы cancel() мог откатить UI МГНОВЕННО, не дожидаясь,
@@ -448,7 +456,22 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // Отклонённый вариант передаём движку: без него реролл возвращал то же самое
     // (контекст не изменился), и «нежелательное событие» повторялось раз за разом.
     const rejected = hist[hist.length - 1]?.content;
-    const rolledBack: RuntimeState = { ...state, history: hist.slice(0, -2) };
+    // ПОЛНЫЙ откат хода. Снимок есть — берём его: он снимает ВСЕ последствия
+    // отклонённого варианта (статы, деньги, инвентарь, часы/локация GM, реестр,
+    // память, счётчик свёртки). Снимка нет (перезагрузили вкладку) — откатываем
+    // хотя бы историю, как раньше, и предупреждаем в логе.
+    const snap = preTurnState && preTurnState.move === lastMove.content ? preTurnState.state : null;
+    if (!snap) {
+      logEvent(
+        'warn',
+        'turn',
+        'Реролл без снимка состояния (вкладку перезагружали): откатываю только историю — ' +
+          'статы/инвентарь/часы от прошлой версии хода могли остаться применёнными.'
+      );
+    }
+    const rolledBack: RuntimeState = snap
+      ? JSON.parse(JSON.stringify(snap))
+      : { ...state, history: hist.slice(0, -2) };
     await runAndApply(set, get, project, rolledBack, lastMove.content, rejected);
   },
 
@@ -1171,6 +1194,8 @@ async function runAndApply(
   const controller = new AbortController();
   const self: InFlight = { controller, prevView, handled: false };
   inFlight = self;
+  // База для будущего реролла: состояние ровно перед этим ходом.
+  const turnBase: RuntimeState = JSON.parse(JSON.stringify(baseState));
   set({ thinking: true, error: null, choices: [], statFlash: [], queue: [], visibleBeats: [] });
   logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
   try {
@@ -1215,6 +1240,7 @@ async function runAndApply(
     void get()
       .autosave()
       .catch((err) => logEvent('error', 'save', 'Фоновое автосохранение не удалось: ' + (err as Error).message));
+    preTurnState = { move: playerMove, state: turnBase };
     logEvent('info', 'turn', `Ход применён (ход ${state.turnCount}, beats: ${turn.beats.length})`);
     return true;
   } catch (e) {

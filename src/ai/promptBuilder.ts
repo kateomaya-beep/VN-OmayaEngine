@@ -357,7 +357,13 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
 
   // Правила.
   const rules: string[] = [
-    'This state is AUTHORITATIVE — do not contradict it. Reflect it: characters notice the hero\'s clothing, remember when they last met, react to wealth or debt. Never let the hero use an item they do not have.',
+    'This block is the engine\'s RECORD of the world, kept by you. Treat numbers and possessions as authoritative (never let the hero use an item they do not have or spend money they lack) and reflect it in the scene: characters notice the hero\'s clothing, remember when they last met, react to wealth or debt.',
+    // Место/время — самая частая рассинхронизация: их обновляет сама модель через
+    // worldState, и если она забыла, запись остаётся старой. Раньше блок объявлял
+    // себя «авторитетным» целиком, и модель возвращала героя в прежний город,
+    // противореча уже сыгранным сценам. Теперь на месте/времени сюжет главнее.
+    'DATE, TIME AND LOCATION are only as fresh as your last update. If the story (recent turns, memory, the episode log) says the hero has since moved elsewhere or time has passed, the STORY WINS: continue from where the story actually is and CORRECT this record the same turn — never drag the hero back to the location written here.',
+    'WHENEVER the hero changes place — a trip, a flight, moving to another room, city or country — send {"worldState":{"clock":{"location":"<where they are NOW>"}}} that same turn. This is not optional bookkeeping: without it the engine keeps showing the old place to you and to the player.',
     'TIME: the in-story date is always DD/MM/YYYY. When time passes (a night, "a week later", a jump), emit {"type":"time_advance","newDate":"DD/MM/YYYY","newTime":"HH:MM"}. Never write a date in any other format.',
     'INVENTORY: emit {"type":"inventory_add","name":...,"emoji":"<one emoji>","quantity":1,"category":...,"source":"куплено|получено|найдено"} when the hero acquires something meaningful, and {"type":"inventory_remove","name":...,"quantity":1} when they consume/lose/give it away. Consumables are really spent.',
   ];
