@@ -322,10 +322,22 @@ EXACTLY two sections with these exact markers:
 
 === EPISODE ===
 A chronological log entry covering ONLY the new turns: what happened, in
-order. 4–${Math.max(6, n)} numbered points, each one concrete event/decision/
-revelation (who, what, outcome). Facts only, no analysis, no repetition of
-older events. This entry is appended to a permanent chronological log and
-will never be rewritten — make it self-contained and precise.
+order. ${Math.max(6, n)}–${Math.max(10, n + 4)} numbered points, 150–400 words total.
+Each point is one CONCRETE event with names, place and outcome — never a vague
+summary like "they talked" or "tension grew". Across the points you MUST cover,
+whenever they occur in this stretch:
+ • plot events and their consequences (what changed in the situation);
+ • DECISIONS the hero made and what they cost or gained;
+ • RELATIONSHIP MOVEMENT — who grew closer or colder to whom, through what
+   exact moment (a confession, a touch, a betrayal, a refusal), and where that
+   relationship stands at the end of the stretch. Never skip this: relationship
+   progress is the spine of the story;
+ • what characters revealed about themselves, learned, or now suspect;
+ • important items, places, money and injuries that appeared or changed hands;
+ • time passed and any change of location.
+Facts only, no analysis, no repetition of older events. This entry is appended
+to a permanent chronological log and will never be rewritten — make it
+self-contained and precise.
 
 === STORY STATE ===
 The UPDATED living snapshot, merging the previous snapshot with the new
@@ -339,8 +351,11 @@ turns. Keep it complete but compact:
 - [Name]: [role] | [current status/last known location]
 
 ## RELATIONSHIPS & DYNAMICS
+Cover EVERY pair that matters, the hero included — this section is what keeps
+romance and rivalry consistent, so never shorten it to one line.
 - [A] & [B]: [type and current dynamic] | shift this period: [e.g. "distrust →
-  cautious sympathy", "unchanged"]
+  cautious sympathy", "unchanged"] | what caused it: [the concrete moment] |
+  unsaid between them: [what neither has admitted yet]
 
 ## RESOLVED ARCS (completed storylines — the story must NOT replay these)
 - [Arc/event]: [how it resolved]

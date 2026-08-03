@@ -1017,7 +1017,23 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
         />
       </Field>
       <Field label={L('Кастомный промпт саммарайзера (опц.)', 'Custom summarizer prompt (opt.)')}>
+        <p className="text-[11px] text-gray-500 mb-1">
+          {mc.summaryPrompt?.trim()
+            ? L(
+                '⚠️ Заполнено — работает ВАШ промпт, подробный дефолт движка отключён. Если саммари выходят мелкими и без прогресса отношений, очистите поле кнопкой ниже.',
+                '⚠️ Filled in — YOUR prompt is used and the engine default is off. If summaries come out thin, clear the field with the button below.'
+              )
+            : L(
+                'Пусто — работает дефолт движка: журнал эпизодов (события, решения, движение отношений, предметы) + живой снапшот состояния с блоком отношений.',
+                'Empty — the engine default is used: an episode log (events, decisions, relationship movement, items) plus a living state snapshot with a relationships block.'
+              )}
+        </p>
         <textarea className="input h-20" value={mc.summaryPrompt || ''} onChange={(e) => patchMem({ summaryPrompt: e.target.value || undefined })} />
+        {mc.summaryPrompt?.trim() && (
+          <button className="btn-ghost !px-2 !py-1 text-xs mt-1" onClick={() => patchMem({ summaryPrompt: undefined })}>
+            ↺ {L('Вернуть дефолтный промпт движка', 'Restore the engine default')}
+          </button>
+        )}
       </Field>
       <div>
         <label className="flex items-center gap-2 text-sm mb-2">

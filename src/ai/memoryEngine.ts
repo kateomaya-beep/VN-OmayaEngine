@@ -154,7 +154,30 @@ export async function maybeCompress(
       return state;
     }
     updateToast(toastId, 'success', tt('Память обновлена', 'Memory updated'));
-    logEvent('info', 'memory', `Саммаризация выполнена (эпизод: ${episode ? 'да' : 'нет'}, снапшот: ${storyState ? 'да' : 'нет'})`);
+    logEvent(
+      'info',
+      'memory',
+      `Саммаризация выполнена: эпизод ${episode.trim().length} симв., снапшот ${storyState.trim().length} симв. ` +
+        `(ответ целиком ${raw.length} симв.)`
+    );
+    // Снапшот несёт отношения и «где мы сейчас». Пустая секция при непустом
+    // эпизоде — почти всегда обрыв ответа по лимиту токенов: эпизод успел, а
+    // состояние нет. Молча оставлять прежний снапшот нельзя — он устареет.
+    if (!storyState.trim()) {
+      logEvent(
+        'warn',
+        'memory',
+        'Секция STORY STATE пуста — снапшот состояния (отношения, текущее положение) НЕ обновился. ' +
+          'Обычно это обрыв ответа: возьмите модель подлиннее или уменьшите частоту свёрток.'
+      );
+      pushToast(
+        'error',
+        tt(
+          'Саммари без блока состояния: отношения и «где мы сейчас» не обновились. Загляните в логи.',
+          'Summary without the state block: relationships and "where we are" did not update. Check the logs.'
+        )
+      );
+    }
     // Журнал эпизодов: append-only, хронологический.
     const fromMsg = state.memory.foldedMsgCount + 1;
     const toMsg = state.memory.foldedMsgCount + stale.length;
