@@ -573,6 +573,24 @@ export async function buildRequest(
   // Телефон-коммуникации (Batch 7) — только если расширение включено.
   const phoneCtx = phoneBlock(project, state);
   if (phoneCtx) systemParts.push(phoneCtx);
+
+  // ГРАНИЦА КОНТЕКСТА — последним блоком системной части, вплотную к живой истории.
+  // Порядок у нас правильный (фон и память → недавние ходы дословно → ход игрока),
+  // но модели об этом никто не говорил: она видела снапшот с «CURRENT SITUATION» и
+  // отдельно поток сообщений, не понимая, что новее. Отсюда и откаты состояния —
+  // модель принимала снапшот (срез на момент прошлой свёртки) за самое свежее.
+  systemParts.push(
+    `=== HOW THIS CONTEXT IS ORDERED (read before answering) ===
+` +
+      `Everything ABOVE is background: world, characters, and MEMORY of what happened EARLIER — ` +
+      `the episode log runs oldest → newest, and the story-state snapshot describes where things stood at the LAST fold, not necessarily now.
+` +
+      `The messages that FOLLOW are the recent story itself, verbatim and in chronological order. They are NEWER than everything above. ` +
+      `The final user message is the player's move you must answer now.
+` +
+      `If the recent messages contradict the background — someone travelled, an item changed hands, time passed, a relationship shifted — ` +
+      `THE RECENT MESSAGES WIN. Continue from them and correct the record; never rewind the story to an older state described above.`
+  );
   const system = systemParts.join('\n\n');
 
   // Живое окно истории. КЛЮЧЕВОЕ (фикс памяти): шлём ВСЮ ещё-не-свёрнутую историю,
