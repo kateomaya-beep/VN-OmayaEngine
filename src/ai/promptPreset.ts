@@ -39,9 +39,22 @@ RESPONSE SCHEMA:
 {
   "scene": { "backgroundId": string|null, "musicMood": string|null, "sfxId": string|null, "cutsceneCgId": string|null },
   "beats": [
+    // Content beats (carry on-screen text):
     { "type": "narration", "text": string, "bg": string|null },
     { "type": "thought", "text": string },
-    { "type": "dialogue", "characterId": string|null, "name": string|null, "emotion": string, "position": "left"|"center"|"right", "text": string, "bg": string|null }
+    { "type": "dialogue", "characterId": string|null, "name": string|null, "emotion": string, "outfit": string|null, "position": "left"|"center"|"right", "text": string, "bg": string|null },
+    // Control beats (no display text — they change world state; use each ONLY when its subsystem block is present in the context: phone, inventory, finance, character registry):
+    { "type": "scene_change", "backgroundId": string|null, "musicMood": string|null },
+    { "type": "outfit_change", "characterId": string, "outfit": string },
+    { "type": "time_advance", "newDate": "DD/MM/YYYY", "newTime": "HH:MM" },
+    { "type": "transaction", "amount": number, "vendor": string, "item": string, "time": string },
+    { "type": "inventory_add", "name": string, "emoji": string, "quantity": number, "category": string, "source": string },
+    { "type": "inventory_remove", "name": string, "quantity": number, "reason": string },
+    { "type": "sms_incoming", "characterId": string, "text": string },
+    { "type": "contact_added", "characterId": string },
+    { "type": "character_new", "canonicalName": string, "aliases": [string], "role": string },
+    { "type": "character_alias_add", "id": string, "alias": string },
+    { "type": "character_update", "id": string, "status": string }
   ],
   "statChanges": [ { "statId": string, "delta": number, "reason": string } ],
   "choices": [ { "id": string, "text": string, "cost": null | { "statId": string, "amount": number } } ],
@@ -294,6 +307,9 @@ const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
   { key: 'style', signature: 'Medium turn length' },
   { key: 'relationships', signature: 'carries three stats toward the hero' },
   { key: 'json_contract', signature: 'keep it accurate EVERY turn' },
+  // Контракт без управляющих битов: инвентарь/время/деньги/СМС выглядели вне схемы,
+  // и модель их не слала («инвентарь не работает»).
+  { key: 'json_contract', signature: '"type": "dialogue", "characterId": string|null, "name": string|null, "emotion": string, "position"' },
 ];
 function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
   let changed = false;

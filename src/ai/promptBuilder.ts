@@ -596,7 +596,10 @@ export async function buildRequest(
     presetMessages.reduce((n, m) => n + estimateTokens(m.content), 0) +
     estimateTokens(playerMove) +
     400; // заметки автора, ремайндеры, директивы
-  const MIN_WINDOW = 4; // минимум 2 хода живой истории — иначе теряется связность
+  // Минимум 6 ходов живой истории: при 2 ходах (как раньше) модель выглядела
+  // амнезиком — «забывала», что было парой сообщений раньше, стоило системной
+  // части (память+реестр+world state+переписка) перерасти бюджет.
+  const MIN_WINDOW = 12;
   let winTokens = window.reduce((n, m) => n + estimateTokens(m.content), 0);
   let dropped = 0;
   while (window.length > MIN_WINDOW && fixedTokens + winTokens > budget) {
@@ -618,6 +621,17 @@ export async function buildRequest(
       `Контекст ужат под бюджет ${budget} ток.: убрано ${dropped} старых сообщений (осталось ${window.length})`
     );
   }
+  // Системная часть сама по себе больше бюджета — живая история зажата в минимум.
+  // Это надо видеть: иначе жалоба выглядит как «память не работает».
+  if (fixedTokens > budget) {
+    logEvent(
+      'warn',
+      'prompt',
+      `Системная часть запроса (~${fixedTokens} ток.) БОЛЬШЕ бюджета контекста (${budget}). ` +
+        `Живая история зажата до минимума (${window.length} сообщ.). Поднимите «Бюджет контекста» в пресете (🎚) ` +
+        `или сократите снапшот/журнал в Game Master → Саммари.`
+    );
+  }
 
   const messages: LlmMessage[] = [...presetMessages, ...window];
 
@@ -630,34 +644,31 @@ export async function buildRequest(
     withMove.splice(insertAt, 0, { role: 'user', content: expandMacros(b.content, ctx) });
   }
 
-  // Заметки для ИИ (Author's Note, см. CR v2 §M) — слот глубины 0, свой UI.
-  // Две категории: УНИВЕРСАЛЬНЫЕ (общие для всех проектов, из localStorage) идут
-  // первыми как постоянные правила подачи, затем ПРОЕКТНЫЕ (из сейва) — они
-  // конкретнее и стоят ближе к ходу, поэтому весят больше. Пусто — не инжектится.
+  // ХВОСТ ПОСЛЕ ХОДА ИГРОКА — ОДНИМ сообщением. Раньше заметки, директива события,
+  // реролл и ремайндер шли 2–4 ОТДЕЛЬНЫМИ user-сообщениями, и ход игрока оказывался
+  // за несколько сообщений до конца. Модели, сильнее весящие последнее сообщение,
+  // отвечали на ремайндер и «забывали» сам ход. Теперь после хода ровно один блок.
+  const tail: string[] = [];
+
+  // Заметки для ИИ (Author's Note, см. CR v2 §M): универсальные + проектные.
+  // Пометка приоритета обязательна: заметка соревнуется с планом (plotOutline,
+  // адженда, крючки снапшота) и без явного «перекрывает» проигрывала ему.
   const notes = [...getGlobalNotes(), ...state.authorNotes].filter((n) => n.text.trim());
   if (notes.length) {
-    // Пометка приоритета обязательна: заметка соревнуется с планом (plotOutline,
-    // адженда, крючки снапшота), и без явного «перекрывает» модель раз за разом
-    // возвращалась к запланированному событию, несмотря на запрет игрока.
-    withMove.push({
-      role: 'user',
-      content:
-        '[AUTHOR NOTES — HIGHEST PRIORITY] The following directions come from the player and OVERRIDE ' +
+    tail.push(
+      '[AUTHOR NOTES — HIGHEST PRIORITY] The following directions come from the player and OVERRIDE ' +
         'the plot outline, the open agenda, any plot hooks in memory and your own plans. A prohibition here ' +
         'applies now and in later turns until the player changes it — never satisfy it indirectly ' +
         '(through another character, a near-miss, a dream or a conversation about it):\n' +
-        notes.map((n) => `- ${expandMacros(n.text, ctx)}`).join('\n'),
-    });
+        notes.map((n) => `- ${expandMacros(n.text, ctx)}`).join('\n')
+    );
   }
 
-  // Скрытая директива случайного события (Batch 6 §3) — игрок её не видит и она НЕ
+  // Скрытая директива случайного события/СМС/реролла — игрок её не видит и она НЕ
   // сохраняется в истории (buildRequest собирает сообщения заново каждый ход).
-  if (opts?.extraDirective?.trim()) {
-    withMove.push({ role: 'user', content: opts.extraDirective });
-  }
+  if (opts?.extraDirective?.trim()) tail.push(opts.extraDirective.trim());
 
-  // Ремайндер формата + длины на глубине 0 (в самый конец) — модели сильнее
-  // весят последнее сообщение, поэтому длину дублируем здесь.
+  // Ремайндер формата + длины — последним в блоке.
   const lengthReminder = `Stay WITHIN ~${tl.min}–${tl.max} words (do not overshoot) as medium beats of 1–3 sentences each — mix dialogue (with the speaking character's characterId, so their sprite shows) and narration. No walls of text, no bare one-liners.`;
 
   // Управляемое размышление: короткий план в <thinking> вместо медленной родной
@@ -666,14 +677,20 @@ export async function buildRequest(
   let prefill = ps.prefill?.trim() || undefined;
   if (ps.guidedThinking) {
     const plan = (ps.thinkingPlan?.trim() || DEFAULT_THINKING_PLAN);
-    withMove.push({
-      role: 'user',
-      content: `REASONING PROTOCOL: Do ALL planning ONLY inside a single <thinking></thinking> block at the very start of your reply, and keep it SHORT — a brief bullet per line following this template, nothing more:\n${plan}\nThen immediately close </thinking> and output the ONE JSON object per the schema and nothing after it.\n${lengthReminder}\n${FORMAT_REMINDER}`,
-    });
+    tail.push(
+      `REASONING PROTOCOL: Do ALL planning ONLY inside a single <thinking></thinking> block at the very start of your reply, and keep it SHORT — a brief bullet per line following this template, nothing more:\n${plan}\nThen immediately close </thinking> and output the ONE JSON object per the schema and nothing after it.\n${lengthReminder}\n${FORMAT_REMINDER}`
+    );
     prefill = '<thinking>\n';
   } else {
-    withMove.push({ role: 'user', content: `${FORMAT_REMINDER}\n${lengthReminder}` });
+    tail.push(`${FORMAT_REMINDER}\n${lengthReminder}`);
   }
+
+  withMove.push({
+    role: 'user',
+    content:
+      `(Engine directives for THIS turn. Reply to the player's move ABOVE — this block only constrains how.)\n\n` +
+      tail.join('\n\n'),
+  });
 
   return { system, messages: withMove, prefill };
 }
