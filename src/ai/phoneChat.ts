@@ -1,7 +1,7 @@
-import type { Project, RuntimeState, LlmMessage, PhoneMessage } from '../shared/types';
+import type { Project, RuntimeState, LlmMessage, PhoneMessage, PhoneChat, PhoneContact } from '../shared/types';
 import { getAssetBlob } from '../storage/db';
 import { blobToRef } from './imageProvider';
-import { PHONE_BALANCE_STAT } from '../shared/types';
+import { PHONE_BALANCE_STAT, contactDisplayName } from '../shared/types';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { expandMacros } from './macros';
@@ -13,6 +13,50 @@ import { logEvent } from '../shared/logStore';
 // чистый текст реплики (одно-два коротких сообщения в стиле переписки).
 
 const MAX_HISTORY = 16; // сколько последних реплик переписки давать в контекст
+
+// ---- Контакты (Телефон 2.0) --------------------------------------------------
+// Контакт больше не обязан быть персонажем проекта: он может ссылаться на запись
+// реестра Game Master («тот, кого задетектил ГМ») или существовать сам по себе
+// (просто имя). Все запросы к ИИ идут ЧЕРЕЗ контакт, а профиль собирается из того
+// источника, который у него есть.
+
+export function nameOfContact(project: Project, state: RuntimeState, contact: PhoneContact): string {
+  return contactDisplayName(contact, {
+    characterName: (id) => project.characters.find((c) => c.id === id)?.name,
+    registryName: (id) => state.gm.registry?.find((r) => r.id === id)?.canonicalName,
+  });
+}
+
+export function findContact(state: RuntimeState, id: string): PhoneContact | undefined {
+  const list = state.phone?.contacts || [];
+  return list.find((c) => c.id === id) || list.find((c) => c.characterId === id);
+}
+
+// Профиль контакта для system-промпта. Персонаж проекта → полная карточка;
+// запись реестра → досье Game Master; «просто имя» → минимальная инструкция.
+function contactProfile(project: Project, state: RuntimeState, contact: PhoneContact): string {
+  if (contact.characterId && project.characters.some((c) => c.id === contact.characterId)) {
+    return characterProfile(project, state, contact.characterId);
+  }
+  const name = nameOfContact(project, state, contact);
+  const parts = [`You ARE ${name}. You are texting the hero from your phone — this is a private messenger chat, NOT the main story scene.`];
+  const reg = contact.registryId ? state.gm.registry?.find((r) => r.id === contact.registryId) : undefined;
+  if (reg) {
+    parts.push(`Who you are (from the story's character registry): ${reg.canonicalName}${reg.aliases.length ? ` (also called: ${reg.aliases.join(', ')})` : ''}. Current status: ${reg.status || 'unknown'}.`);
+  }
+  // Досье Game Master по имени — если оно есть, оно свежее реестра.
+  const dossier = state.gm.characters.find(
+    (c) => c.charId === contact.characterId || c.name.toLowerCase() === name.toLowerCase()
+  );
+  if (dossier) {
+    const bits = [dossier.dossier, dossier.roleToHero && `For the hero you are: ${dossier.roleToHero}`, dossier.personality && `Personality: ${dossier.personality}`, dossier.mood && `Current mood: ${dossier.mood}`]
+      .filter(Boolean)
+      .join('\n');
+    if (bits) parts.push(bits);
+  }
+  if (!reg && !dossier) parts.push(`You do not have a full character sheet — stay consistent with how this chat went so far.`);
+  return parts.join('\n');
+}
 
 function characterProfile(project: Project, state: RuntimeState, characterId: string): string {
   const c = project.characters.find((x) => x.id === characterId);
@@ -45,6 +89,165 @@ function worldContext(project: Project, state: RuntimeState): string {
   return parts.join('\n');
 }
 
+// Ответ в чате (личном или групповом). Возвращает список «пузырей»: кто написал,
+// что написал и (опционально) какое фото приложил.
+export interface ChatReply {
+  senderId: string;
+  text: string;
+  photoPrompt?: string;
+}
+
+// Правило про фото — общее для лички и групп. Модель сама решает, уместно ли фото.
+function photoRule(): string {
+  return [
+    `- PHOTOS: you may send a photo when it is natural (showing where you are, what you're eating/wearing/doing, a joke picture, a selfie). To do it, write a line exactly like this: [photo: short description of the picture IN ENGLISH]. The message line right BEFORE it becomes the caption of that photo (write the caption line first, then the photo line). A photo line on its own = a photo with no caption.`,
+    `- Do not send photos often — only when a real person would. Never describe the photo in words instead of the marker.`,
+  ].join('\n');
+}
+
+export async function generateChatReplies(
+  project: Project,
+  state: RuntimeState,
+  chat: PhoneChat,
+  opts?: { spontaneous?: boolean; signal?: AbortSignal }
+): Promise<ChatReply[]> {
+  if (chat.kind === 'group') return generateGroupReplies(project, state, chat, opts);
+  const peerId = chat.participantIds[0];
+  const contact = findContact(state, peerId);
+  if (!contact) return [];
+  const texts = opts?.spontaneous
+    ? await generateIncomingSms(project, state, peerId, chat.messages, opts?.signal)
+    : await generatePhoneReply(project, state, peerId, chat.messages, opts?.signal);
+  return attachPhotos(texts.map((t) => ({ senderId: peerId, text: t })));
+}
+
+// Превращает «сырые» пузыри в итоговые, вытаскивая маркеры [photo: …]. Подписью
+// к фото становится предыдущее сообщение того же отправителя — так и просили
+// модель писать («сначала подпись, потом строка с фото»).
+function attachPhotos(items: { senderId: string; text: string }[]): ChatReply[] {
+  const out: ChatReply[] = [];
+  for (const it of items) {
+    const m = it.text.match(/^\s*\[?\s*photo\s*:\s*([^\]]+?)\s*\]?\s*$/i);
+    if (m) {
+      const prompt = m[1].trim();
+      if (!prompt) continue;
+      const prev = out[out.length - 1];
+      if (prev && prev.senderId === it.senderId && !prev.photoPrompt) prev.photoPrompt = prompt;
+      else out.push({ senderId: it.senderId, text: '', photoPrompt: prompt });
+      continue;
+    }
+    out.push({ senderId: it.senderId, text: it.text });
+  }
+  return out.filter((r) => r.text.trim() || r.photoPrompt);
+}
+
+// Групповой чат: ОДИН запрос на всех участников. Модель сама решает, кто и сколько
+// раз отвечает — по контексту и «болтливости» контакта (решение пользователя).
+async function generateGroupReplies(
+  project: Project,
+  state: RuntimeState,
+  chat: PhoneChat,
+  opts?: { spontaneous?: boolean; signal?: AbortSignal }
+): Promise<ChatReply[]> {
+  const ps = getPresetSettings();
+  const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
+  const members = chat.participantIds
+    .map((id) => findContact(state, id))
+    .filter((c): c is PhoneContact => !!c && !c.hidden);
+  if (!members.length) return [];
+  const heroName = state.protagonistName || 'the hero';
+  const roster = members
+    .map((c) => {
+      const nm = nameOfContact(project, state, c);
+      const talk = typeof c.chattiness === 'number' ? c.chattiness : 50;
+      return `### ${nm} (chattiness ${talk}/100)\n${contactProfile(project, state, c)}`;
+    })
+    .join('\n\n');
+
+  const system = [
+    `You are running a GROUP CHAT in a messenger app. You play EVERY participant except the hero (${heroName}) — the hero is the human player and you NEVER write for them.`,
+    `Group name: ${chat.title || 'Без названия'}.`,
+    chat.topic?.trim() ? `What this group is about / how people behave here: ${chat.topic.trim()}` : '',
+    `Group liveliness: ${typeof chat.groupActivity === 'number' ? chat.groupActivity : 50}/100 — higher means people chime in more and more often.`,
+    ``,
+    `PARTICIPANTS (each with their own personality and chattiness):`,
+    roster,
+    ``,
+    worldContext(project, state),
+    ``,
+    `HOW TO ANSWER:`,
+    `- YOU decide who speaks up, based on the context of the conversation and each person's chattiness: a talkative person jumps in often, a quiet one only when addressed or when it really matters. Someone directly addressed by name almost always answers.`,
+    `- Not everyone has to answer. Sometimes only one person replies. Never make all participants answer every time just because they are in the group.`,
+    `- Format: EVERY line is one message bubble and MUST start with the sender's name and a colon, e.g. "${nameOfContact(project, state, members[0])}: текст". No other prefixes.`,
+    `- Real texting style, in ${narr}: short lines, several in a row are fine, people talk over each other, react to each other — not only to the hero.`,
+    photoRule().replace('[photo:', '[photo:'),
+    `- For a photo the line is "Name: [photo: english description]" — the sender's name still comes first.`,
+    `- FORBIDDEN: narration, asterisk actions (*smiles*), tone labels, quotes around a whole message, JSON, writing for ${heroName}.`,
+    opts?.spontaneous
+      ? `- NOBODY wrote just now. Start a conversation out of the blue: someone brings up news, a joke, a question, a photo — something that fits the story moment. 1-4 messages total.`
+      : `- Reply to what was just written in the chat. 1-5 messages total.`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const history: LlmMessage[] = chat.messages.slice(-MAX_HISTORY).map((m) => {
+    if (m.from === 'protagonist') {
+      return { role: 'user' as const, content: `${heroName}: ${m.text || '[photo]'}` };
+    }
+    const c = m.senderId ? findContact(state, m.senderId) : undefined;
+    const nm = c ? nameOfContact(project, state, c) : 'Кто-то';
+    return { role: 'assistant' as const, content: `${nm}: ${m.text || '[photo]'}` };
+  });
+  history.push({
+    role: 'user',
+    content: opts?.spontaneous ? '(write the new messages in the group now)' : '(write the replies now)',
+  });
+
+  const raw = await completeWithRetry(system, normalizeChatHistory(history), ps.temperature ?? 0.9, opts?.signal);
+  return parseGroupReplies(raw, project, state, members);
+}
+
+// Разбор ответа группы: строка «Имя: текст» → пузырь от этого участника.
+export function parseGroupReplies(
+  raw: string,
+  project: Project,
+  state: RuntimeState,
+  members: PhoneContact[]
+): ChatReply[] {
+  const byName = new Map<string, PhoneContact>();
+  for (const c of members) {
+    byName.set(nameOfContact(project, state, c).toLowerCase(), c);
+    if (c.name) byName.set(c.name.toLowerCase(), c);
+    const reg = c.registryId ? state.gm.registry?.find((r) => r.id === c.registryId) : undefined;
+    for (const al of reg?.aliases || []) byName.set(al.toLowerCase(), c);
+  }
+  const items: { senderId: string; text: string }[] = [];
+  let current: PhoneContact | undefined;
+  for (const rawLine of (raw || '').split(/\n+/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const m = line.match(/^([^:\n]{1,40}):\s*(.*)$/);
+    let text = line;
+    if (m) {
+      const who = byName.get(m[1].trim().toLowerCase());
+      if (who) {
+        current = who;
+        text = m[2].trim();
+      }
+    }
+    // Имени нет и ещё никто не «взял слово» — отдаём самому болтливому участнику,
+    // иначе реплика просто потерялась бы.
+    if (!current) {
+      current = [...members].sort((a, b) => (b.chattiness ?? 50) - (a.chattiness ?? 50))[0];
+    }
+    if (!text) continue;
+    const cleaned = cleanReply(text, nameOfContact(project, state, current));
+    if (!cleaned || cleaned === '…') continue;
+    items.push({ senderId: current.id, text: cleaned });
+  }
+  return attachPhotos(items).slice(0, 6);
+}
+
 export async function generatePhoneReply(
   project: Project,
   state: RuntimeState,
@@ -55,12 +258,16 @@ export async function generatePhoneReply(
   const ps = getPresetSettings();
   const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
 
-  const charName = project.characters.find((c) => c.id === characterId)?.name || 'the character';
+  const contact = findContact(state, characterId);
+  const charName = contact
+    ? nameOfContact(project, state, contact)
+    : project.characters.find((c) => c.id === characterId)?.name || 'the character';
   const system = [
-    characterProfile(project, state, characterId),
+    contact ? contactProfile(project, state, contact) : characterProfile(project, state, characterId),
     worldContext(project, state),
     `TEXTING RULES (this is a plain text-message chat, NOT the visual-novel narration engine):`,
     `- Reply as ${charName} would type in a messenger: short, natural, in-character. React to the hero's last message.`,
+    photoRule(),
     `- MESSAGE BURSTS: reply the way people really text — sometimes ONE message, sometimes several short ones fired in a row (up to 4). Put EACH separate message on ITS OWN LINE (a line break = a new message bubble). Split when it feels natural (a quick thought, then another), keep it to one message when that's natural.`,
     `- Write in ${narr}. Use real texting culture WHEN IT FITS the character: casual tone, common abbreviations, emoji, and (for Russian) smiley parentheses like ), )), ))) or :). Lowercase and dropped punctuation are fine for a casual character. Match the character's personality — a formal or cold character texts differently; don't force slang on them.`,
     `- Output ONLY the literal words ${charName} types. NOTHING else.`,
@@ -204,14 +411,18 @@ export async function generateIncomingSms(
 ): Promise<string[]> {
   const ps = getPresetSettings();
   const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
-  const charName = project.characters.find((c) => c.id === characterId)?.name || 'the character';
+  const contact = findContact(state, characterId);
+  const charName = contact
+    ? nameOfContact(project, state, contact)
+    : project.characters.find((c) => c.id === characterId)?.name || 'the character';
 
   const system = [
-    characterProfile(project, state, characterId),
+    contact ? contactProfile(project, state, contact) : characterProfile(project, state, characterId),
     worldContext(project, state),
     `TASK: ${charName} texts the hero FIRST, out of the blue — the hero did not write to them just now.`,
     `- Pick a natural reason to reach out that fits the current story moment and your relationship: checking in, a question, a complaint, teasing, news, a request, missing them.`,
     `- Write in ${narr}, in real texting style: short, casual, in character. 1-2 messages, EACH ON ITS OWN LINE.`,
+    photoRule(),
     `- Output ONLY the literal words ${charName} types. No tone labels, no asterisk actions, no narration, no name prefix, no JSON.`,
     conversation.length
       ? `- Continue naturally from the existing chat; do not repeat what was already said.`

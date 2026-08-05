@@ -428,6 +428,7 @@ export interface PhoneConfig {
   showFloatingIcon: boolean;
   iconPosition: { x: number; y: number }; // проценты 0..100 от экрана
   wallpaperAssetId?: string;
+  heroAvatarAssetId?: string; // аватарка самого героя в мессенджере
   cameraPromptTemplate: string; // фронталка (селфи героя)
   rearCameraPromptTemplate: string; // основная камера: снимок того, что вокруг
   popupNotifications: boolean;
@@ -446,15 +447,53 @@ export interface PhoneTransaction {
   date?: string; // внутриигровая дата ДД/ММ/ГГГГ (Batch 8 — для датированной выписки)
   at: number;
 }
+// Контакт телефона (Телефон 2.0). Раньше это была лишь ссылка на персонажа проекта,
+// поэтому «создать контакт как в настоящем телефоне» было невозможно. Теперь у
+// контакта своё имя и аватар, а привязка к персонажу — необязательная: можно
+// связать с персонажем проекта ИЛИ с тем, кого задетектил Game Master (реестр).
 export interface PhoneContact {
-  characterId: string;
+  id: string; // собственный id контакта (для новых); у мигрированных = characterId
+  characterId?: string; // привязка к персонажу проекта (если есть карточка)
+  registryId?: string; // привязка к записи реестра Game Master (персонаж без карточки)
+  name?: string; // отображаемое имя; пусто → имя персонажа
+  avatarAssetId?: string; // своя аватарка; пусто → спрайт персонажа или буква
+  // Насколько охотно болтает в групповых чатах и пишет первым: 0 — молчун,
+  // 100 — трещотка. Уходит в промпт, решение об ответе принимает ИИ по контексту.
+  chattiness?: number;
   hidden?: boolean;
 }
+
 export interface PhoneMessage {
+  id?: string; // для удаления конкретного сообщения
+  // Кто отправил: герой или контакт. В группах отправитель уточняется в senderId.
   from: 'protagonist' | 'contact';
+  senderId?: string; // id контакта-отправителя (группы; в личке = собеседник)
   text: string;
   attachedAssetId?: string;
+  // Фото, которое отправляет бот: сперва приходит только промпт (сообщение видно
+  // сразу, с плашкой «загружается»), картинка подставляется после генерации.
+  photoPrompt?: string;
+  pendingPhoto?: boolean;
+  photoFailed?: boolean;
   at: number;
+}
+
+// Чат: личный (один собеседник) или групповой (несколько + название и фото).
+export interface PhoneChat {
+  id: string;
+  kind: 'direct' | 'group';
+  title?: string; // название группы; для личного — пусто (берётся имя контакта)
+  avatarAssetId?: string; // фото группы
+  participantIds: string[]; // id контактов (без героя — он всегда участник)
+  messages: PhoneMessage[];
+  unread?: boolean;
+  // Групповой тонус: как часто участники пишут сами по себе, 0..100.
+  groupActivity?: number;
+  // Заметка автора для этой группы: о чём чат, как себя ведут (уходит в промпт).
+  topic?: string;
+  // Чат удалён из мессенджера, но переписка сохранена: в списке его нет, а в
+  // контексте истории он остаётся (выбор «удалить, но чтобы помнили»).
+  archived?: boolean;
 }
 export interface PhoneInventoryItem {
   itemId: string;
@@ -465,7 +504,11 @@ export interface PhoneInventoryItem {
 export interface PhoneState {
   transactions: PhoneTransaction[];
   contacts: PhoneContact[];
-  conversations: Record<string, PhoneMessage[]>; // characterId -> messages
+  // Чаты (Телефон 2.0). Личные и групповые в одном списке.
+  chats: PhoneChat[];
+  /** @deprecated Старое хранилище переписки (characterId -> сообщения). Читается
+   * только для миграции в chats; движок и UI работают с chats. */
+  conversations: Record<string, PhoneMessage[]>;
   unreadFrom: string[]; // characterIds с непрочитанным
   gallery: string[]; // assetId сгенерированных фото
   inventory: PhoneInventoryItem[];
@@ -517,6 +560,7 @@ export function initialPhoneState(): PhoneState {
   return {
     transactions: [],
     contacts: [],
+    chats: [],
     conversations: {},
     unreadFrom: [],
     gallery: [],
@@ -524,6 +568,23 @@ export function initialPhoneState(): PhoneState {
     deliveryCache: [],
     activeOrders: [],
   };
+}
+
+// Имя контакта: своё → имя персонажа проекта → имя из реестра GM → id.
+export function contactDisplayName(
+  contact: PhoneContact,
+  lookup: { characterName?: (id: string) => string | undefined; registryName?: (id: string) => string | undefined }
+): string {
+  if (contact.name?.trim()) return contact.name.trim();
+  if (contact.characterId) {
+    const n = lookup.characterName?.(contact.characterId);
+    if (n) return n;
+  }
+  if (contact.registryId) {
+    const n = lookup.registryName?.(contact.registryId);
+    if (n) return n;
+  }
+  return contact.id;
 }
 
 function normShopItem(it: any): PhoneShopItem {
@@ -967,6 +1028,8 @@ export type Beat =
   | { type: 'transaction'; amount: number; vendor?: string; item?: string; time?: string }
   | { type: 'money_change'; amount: number; reason?: string }
   | { type: 'sms_incoming'; characterId: string; text: string }
+  // Персонаж присылает герою ФОТО: движок рисует картинку по описанию photo.
+  | { type: 'sms_photo'; characterId: string; caption?: string; photo: string }
   | { type: 'contact_added'; characterId: string }
   // Симулятор жизни (Batch 8): продвижение времени и инвентарь. Все — управляющие.
   | { type: 'time_advance'; newDate?: string; newTime?: string }

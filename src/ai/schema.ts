@@ -40,6 +40,12 @@ export const beatSchema = z.union([
   }),
   z.object({ type: z.literal('money_change'), amount: z.number(), reason: z.string().nullish() }),
   z.object({ type: z.literal('sms_incoming'), characterId: z.string(), text: z.string() }),
+  z.object({
+    type: z.literal('sms_photo'),
+    characterId: z.string(),
+    caption: z.string().nullish(),
+    photo: z.string(),
+  }),
   z.object({ type: z.literal('contact_added'), characterId: z.string() }),
   // Симулятор жизни (Batch 8): время + инвентарь.
   z.object({ type: z.literal('time_advance'), newDate: z.string().nullish(), newTime: z.string().nullish() }),

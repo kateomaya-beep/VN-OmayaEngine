@@ -52,6 +52,7 @@ RESPONSE SCHEMA:
     { "type": "inventory_add", "name": string, "emoji": string, "quantity": number, "category": string, "source": string },
     { "type": "inventory_remove", "name": string, "quantity": number, "reason": string },
     { "type": "sms_incoming", "characterId": string, "text": string },
+    { "type": "sms_photo", "characterId": string, "caption": string, "photo": "<what the photo shows>" },
     { "type": "contact_added", "characterId": string },
     { "type": "character_new", "canonicalName": string, "aliases": [string], "role": string },
     { "type": "character_alias_add", "id": string, "alias": string },
@@ -314,6 +315,8 @@ const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
   // Контракт без location_change: место ехало только необязательным worldState,
   // и застрявшая запись тянула сюжет в покинутый город.
   { key: 'json_contract', signature: '{ "type": "inventory_remove", "name": string, "quantity": number, "reason": string },\n    { "type": "sms_incoming"' },
+  // Контракт без sms_photo (Телефон 2.0): боты не могли прислать фото сами.
+  { key: 'json_contract', signature: '{ "type": "sms_incoming", "characterId": string, "text": string },\n    { "type": "contact_added"' },
 ];
 function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
   let changed = false;

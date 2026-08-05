@@ -1,10 +1,11 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, AssetMeta, InventoryItem, CharacterRole, RelationshipStats } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, PhoneContact, PhoneChat, AssetMeta, InventoryItem, CharacterRole, RelationshipStats } from '../../shared/types';
 import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRelationship } from '../../shared/types';
 import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
-import { generatePhoneReply } from '../../ai/phoneChat';
+import { generateChatReplies, type ChatReply } from '../../ai/phoneChat';
+import { generateContactPhoto } from '../../ai/phonePhoto';
 import { generateDeliveryItems } from '../../ai/deliveryGen';
 import {
   generateImage,
@@ -123,10 +124,33 @@ interface PlayerStore {
   patchInventory: (mutator: (inv: InventoryItem[]) => void) => void;
   // Гардероб: вручную задать наряд персонажа на текущую сцену (если ИИ не переоделся).
   setSceneOutfit: (characterId: string, outfit: string) => void;
-  // Мессенджер телефона (Batch 7 §7.2): отправить СМС персонажу и получить ответ ИИ.
-  phoneTypingFrom: string | null; // characterId, от кого сейчас «печатается» ответ
-  sendPhoneMessage: (characterId: string, text: string) => Promise<void>;
-  markPhoneRead: (characterId: string) => void;
+  // Мессенджер телефона (Телефон 2.0): чаты (личные и групповые), контакты, фото.
+  phoneTypingFrom: string | null; // id чата, в котором сейчас «печатают» ответ
+  // Отправить сообщение в чат (текст и/или фото) и получить ответ ИИ.
+  sendChatMessage: (chatId: string, text: string, assetId?: string) => Promise<void>;
+  markChatRead: (chatId: string) => void;
+  // Контакты: создать/поправить/удалить. Возвращает id созданного контакта.
+  createContact: (data: Partial<PhoneContact>) => string;
+  updateContact: (id: string, patch: Partial<PhoneContact>) => void;
+  // forget=true — стереть и переписку (боты «забудут»); иначе чат уходит в архив.
+  deleteContact: (id: string, opts?: { forget?: boolean }) => void;
+  // Личный чат с контактом: находит существующий или заводит новый. Возвращает id чата.
+  openDirectChat: (contactId: string) => string;
+  createGroupChat: (data: {
+    title: string;
+    participantIds: string[];
+    avatarAssetId?: string;
+    groupActivity?: number;
+    topic?: string;
+  }) => string;
+  updateChat: (chatId: string, patch: Partial<PhoneChat>) => void;
+  deleteChat: (chatId: string, opts?: { forget?: boolean }) => void;
+  deleteMessage: (chatId: string, messageId: string) => void;
+  // Аватарка (контакт/группа/герой): генерация через image-API. Возвращает assetId.
+  avatarBusy: boolean;
+  generateAvatar: (prompt: string) => Promise<string | null>;
+  // Догенерация фото, которые боты «прислали» в этот ход (sms_photo-бит).
+  resolvePendingPhotos: () => Promise<void>;
   // Доставка (ревизия блока 6 §3): догенерация ассортимента + оформление заказа.
   deliveryLoadingCat: string | null; // categoryName, для которой сейчас генерится каталог
   generateDelivery: (categoryName: string) => Promise<void>;
@@ -135,8 +159,6 @@ interface PlayerStore {
   cameraBusy: boolean;
   // mode: 'front' — селфи героя (с рефами), 'rear' — снимок того, что вокруг.
   takeSelfie: (userPrompt: string, mode?: 'front' | 'rear') => Promise<void>;
-  // caption — подпись к фото (текст сообщения рядом с картинкой).
-  sendPhoto: (characterId: string, assetId: string, caption?: string) => Promise<void>;
   // Своя картинка с устройства → в галерею телефона. Возвращает assetId.
   uploadPhonePhoto: (file: File) => Promise<string | null>;
   // Тест подключения image-API (для камеры/CG). '' = успех, иначе текст ошибки.
@@ -218,6 +240,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   phoneTypingFrom: null,
   deliveryLoadingCat: null,
   cameraBusy: false,
+  avatarBusy: false,
 
   setDraft(t) {
     set({ draft: t });
@@ -563,53 +586,221 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     void get().autosave();
   },
 
-  markPhoneRead(characterId) {
+  markChatRead(chatId) {
     const st = get();
-    if (!st.state?.phone) return;
-    if (!st.state.phone.unreadFrom.includes(characterId)) return;
+    const chat = st.state?.phone?.chats.find((c) => c.id === chatId);
+    if (!chat) return;
+    const peers = chat.participantIds;
+    if (!chat.unread && !peers.some((id) => st.state!.phone!.unreadFrom.includes(id))) return;
     get().patchPhone((p) => {
-      p.unreadFrom = p.unreadFrom.filter((id) => id !== characterId);
+      const c = p.chats.find((x) => x.id === chatId);
+      if (c) c.unread = false;
+      p.unreadFrom = p.unreadFrom.filter((id) => !peers.includes(id));
     });
   },
 
-  async sendPhoneMessage(characterId, text) {
+  openDirectChat(contactId) {
+    const st = get();
+    const existing = st.state?.phone?.chats.find(
+      (c) => c.kind === 'direct' && c.participantIds[0] === contactId && !c.archived
+    );
+    if (existing) return existing.id;
+    const id = uid('chat');
+    get().patchPhone((p) => {
+      p.chats.push({ id, kind: 'direct', participantIds: [contactId], messages: [] });
+    });
+    return id;
+  },
+
+  createContact(data) {
+    const id = data.id || uid('ct');
+    get().patchPhone((p) => {
+      if (p.contacts.some((c) => c.id === id)) return;
+      p.contacts.push({
+        id,
+        characterId: data.characterId,
+        registryId: data.registryId,
+        name: data.name?.trim() || undefined,
+        avatarAssetId: data.avatarAssetId,
+        chattiness: typeof data.chattiness === 'number' ? data.chattiness : 50,
+      });
+    });
+    return id;
+  },
+
+  updateContact(id, patch) {
+    get().patchPhone((p) => {
+      const c = p.contacts.find((x) => x.id === id);
+      if (!c) return;
+      Object.assign(c, patch);
+      if (!c.name?.trim()) c.name = undefined;
+    });
+  },
+
+  deleteContact(id, opts) {
+    get().patchPhone((p) => {
+      p.contacts = p.contacts.filter((c) => c.id !== id);
+      p.unreadFrom = p.unreadFrom.filter((x) => x !== id);
+      for (const chat of p.chats) {
+        chat.participantIds = chat.participantIds.filter((x) => x !== id);
+      }
+      // Личный чат с удалённым контактом: либо стираем совсем (боты забудут),
+      // либо прячем в архив — переписка остаётся в памяти истории.
+      if (opts?.forget) {
+        p.chats = p.chats.filter((c) => !(c.kind === 'direct' && !c.participantIds.length));
+      } else {
+        for (const c of p.chats) if (c.kind === 'direct' && !c.participantIds.length) c.archived = true;
+      }
+    });
+  },
+
+  createGroupChat(data) {
+    const id = uid('grp');
+    get().patchPhone((p) => {
+      p.chats.push({
+        id,
+        kind: 'group',
+        title: data.title.trim() || 'Новая группа',
+        avatarAssetId: data.avatarAssetId,
+        participantIds: [...data.participantIds],
+        messages: [],
+        groupActivity: typeof data.groupActivity === 'number' ? data.groupActivity : 50,
+        topic: data.topic?.trim() || undefined,
+      });
+    });
+    return id;
+  },
+
+  updateChat(chatId, patch) {
+    get().patchPhone((p) => {
+      const c = p.chats.find((x) => x.id === chatId);
+      if (!c) return;
+      Object.assign(c, patch);
+    });
+  },
+
+  deleteChat(chatId, opts) {
+    get().patchPhone((p) => {
+      if (opts?.forget) p.chats = p.chats.filter((c) => c.id !== chatId);
+      else {
+        const c = p.chats.find((x) => x.id === chatId);
+        if (c) {
+          c.archived = true;
+          c.unread = false;
+        }
+      }
+    });
+  },
+
+  deleteMessage(chatId, messageId) {
+    get().patchPhone((p) => {
+      const c = p.chats.find((x) => x.id === chatId);
+      if (!c) return;
+      c.messages = c.messages.filter((m) => m.id !== messageId);
+    });
+  },
+
+  async sendChatMessage(chatId, text, assetId) {
     const st = get();
     const trimmed = text.trim();
-    if (!st.project || !st.state || !trimmed || st.phoneTypingFrom) return;
+    if (!st.project || !st.state || st.phoneTypingFrom) return;
+    if (!trimmed && !assetId) return;
+    const chat = st.state.phone?.chats.find((c) => c.id === chatId);
+    if (!chat) return;
     // Кладём сообщение игрока сразу (оптимистично) и чистим непрочитанное.
     get().patchPhone((p) => {
-      (p.conversations[characterId] ||= []).push({ from: 'protagonist', text: trimmed, at: Date.now() });
-      p.unreadFrom = p.unreadFrom.filter((id) => id !== characterId);
-    });
-    set({ phoneTypingFrom: characterId });
-    try {
-      const cur = get();
-      const convo = cur.state?.phone?.conversations[characterId] || [];
-      const replies = await generatePhoneReply(cur.project!, cur.state!, characterId, convo);
-      if (!replies.length) {
-        // Модель вернула пустоту даже после повтора — не мусорим в переписке
-        // пузырём-заглушкой, честно сообщаем и даём переотправить.
-        set({ error: 'Собеседник не ответил (пустой ответ модели). Попробуйте ещё раз.' });
-        return;
-      }
-      // Отдаём сообщения «пачкой» по-живому: пауза набора → пузырь → снова печатает.
-      for (const msg of replies) {
-        await sleep(typingDelay(msg));
-        get().patchPhone((p) => {
-          (p.conversations[characterId] ||= []).push({ from: 'contact', text: msg, at: Date.now() });
-        });
-      }
-    } catch (e) {
-      logEvent('error', 'phone', e instanceof Error ? e.message : String(e));
-      get().patchPhone((p) => {
-        (p.conversations[characterId] ||= []).push({
-          from: 'contact',
-          text: '…(нет связи)',
-          at: Date.now(),
-        });
+      const c = p.chats.find((x) => x.id === chatId);
+      if (!c) return;
+      c.messages.push({
+        id: uid('msg'),
+        from: 'protagonist',
+        text: trimmed,
+        attachedAssetId: assetId,
+        at: Date.now(),
       });
+      c.unread = false;
+      p.unreadFrom = p.unreadFrom.filter((id) => !c.participantIds.includes(id));
+    });
+    set({ phoneTypingFrom: chatId });
+    try {
+      await runChatReplies(get, set, chatId, {});
     } finally {
       set({ phoneTypingFrom: null });
+    }
+  },
+
+  async generateAvatar(prompt) {
+    const st = get();
+    if (!st.project || st.avatarBusy) return null;
+    if (!getApiKey('image')) {
+      set({ error: 'Настройте генерацию изображений (🎬 CG-студия → подключение).' });
+      return null;
+    }
+    set({ avatarBusy: true, error: null });
+    try {
+      const ig = st.project.imageGen ?? defaultImageGenConfig();
+      const basePrompt = `Messenger profile picture (avatar), square close-up portrait framing: ${prompt.trim() || 'a person'}.`;
+      const blob = await generateImage(ig, {
+        prompt: composeFinalPrompt(ig, basePrompt),
+        aspectRatio: '1:1',
+      });
+      const blobKey = uid('blob');
+      await putAsset(blobKey, blob);
+      const asset: AssetMeta = {
+        id: uid('cg'),
+        type: 'cg',
+        name: `Аватар: ${prompt.trim().slice(0, 24) || 'без описания'}`,
+        generated: true,
+        blobKey,
+        mime: blob.type || 'image/png',
+      };
+      await get().patchProject((p) => {
+        if (!p.assets.some((a) => a.id === asset.id)) p.assets.push(asset);
+      });
+      return asset.id;
+    } catch (e) {
+      logEvent('error', 'phone', 'Аватар не сгенерировался: ' + (e as Error).message);
+      set({ error: 'Не удалось сгенерировать аватарку.' });
+      return null;
+    } finally {
+      set({ avatarBusy: false });
+    }
+  },
+
+  async resolvePendingPhotos() {
+    const st = get();
+    if (!st.project || !st.state?.phone) return;
+    // Собираем все «висящие» фото: сообщение уже видно, картинки ещё нет.
+    const pending: { chatId: string; msgId: string; senderId?: string; prompt: string }[] = [];
+    for (const chat of st.state.phone.chats) {
+      for (const m of chat.messages) {
+        if (m.pendingPhoto && m.photoPrompt && m.id && !m.attachedAssetId) {
+          pending.push({ chatId: chat.id, msgId: m.id, senderId: m.senderId, prompt: m.photoPrompt });
+        }
+      }
+    }
+    for (const p of pending) {
+      const cur = get();
+      if (!cur.project || !cur.state) return;
+      const contact = p.senderId ? cur.state.phone?.contacts.find((c) => c.id === p.senderId) : undefined;
+      const asset = await generateContactPhoto(cur.project, cur.state, contact, p.prompt);
+      if (asset) {
+        await get().patchProject((proj) => {
+          if (!proj.assets.some((a) => a.id === asset.id)) proj.assets.push(asset);
+        });
+      }
+      get().patchPhone((ph) => {
+        const chat = ph.chats.find((c) => c.id === p.chatId);
+        const msg = chat?.messages.find((m) => m.id === p.msgId);
+        if (!msg) return;
+        msg.pendingPhoto = false;
+        if (asset) {
+          msg.attachedAssetId = asset.id;
+          ph.gallery = [...ph.gallery, asset.id];
+        } else {
+          msg.photoFailed = true;
+        }
+      });
     }
   },
 
@@ -839,7 +1030,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (project.phone?.enabled) {
       get().patchPhone((ph) => {
         for (const c of contactIds) {
-          if (!ph.contacts.some((x) => x.characterId === c.id)) ph.contacts.push({ characterId: c.id });
+          if (!ph.contacts.some((x) => x.characterId === c.id)) ph.contacts.push({ id: c.id, characterId: c.id });
         }
       });
     }
@@ -923,14 +1114,22 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
     // Телефон: контакты/переписки дубля → survivor.
     if (next.phone) {
-      if (next.phone.conversations[dupId]) {
-        const merged = [...(next.phone.conversations[survivorId] || []), ...next.phone.conversations[dupId]].sort(
-          (a, b) => a.at - b.at
-        );
-        next.phone.conversations[survivorId] = merged;
-        delete next.phone.conversations[dupId];
+      const dupChat = next.phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === dupId);
+      if (dupChat) {
+        const survChat = next.phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === survivorId);
+        if (survChat) {
+          survChat.messages = [...survChat.messages, ...dupChat.messages].sort((a, b) => a.at - b.at);
+          next.phone.chats = next.phone.chats.filter((c) => c !== dupChat);
+        } else {
+          dupChat.participantIds = [survivorId];
+          for (const m of dupChat.messages) if (m.senderId === dupId) m.senderId = survivorId;
+        }
       }
-      next.phone.contacts = next.phone.contacts.filter((c) => c.characterId !== dupId);
+      for (const c of next.phone.chats) {
+        c.participantIds = c.participantIds.map((id) => (id === dupId ? survivorId : id)).filter((id, i, a) => a.indexOf(id) === i);
+        for (const m of c.messages) if (m.senderId === dupId) m.senderId = survivorId;
+      }
+      next.phone.contacts = next.phone.contacts.filter((c) => c.characterId !== dupId && c.id !== dupId);
       next.phone.unreadFrom = next.phone.unreadFrom
         .map((id) => (id === dupId ? survivorId : id))
         .filter((id, i, a) => a.indexOf(id) === i);
@@ -978,36 +1177,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       logEvent('error', 'phone', 'Не удалось загрузить фото: ' + (e as Error).message);
       set({ error: 'Не удалось загрузить фото.' });
       return null;
-    }
-  },
-
-  async sendPhoto(characterId, assetId, caption) {
-    const st = get();
-    if (!st.project || !st.state || st.phoneTypingFrom) return;
-    get().patchPhone((p) => {
-      (p.conversations[characterId] ||= []).push({
-        from: 'protagonist',
-        text: caption?.trim() || '',
-        attachedAssetId: assetId,
-        at: Date.now(),
-      });
-      p.unreadFrom = p.unreadFrom.filter((id) => id !== characterId);
-    });
-    set({ phoneTypingFrom: characterId });
-    try {
-      const cur = get();
-      const convo = cur.state?.phone?.conversations[characterId] || [];
-      const replies = await generatePhoneReply(cur.project!, cur.state!, characterId, convo);
-      for (const msg of replies) {
-        await sleep(typingDelay(msg));
-        get().patchPhone((p) => {
-          (p.conversations[characterId] ||= []).push({ from: 'contact', text: msg, at: Date.now() });
-        });
-      }
-    } catch (e) {
-      logEvent('error', 'phone', e instanceof Error ? e.message : String(e));
-    } finally {
-      set({ phoneTypingFrom: null });
     }
   },
 
@@ -1085,6 +1254,90 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     void get().autosave();
   },
 }));
+
+// Ответ ИИ в чате: один запрос → пачка «пузырей» с живыми паузами набора.
+// Общая для лички и групп (в группе ИИ сам решает, кто отвечает). Фото, которое
+// бот решил приложить, генерируется после того, как пузырь уже показан.
+async function runChatReplies(
+  get: () => PlayerStore,
+  set: (partial: Partial<PlayerStore>) => void,
+  chatId: string,
+  opts: { spontaneous?: boolean }
+): Promise<void> {
+  const cur = get();
+  const chat = cur.state?.phone?.chats.find((c) => c.id === chatId);
+  if (!cur.project || !cur.state || !chat) return;
+  let replies: ChatReply[] = [];
+  try {
+    replies = await generateChatReplies(cur.project, cur.state, chat, { spontaneous: opts.spontaneous });
+  } catch (e) {
+    logEvent('error', 'phone', e instanceof Error ? e.message : String(e));
+    if (!opts.spontaneous) {
+      get().patchPhone((p) => {
+        const c = p.chats.find((x) => x.id === chatId);
+        c?.messages.push({ id: uid('msg'), from: 'contact', text: '…(нет связи)', at: Date.now() });
+      });
+    }
+    return;
+  }
+  if (!replies.length) {
+    // Модель вернула пустоту даже после повтора — не мусорим в переписке
+    // пузырём-заглушкой, честно сообщаем и даём переотправить.
+    if (!opts.spontaneous) set({ error: 'Собеседник не ответил (пустой ответ модели). Попробуйте ещё раз.' });
+    return;
+  }
+  for (const r of replies) {
+    await sleep(typingDelay(r.text || '📷'));
+    const msgId = uid('msg');
+    get().patchPhone((p) => {
+      const c = p.chats.find((x) => x.id === chatId);
+      if (!c) return;
+      c.messages.push({
+        id: msgId,
+        from: 'contact',
+        senderId: r.senderId,
+        text: r.text,
+        photoPrompt: r.photoPrompt,
+        pendingPhoto: !!r.photoPrompt,
+        at: Date.now(),
+      });
+      if (opts.spontaneous) c.unread = true;
+    });
+  }
+  // Фото — уже после того, как переписка показана целиком.
+  if (replies.some((r) => r.photoPrompt)) await get().resolvePendingPhotos();
+}
+
+// Групповые чаты живут сами по себе: после хода группа с некоторой вероятностью
+// (её «оживлённость», 0..100) сама заводит разговор — кто-то кидает новость, шутку
+// или фото. Пишет не больше одной группы за ход, чтобы телефон не взрывался.
+async function maybeGroupChatter(
+  get: () => PlayerStore,
+  set: (partial: Partial<PlayerStore>) => void
+): Promise<void> {
+  const st = get();
+  if (!st.project?.phone?.enabled || !st.state?.phone || st.phoneTypingFrom) return;
+  const groups = st.state.phone.chats.filter(
+    (c) => c.kind === 'group' && !c.archived && c.participantIds.length > 0
+  );
+  if (!groups.length) return;
+  // Кандидаты по своей же вероятности; из прошедших ролл берём одну случайную.
+  const rolled = groups.filter((g) => Math.random() * 100 < (g.groupActivity ?? 50) / 3);
+  if (!rolled.length) return;
+  const chat = rolled[Math.floor(Math.random() * rolled.length)];
+  // Не встреваем, если последним в группе и так писал бот, а герой не отвечал.
+  const last = chat.messages[chat.messages.length - 1];
+  if (last && last.from === 'contact' && chat.unread) return;
+  set({ phoneTypingFrom: chat.id });
+  try {
+    await runChatReplies(get, set, chat.id, { spontaneous: true });
+    if (get().project?.phone?.popupNotifications) {
+      pushToast('info', `💬 Новые сообщения в «${chat.title || 'группе'}»`);
+    }
+  } finally {
+    set({ phoneTypingFrom: null });
+  }
+}
 
 // Загружает конкретный сейв (автосейв ИЛИ чекпоинт), выставляя контекст прохождения
 // так, чтобы дальнейший автосейв-курсор писался в это прохождение. При загрузке
@@ -1242,6 +1495,13 @@ async function runAndApply(
       .catch((err) => logEvent('error', 'save', 'Фоновое автосохранение не удалось: ' + (err as Error).message));
     preTurnState = { move: playerMove, state: turnBase };
     logEvent('info', 'turn', `Ход применён (ход ${state.turnCount}, beats: ${turn.beats.length})`);
+    // Телефон живёт своей жизнью параллельно сцене: догенерируем фото, которые
+    // боты прислали этим ходом, и даём группам шанс написать самим. Всё в фоне —
+    // ход игрока это не задерживает и падать из-за этого не должно.
+    void get()
+      .resolvePendingPhotos()
+      .then(() => maybeGroupChatter(get, set))
+      .catch((err) => logEvent('warn', 'phone', 'Фоновая жизнь телефона: ' + (err as Error).message));
     return true;
   } catch (e) {
     // Ход уже обработан (оптимистичная отмена или вытеснение новым ходом) — не трогаем UI.

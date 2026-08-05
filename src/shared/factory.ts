@@ -490,7 +490,7 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
     turnsSinceLastEvent: num(raw.turnsSinceLastEvent, fresh.turnsSinceLastEvent ?? 999),
     turnsSinceLastSms: num(raw.turnsSinceLastSms, fresh.turnsSinceLastSms ?? 999),
     // Телефон (Batch 7): сохраняем контакты/переписки/транзакции/заказы при загрузке.
-    phone: normalizePhoneState(raw.phone),
+    phone: normalizePhoneState(raw.phone, project.characters.find((c) => c.role === 'protagonist')?.id),
     // Инвентарь (Batch 8): из RuntimeState.inventory; миграция со старого phone.inventory.
     inventory: normalizeInventory(
       Array.isArray(raw.inventory) ? raw.inventory : raw?.phone?.inventory
@@ -500,7 +500,7 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
 
 // Нормализация рантайм-состояния телефона из сейва (старые сейвы без phone → fresh;
 // переименование shopCache→deliveryCache; добавление activeOrders — миграция).
-function normalizePhoneState(raw: any): PhoneState {
+function normalizePhoneState(raw: any, protagonistId?: string): PhoneState {
   const fresh = initialPhoneState();
   if (!raw || typeof raw !== 'object') return fresh;
   const a = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
@@ -510,11 +510,83 @@ function normalizePhoneState(raw: any): PhoneState {
       if (Array.isArray(v)) conv[k] = v.filter((m: any) => m && typeof m.text === 'string');
     }
   }
+  // Контакты: у старых записей id не было — берём characterId, чтобы ссылки в чатах
+  // и переписке остались валидными.
+  const contacts = a<any>(raw.contacts)
+    .filter((c) => c && (typeof c.characterId === 'string' || typeof c.id === 'string'))
+    .map((c) => ({
+      id: typeof c.id === 'string' && c.id ? c.id : c.characterId,
+      characterId: typeof c.characterId === 'string' ? c.characterId : undefined,
+      registryId: typeof c.registryId === 'string' ? c.registryId : undefined,
+      name: typeof c.name === 'string' ? c.name : undefined,
+      avatarAssetId: typeof c.avatarAssetId === 'string' ? c.avatarAssetId : undefined,
+      chattiness: typeof c.chattiness === 'number' ? Math.max(0, Math.min(100, c.chattiness)) : undefined,
+      hidden: !!c.hidden,
+    }));
+
+  // Чаты: берём новые, если есть; иначе разворачиваем старые conversations в личные
+  // чаты (одна ветка = один чат с этим контактом). Переписка не теряется.
+  const unread = a<any>(raw.unreadFrom).filter((x) => typeof x === 'string');
+  const normMsgs = (v: unknown, peerId?: string) =>
+    a<any>(v)
+      .filter((m) => m && typeof m.text === 'string')
+      .map((m) => ({
+        // id обязателен: без него нельзя удалить конкретное сообщение.
+        id: typeof m.id === 'string' && m.id ? m.id : uid('msg'),
+        from: m.from === 'protagonist' ? ('protagonist' as const) : ('contact' as const),
+        senderId: typeof m.senderId === 'string' ? m.senderId : m.from === 'contact' ? peerId : undefined,
+        text: m.text,
+        attachedAssetId: typeof m.attachedAssetId === 'string' ? m.attachedAssetId : undefined,
+        photoPrompt: typeof m.photoPrompt === 'string' ? m.photoPrompt : undefined,
+        // Незавершённая генерация из прошлой сессии не «висит» вечно: при загрузке
+        // сейва помечаем её как неудавшуюся — из UI её можно перезапустить.
+        pendingPhoto: false,
+        photoFailed: !!m.photoFailed || (!!m.pendingPhoto && !m.attachedAssetId),
+        at: typeof m.at === 'number' ? m.at : Date.now(),
+      }));
+  let chats = a<any>(raw.chats)
+    .filter((c) => c && typeof c.id === 'string')
+    .map((c) => ({
+      id: c.id,
+      kind: c.kind === 'group' ? ('group' as const) : ('direct' as const),
+      title: typeof c.title === 'string' ? c.title : undefined,
+      avatarAssetId: typeof c.avatarAssetId === 'string' ? c.avatarAssetId : undefined,
+      participantIds: a<any>(c.participantIds).filter((x) => typeof x === 'string'),
+      messages: normMsgs(c.messages, a<any>(c.participantIds)[0]),
+      unread: !!c.unread,
+      groupActivity: typeof c.groupActivity === 'number' ? Math.max(0, Math.min(100, c.groupActivity)) : undefined,
+      topic: typeof c.topic === 'string' ? c.topic : undefined,
+      archived: !!c.archived,
+    }));
+  if (!chats.length) {
+    chats = Object.entries(conv).map(([peer, msgs]) => ({
+      id: peer,
+      kind: 'direct' as const,
+      title: undefined,
+      avatarAssetId: undefined,
+      participantIds: [peer],
+      messages: normMsgs(msgs, peer),
+      unread: unread.includes(peer),
+      groupActivity: undefined,
+      topic: undefined,
+      archived: false,
+    }));
+  }
+
+  // ФИКС старых сейвов: раньше протагонист попадал в контакты, и в мессенджере
+  // висел его чат с самим собой. Себе не пишут — вычищаем при загрузке.
+  const selfIds = new Set([protagonistId].filter(Boolean) as string[]);
+  const cleanContacts = contacts.filter((c) => !selfIds.has(c.id) && !selfIds.has(c.characterId || ''));
+  const cleanChats = chats
+    .map((c) => ({ ...c, participantIds: c.participantIds.filter((id) => !selfIds.has(id)) }))
+    .filter((c) => c.kind === 'group' || c.participantIds.length > 0);
+
   return {
     transactions: a<any>(raw.transactions).filter((t) => t && typeof t.amount === 'number'),
-    contacts: a<any>(raw.contacts).filter((c) => c && typeof c.characterId === 'string'),
+    contacts: cleanContacts,
+    chats: cleanChats,
     conversations: conv,
-    unreadFrom: a<any>(raw.unreadFrom).filter((x) => typeof x === 'string'),
+    unreadFrom: unread.filter((id) => !selfIds.has(id)),
     gallery: a<any>(raw.gallery).filter((x) => typeof x === 'string'),
     inventory: a<any>(raw.inventory).filter((it) => it && typeof it.name === 'string'),
     // Переименование: старое поле shopCache → deliveryCache.

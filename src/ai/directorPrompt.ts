@@ -71,6 +71,7 @@ export const CORE_PROMPT = `Ты — движок-режиссёр интера�
     { "type": "inventory_add", "name": string, "emoji": string, "quantity": number, "category": string, "source": string },
     { "type": "inventory_remove", "name": string, "quantity": number, "reason": string },
     { "type": "sms_incoming", "characterId": string, "text": string },
+    { "type": "sms_photo", "characterId": string, "caption": string, "photo": "<что на фото, с его стороны>" },
     { "type": "contact_added", "characterId": string },
     { "type": "character_new", "canonicalName": string, "aliases": [string], "role": string },
     { "type": "character_alias_add", "id": string, "alias": string },

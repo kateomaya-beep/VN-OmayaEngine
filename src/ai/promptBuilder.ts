@@ -410,34 +410,58 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
 function phoneBlock(project: Project, state: RuntimeState): string {
   const cfg = project.phone;
   if (!cfg?.enabled) return '';
-  const contacts = (state.phone?.contacts || [])
-    .filter((c) => !c.hidden)
-    .map((c) => {
-      const nm = project.characters.find((x) => x.id === c.characterId)?.name || c.characterId;
-      return `${nm} (${c.characterId})`;
-    });
   const parts = [
     'The hero carries a smartphone. Phone control beats (no display text):',
     '  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero off-screen (appears in Messages).',
     '  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone\'s number (characters who appear are auto-added; use only for someone met off-screen).',
+    '  - {"type":"sms_photo","characterId":"<id>","caption":"<what they write with it>","photo":"<what the photo shows, from THEIR side: a selfie, their room, the street they are on>"} — a character sends the hero a PHOTO. The engine draws it. Use it when someone would naturally snap something (showing off, proof, a view, a joke); the caption is optional.',
   ];
-  if (contacts.length) parts.push(`Saved phone contacts: ${contacts.join(', ')}.`);
 
   // ПЕРЕПИСКА — часть сюжета. Без этого блока всё, что игрок написал персонажу в
   // мессенджере, для основного движка не существовало: следующий ход шёл так,
   // будто разговора не было. Берём последние сообщения по всем веткам в
   // хронологическом порядке (по времени), помечая их как уже произошедшие.
   const heroName = state.protagonistName || 'the hero';
+  const nameOfContact = (contactId: string): string => {
+    const c = state.phone?.contacts.find((x) => x.id === contactId || x.characterId === contactId);
+    if (c?.name?.trim()) return c.name.trim();
+    const proj = project.characters.find((x) => x.id === (c?.characterId || contactId));
+    if (proj) return proj.name;
+    const reg = state.gm.registry?.find((r) => r.id === c?.registryId);
+    return reg?.canonicalName || contactId;
+  };
+  // Контакты и группы: ИИ должен знать, кому вообще можно написать и какие чаты
+  // существуют — иначе sms_incoming/sms_photo уходят «в никуда».
+  const contacts = (state.phone?.contacts || [])
+    .filter((c) => !c.hidden)
+    .map((c) => `${nameOfContact(c.id)} (${c.characterId || c.id})`);
+  if (contacts.length) parts.push(`Saved phone contacts: ${contacts.join(', ')}.`);
+  const groups = (state.phone?.chats || []).filter((c) => c.kind === 'group' && !c.archived);
+  if (groups.length) {
+    parts.push(
+      `Group chats on the phone: ${groups
+        .map((g) => `"${g.title || 'без названия'}" (${g.participantIds.map(nameOfContact).join(', ')})${g.topic ? ` — ${g.topic}` : ''}`)
+        .join('; ')}.`
+    );
+  }
+
   const chatLines: { at: number; line: string }[] = [];
-  for (const [charId, msgs] of Object.entries(state.phone?.conversations || {})) {
-    const nm = project.characters.find((x) => x.id === charId)?.name || charId;
-    for (const m of msgs) {
-      const body = m.text?.trim() || (m.attachedAssetId ? '[sent a photo]' : '');
+  for (const chat of state.phone?.chats || []) {
+    const where =
+      chat.kind === 'group'
+        ? `[group "${chat.title || 'без названия'}": ${chat.participantIds.map(nameOfContact).join(', ')}]`
+        : '';
+    for (const m of chat.messages) {
+      const body =
+        m.text?.trim() ||
+        (m.attachedAssetId || m.photoPrompt ? `[sent a photo${m.photoPrompt ? `: ${m.photoPrompt.slice(0, 80)}` : ''}]` : '');
       if (!body) continue;
-      chatLines.push({
-        at: m.at || 0,
-        line: `  ${m.from === 'protagonist' ? `${heroName} → ${nm}` : `${nm} → ${heroName}`}: ${body.slice(0, 200)}`,
-      });
+      const who =
+        m.from === 'protagonist'
+          ? heroName
+          : nameOfContact(m.senderId || chat.participantIds[0] || '');
+      const to = chat.kind === 'group' ? where : m.from === 'protagonist' ? `→ ${nameOfContact(chat.participantIds[0] || '')}` : `→ ${heroName}`;
+      chatLines.push({ at: m.at || 0, line: `  ${who} ${to}: ${body.slice(0, 200)}` });
     }
   }
   if (chatLines.length) {

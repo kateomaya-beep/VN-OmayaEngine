@@ -208,9 +208,24 @@ export async function applyTurn(
   // если расширение включено.
   const phoneOn = !!project.phone?.enabled;
   const phone: PhoneState = JSON.parse(JSON.stringify(state.phone ?? initialPhoneState()));
+  // Добавление контакта. ФИКС: протагонист контактом НЕ становится — иначе в
+  // мессенджере появлялся чат героя с самим собой (каждая его реплика на сцене
+  // вызывала addContact). Себе не пишут.
+  const protagonistId = project.characters.find((c) => c.role === 'protagonist')?.id;
   const addContact = (cid: string) => {
-    if (!phoneOn) return;
-    if (!phone.contacts.some((c) => c.characterId === cid)) phone.contacts.push({ characterId: cid });
+    if (!phoneOn || !cid || cid === protagonistId) return;
+    if (!phone.contacts.some((c) => c.characterId === cid || c.id === cid)) {
+      phone.contacts.push({ id: cid, characterId: cid });
+    }
+  };
+  // Чат с контактом: находим личный или заводим новый (переписка живёт в чатах).
+  const directChat = (cid: string) => {
+    let chat = phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === cid);
+    if (!chat) {
+      chat = { id: cid, kind: 'direct', participantIds: [cid], messages: [] };
+      phone.chats.push(chat);
+    }
+    return chat;
   };
 
   // Инвентарь (Batch 8 §IV) — работает и без телефона. Мутируем копию.
@@ -324,13 +339,46 @@ export async function applyTurn(
       continue;
     }
     if (b.type === 'sms_incoming') {
-      if (phoneOn) {
+      if (phoneOn && b.characterId !== protagonistId) {
         addContact(b.characterId);
-        (phone.conversations[b.characterId] ||= []).push({ from: 'contact', text: b.text, at: Date.now() });
+        const chat = directChat(b.characterId);
+        chat.messages.push({
+          id: uid('msg'),
+          from: 'contact',
+          senderId: b.characterId,
+          text: b.text,
+          at: Date.now(),
+        });
+        chat.unread = true;
         if (!phone.unreadFrom.includes(b.characterId)) phone.unreadFrom.push(b.characterId);
         if (project.phone?.popupNotifications) {
           const nm = project.characters.find((c) => c.id === b.characterId)?.name || 'Сообщение';
           pushToast('info', `💬 ${nm}: ${b.text.slice(0, 60)}`);
+        }
+      }
+      continue;
+    }
+    // Бот сам присылает фото (Телефон 2.0). Сообщение появляется сразу — с подписью
+    // и плашкой «загружается»; картинку движок генерирует после хода (см. deliverPendingPhotos),
+    // иначе ход игрока ждал бы медленный image-API.
+    if (b.type === 'sms_photo') {
+      if (phoneOn && b.characterId !== protagonistId) {
+        addContact(b.characterId);
+        const chat = directChat(b.characterId);
+        chat.messages.push({
+          id: uid('msg'),
+          from: 'contact',
+          senderId: b.characterId,
+          text: b.caption?.trim() || '',
+          photoPrompt: b.photo,
+          pendingPhoto: true,
+          at: Date.now(),
+        });
+        chat.unread = true;
+        if (!phone.unreadFrom.includes(b.characterId)) phone.unreadFrom.push(b.characterId);
+        if (project.phone?.popupNotifications) {
+          const nm = project.characters.find((c) => c.id === b.characterId)?.name || 'Сообщение';
+          pushToast('info', `📷 ${nm} прислал(а) фото`);
         }
       }
       continue;
@@ -655,7 +703,10 @@ async function deliverFallbackSms(
   try {
     if (!state.phone) return;
     // Как и в ролле: контакты, иначе знакомые персонажи проекта.
-    const contactIds = state.phone.contacts.filter((c) => !c.hidden).map((c) => c.characterId);
+    const heroId = project.characters.find((c) => c.role === 'protagonist')?.id;
+    const contactIds = state.phone.contacts
+      .filter((c) => !c.hidden && c.characterId && c.characterId !== heroId)
+      .map((c) => c.characterId as string);
     const candidates = contactIds.length
       ? contactIds
       : project.characters
@@ -663,15 +714,21 @@ async function deliverFallbackSms(
           .map((c) => c.id);
     if (!candidates.length) return;
     const pickId = candidates[Math.floor(Math.random() * candidates.length)];
-    const convo = state.phone.conversations[pickId] || [];
-    const msgs = await generateIncomingSms(project, state, pickId, convo, signal);
+    let chat = state.phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === pickId);
+    const msgs = await generateIncomingSms(project, state, pickId, chat?.messages || [], signal);
     if (!msgs.length) return;
     // Пишущий автоматически становится контактом (если его ещё нет).
-    if (!state.phone.contacts.some((c) => c.characterId === pickId)) {
-      state.phone.contacts.push({ characterId: pickId });
+    if (!state.phone.contacts.some((c) => c.characterId === pickId || c.id === pickId)) {
+      state.phone.contacts.push({ id: pickId, characterId: pickId });
     }
-    const list = (state.phone.conversations[pickId] ||= []);
-    for (const text of msgs) list.push({ from: 'contact', text, at: Date.now() });
+    if (!chat) {
+      chat = { id: pickId, kind: 'direct', participantIds: [pickId], messages: [] };
+      state.phone.chats.push(chat);
+    }
+    for (const text of msgs) {
+      chat.messages.push({ id: uid('msg'), from: 'contact', senderId: pickId, text, at: Date.now() });
+    }
+    chat.unread = true;
     if (!state.phone.unreadFrom.includes(pickId)) state.phone.unreadFrom.push(pickId);
     if (project.phone?.popupNotifications) {
       const nm = project.characters.find((c) => c.id === pickId)?.name || 'Сообщение';
