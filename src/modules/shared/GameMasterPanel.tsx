@@ -173,10 +173,10 @@ function CharactersTab({
   };
 
   const wand = async (i: number, name: string) => {
-    const st = usePlayerStore.getState().state;
+    const { state: st, project: proj } = usePlayerStore.getState();
     if (!st) return;
     setBusy(i);
-    await runScan(L, name || L('персонаж', 'character'), () => scanCharacter(st, name), (r) => {
+    await runScan(L, name || L('персонаж', 'character'), () => scanCharacter(st, name, proj ?? undefined), (r) => {
       // применяем только непустые поля
       const patch: Partial<GmCharacter> = {};
       for (const [k, v] of Object.entries(r)) {
@@ -483,7 +483,7 @@ function SheetsTab({ L, project }: { L: Lf; project?: Project | null }) {
     setBusy(true);
     setDone(false);
     try {
-      const sh = await generateCharacterSheet(s.state, n);
+      const sh = await generateCharacterSheet(s.state, n, s.project ?? undefined);
       setSheet(sh);
     } catch (e) {
       pushToast('error', L('Не удалось сгенерировать анкету: ', 'Sheet generation failed: ') + (e instanceof Error ? e.message : String(e)));

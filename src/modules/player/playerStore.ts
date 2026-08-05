@@ -5,7 +5,7 @@ import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { generateChatReplies, type ChatReply } from '../../ai/phoneChat';
-import { generateContactPhoto } from '../../ai/phonePhoto';
+import { generateContactPhoto, generateAvatarImage, generateGroupAvatarImage } from '../../ai/phonePhoto';
 import { generateDeliveryItems } from '../../ai/deliveryGen';
 import {
   generateImage,
@@ -147,8 +147,10 @@ interface PlayerStore {
   deleteChat: (chatId: string, opts?: { forget?: boolean }) => void;
   deleteMessage: (chatId: string, messageId: string) => void;
   // Аватарка (контакт/группа/герой): генерация через image-API. Возвращает assetId.
+  // Рисуется в стиле проекта, с референсом человека из CG-студии и описанием его
+  // внешности — «аватарка» задаёт только кадр, а не саму внешность.
   avatarBusy: boolean;
-  generateAvatar: (prompt: string) => Promise<string | null>;
+  generateAvatar: (subject: AvatarSubject) => Promise<string | null>;
   // Догенерация фото, которые боты «прислали» в этот ход (sms_photo-бит).
   resolvePendingPhotos: () => Promise<void>;
   // Доставка (ревизия блока 6 §3): догенерация ассортимента + оформление заказа.
@@ -192,6 +194,16 @@ let slotSeq = 0;
 function nextSlot(): number {
   slotSeq = Math.max(Date.now(), slotSeq + 1);
   return slotSeq;
+}
+
+// Кого рисуем на аватарке: человека (с рефом и описанием) или группу (символ).
+export interface AvatarSubject {
+  kind: 'person' | 'group';
+  name: string;
+  /** id, по которому в CG-студии закреплены референсы (персонаж/реестр/контакт). */
+  personId?: string;
+  /** Своё описание; для группы — о чём чат. Пусто → берём из карточки/досье. */
+  description?: string;
 }
 
 // Снимок вида сцены, к которому откатываемся при отмене/ошибке хода.
@@ -729,38 +741,30 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
   },
 
-  async generateAvatar(prompt) {
+  async generateAvatar(subject) {
     const st = get();
-    if (!st.project || st.avatarBusy) return null;
+    if (!st.project || !st.state || st.avatarBusy) return null;
     if (!getApiKey('image')) {
       set({ error: 'Настройте генерацию изображений (🎬 CG-студия → подключение).' });
       return null;
     }
     set({ avatarBusy: true, error: null });
     try {
-      const ig = st.project.imageGen ?? defaultImageGenConfig();
-      const basePrompt = `Messenger profile picture (avatar), square close-up portrait framing: ${prompt.trim() || 'a person'}.`;
-      const blob = await generateImage(ig, {
-        prompt: composeFinalPrompt(ig, basePrompt),
-        aspectRatio: '1:1',
-      });
-      const blobKey = uid('blob');
-      await putAsset(blobKey, blob);
-      const asset: AssetMeta = {
-        id: uid('cg'),
-        type: 'cg',
-        name: `Аватар: ${prompt.trim().slice(0, 24) || 'без описания'}`,
-        generated: true,
-        blobKey,
-        mime: blob.type || 'image/png',
-      };
+      const asset =
+        subject.kind === 'group'
+          ? await generateGroupAvatarImage(st.project, subject.name, subject.description)
+          : await generateAvatarImage(st.project, st.state, {
+              name: subject.name,
+              personId: subject.personId,
+              description: subject.description,
+            });
+      if (!asset) return null;
       await get().patchProject((p) => {
         if (!p.assets.some((a) => a.id === asset.id)) p.assets.push(asset);
       });
       return asset.id;
     } catch (e) {
-      logEvent('error', 'phone', 'Аватар не сгенерировался: ' + (e as Error).message);
-      set({ error: 'Не удалось сгенерировать аватарку.' });
+      set({ error: 'Не удалось сгенерировать аватарку: ' + (e as Error).message });
       return null;
     } finally {
       set({ avatarBusy: false });

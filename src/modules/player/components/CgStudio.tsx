@@ -106,6 +106,27 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   const effRefAsset = (charId: string): string | undefined => ig.references[charId] || autoRefAsset(charId);
   const outfitRefAsset = (charId: string): string | undefined => ig.outfitReferences?.[charId];
 
+  // Кому вообще можно задать реф. Не только персонажам проекта: у мамы, папы или
+  // любого, кого нашёл Game Master, карточки нет — а рисовать их надо (аватарки,
+  // фото от них). Ключ реф-мапы = id записи, они между источниками не пересекаются.
+  type RefTarget = { id: string; name: string; note?: string };
+  const refTargets: RefTarget[] = [];
+  const seenRef = new Set<string>();
+  const pushTarget = (t: RefTarget) => {
+    if (t.id && !seenRef.has(t.id)) {
+      seenRef.add(t.id);
+      refTargets.push(t);
+    }
+  };
+  for (const c of project.characters) pushTarget({ id: c.id, name: c.name });
+  for (const r of state.gm.registry || []) {
+    pushTarget({ id: r.id, name: r.canonicalName, note: L('найден Game Master', 'found by Game Master') });
+  }
+  for (const ct of state.phone?.contacts || []) {
+    if (ct.characterId || ct.registryId) continue; // уже покрыт выше
+    pushTarget({ id: ct.id, name: ct.name || ct.id, note: L('контакт в телефоне', 'phone contact') });
+  }
+
   async function uploadRef(charId: string, kind: RefKind, file: File) {
     const asset = await uploadAsset(file, 'icon'); // 'icon' — не попадает в манифест сцены ИИ
     asset.name = `ref_${kind}_${charId}`;
@@ -484,8 +505,8 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           <p className="text-[11px] text-gray-500 mb-2">
             {supportsReferences(ig)
               ? L(
-                  'На каждого — два слота. ВНЕШНОСТЬ: лицо, волосы, телосложение (по умолчанию нейтральный спрайт). ОДЕЖДА: отдельная картинка наряда — уходит вторым изображением с пометкой «отсюда только одежда».',
-                  'Two slots each. APPEARANCE: face, hair, build (defaults to the neutral sprite). OUTFIT: a separate clothing image, sent as a second reference marked "clothes only".'
+                  'На каждого — два слота. ВНЕШНОСТЬ: лицо, волосы, телосложение. По умолчанию берётся нейтральный спрайт, но можно загрузить свою картинку — она заменит спрайт везде (CG, селфи, фото от ботов, аватарки в мессенджере). ОДЕЖДА: отдельная картинка наряда — уходит вторым изображением с пометкой «отсюда только одежда». В списке не только персонажи проекта: те, кого нашёл Game Master, и контакты телефона без карточки тоже здесь.',
+                  'Two slots each. APPEARANCE: face, hair, build. Defaults to the neutral sprite, but you can upload your own image — it replaces the sprite everywhere (CG, selfies, bot photos, messenger avatars). OUTFIT: a separate clothing image, sent as a second reference marked "clothes only". The list covers more than project characters: people found by the Game Master and phone contacts without a card are here too.'
                 )
               : L(
                   'Выбранный провайдер (images/generations) рефы не принимает — картинка рисуется только по тексту. Рефы работают на Google напрямую и на шлюзах через chat/completions.',
@@ -493,9 +514,12 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
                 )}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {project.characters.map((c) => (
+            {refTargets.map((c) => (
               <div key={c.id} className="card !p-2">
-                <div className="text-sm truncate mb-1.5">{c.name}</div>
+                <div className="text-sm truncate mb-1.5">
+                  {c.name}
+                  {c.note && <span className="ml-1.5 text-[10px] text-gray-500">· {c.note}</span>}
+                </div>
                 <div className="flex gap-2">
                   <RefSlot
                     L={L}
@@ -522,7 +546,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
                 </div>
               </div>
             ))}
-            {project.characters.length === 0 && (
+            {refTargets.length === 0 && (
               <p className="text-sm text-gray-600">{L('Нет персонажей.', 'No characters.')}</p>
             )}
           </div>

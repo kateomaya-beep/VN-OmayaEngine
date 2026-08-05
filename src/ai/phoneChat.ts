@@ -35,18 +35,25 @@ export function findContact(state: RuntimeState, id: string): PhoneContact | und
 // Профиль контакта для system-промпта. Персонаж проекта → полная карточка;
 // запись реестра → досье Game Master; «просто имя» → минимальная инструкция.
 function contactProfile(project: Project, state: RuntimeState, contact: PhoneContact): string {
-  if (contact.characterId && project.characters.some((c) => c.id === contact.characterId)) {
-    return characterProfile(project, state, contact.characterId);
-  }
   const name = nameOfContact(project, state, contact);
-  const parts = [`You ARE ${name}. You are texting the hero from your phone — this is a private messenger chat, NOT the main story scene.`];
+  const parts: string[] = [];
+  // Карточка персонажа — лучший источник; но она бывает пустой (например у
+  // контакта, заведённого сканированием), поэтому это не «либо-либо»: досье,
+  // реестр и авторская заметка ДОПОЛНЯЮТ карточку, а не заменяются ею.
+  const char = contact.characterId ? project.characters.find((c) => c.id === contact.characterId) : undefined;
+  const cardFilled = !!char && !!(char.card.personality.trim() || char.card.speechStyle.trim() || char.card.backstory.trim());
+  if (char && cardFilled) {
+    parts.push(characterProfile(project, state, char.id));
+  } else {
+    parts.push(`You ARE ${name}. You are texting the hero from your phone — this is a private messenger chat, NOT the main story scene.`);
+  }
   const reg = contact.registryId ? state.gm.registry?.find((r) => r.id === contact.registryId) : undefined;
   if (reg) {
     parts.push(`Who you are (from the story's character registry): ${reg.canonicalName}${reg.aliases.length ? ` (also called: ${reg.aliases.join(', ')})` : ''}. Current status: ${reg.status || 'unknown'}.`);
   }
   // Досье Game Master по имени — если оно есть, оно свежее реестра.
   const dossier = state.gm.characters.find(
-    (c) => c.charId === contact.characterId || c.name.toLowerCase() === name.toLowerCase()
+    (c) => (contact.characterId && c.charId === contact.characterId) || c.name.toLowerCase() === name.toLowerCase()
   );
   if (dossier) {
     const bits = [dossier.dossier, dossier.roleToHero && `For the hero you are: ${dossier.roleToHero}`, dossier.personality && `Personality: ${dossier.personality}`, dossier.mood && `Current mood: ${dossier.mood}`]
@@ -54,7 +61,10 @@ function contactProfile(project: Project, state: RuntimeState, contact: PhoneCon
       .join('\n');
     if (bits) parts.push(bits);
   }
-  if (!reg && !dossier) parts.push(`You do not have a full character sheet — stay consistent with how this chat went so far.`);
+  if (contact.note?.trim()) parts.push(`The author's notes about you: ${contact.note.trim()}`);
+  if (!cardFilled && !reg && !dossier && !contact.note?.trim()) {
+    parts.push(`You do not have a full character sheet — stay consistent with how this chat went so far.`);
+  }
   return parts.join('\n');
 }
 

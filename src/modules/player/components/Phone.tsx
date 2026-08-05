@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { usePlayerStore } from '../playerStore';
+import { usePlayerStore, type AvatarSubject } from '../playerStore';
+import { describePerson } from '../../../ai/phonePhoto';
 import { AssetImage } from '../../../shared/ui';
 import { defaultPhoneConfig, defaultFinanceConfig, contactDisplayName, PHONE_BALANCE_STAT, type PhoneConfig, type PhoneChat, type RecurringEntry } from '../../../shared/types';
 import { resolveSprite } from '../../../shared/outfits';
@@ -271,10 +272,11 @@ function useMessenger() {
     chat.kind === 'group' ? chat.title || 'Группа' : nameOf(chat.participantIds[0] || '');
   const chatAvatar = (chat: PhoneChat): string | undefined =>
     chat.kind === 'group' ? blobOf(chat.avatarAssetId) : avatarOf(chat.participantIds[0] || '');
+  const heroId = project?.characters.find((c) => c.role === 'protagonist')?.id;
   const heroName = s.state?.protagonistName || project?.characters.find((c) => c.role === 'protagonist')?.name || 'Я';
   const heroAvatar = blobOf(project?.phone?.heroAvatarAssetId);
 
-  return { s, project, phone, contacts, contactOf, nameOf, blobOf, avatarOf, chatTitle, chatAvatar, heroName, heroAvatar };
+  return { s, project, phone, contacts, contactOf, nameOf, blobOf, avatarOf, chatTitle, chatAvatar, heroId, heroName, heroAvatar };
 }
 
 // Кружок-аватар: картинка или буква имени (цвет стабилен для одного имени).
@@ -963,7 +965,7 @@ function ChatPickRow({ chat, onPick }: { chat: PhoneChat; onPick: () => void }) 
 
 // ---- Экран «Сообщения»: список чатов как в мессенджере (Телефон 2.0) ----
 function ChatListScreen({ onBack, onOpenChat }: { onBack: () => void; onOpenChat: (chatId: string) => void }) {
-  const { s, phone, contacts, nameOf, chatTitle, chatAvatar, heroName, heroAvatar } = useMessenger();
+  const { s, phone, contacts, nameOf, chatTitle, chatAvatar, heroId, heroName, heroAvatar } = useMessenger();
   const [scan, setScan] = useState<null | 'busy' | { names: string[]; checked: Record<string, boolean> }>(null);
   const [sheet, setSheet] = useState<null | 'new' | 'contacts' | 'group'>(null);
   const [editContact, setEditContact] = useState<string | null>(null);
@@ -982,7 +984,7 @@ function ChatListScreen({ onBack, onOpenChat }: { onBack: () => void; onOpenChat
         ...contacts.map((c) => nameOf(c.id)),
         ...(s.project?.characters || []).map((c) => c.name),
       ];
-      const names = await scanContacts(s.state, known);
+      const names = await scanContacts(s.state, known, s.project ?? undefined);
       if (!names.length) {
         setScan(null);
         pushToast('info', 'Новых знакомых в контексте не нашлось.');
@@ -1150,12 +1152,21 @@ function ChatListScreen({ onBack, onOpenChat }: { onBack: () => void; onOpenChat
         />
       )}
 
-      {editContact && <ContactEditor contactId={editContact} onClose={() => setEditContact(null)} />}
+      {editContact && (
+        <ContactEditor
+          contactId={editContact}
+          onClose={() => setEditContact(null)}
+          onOpenChat={(chatId) => {
+            setEditContact(null);
+            onOpenChat(chatId);
+          }}
+        />
+      )}
 
       {heroAvatarOpen && (
         <AvatarPicker
           title="Ваша аватарка"
-          hint={heroName}
+          subject={{ kind: 'person', name: heroName, personId: heroId }}
           onClose={() => setHeroAvatarOpen(false)}
           onPick={(assetId) => {
             void s.patchProject((p) => {
@@ -1231,19 +1242,32 @@ function Sheet({ title, children, onClose }: { title: string; children: ReactNod
 // (решение пользователя: «настройка руками + возможность сгенерировать»).
 function AvatarPicker({
   title,
-  hint,
+  subject,
   onClose,
   onPick,
 }: {
   title: string;
-  hint?: string;
+  // Кого рисуем: имя + id для референса из CG-студии. Описание внешности
+  // подтягивается из карточки/досье — поле ниже нужно только чтобы уточнить.
+  subject: AvatarSubject;
   onClose: () => void;
   onPick: (assetId: string | undefined) => void;
 }) {
   const s = usePlayerStore();
-  const [prompt, setPrompt] = useState(hint || '');
+  const [extra, setExtra] = useState(subject.description || '');
   const [busy, setBusy] = useState(false);
   const gallery = [...(s.state?.phone?.gallery || [])].reverse();
+  // Что движок знает о внешности этого человека без нас (показываем, чтобы было
+  // видно: аватарка рисуется не «по имени», а по карточке + рефу).
+  const known =
+    subject.kind === 'person' && s.project && s.state
+      ? describePerson(s.project, s.state, { name: subject.name, personId: subject.personId })
+      : '';
+  const refAsset =
+    subject.kind === 'person' && subject.personId && s.project
+      ? s.project.imageGen?.references?.[subject.personId] ||
+        s.project.characters.find((c) => c.id === subject.personId)?.sprites?.neutral
+      : undefined;
 
   async function upload(file: File) {
     setBusy(true);
@@ -1254,7 +1278,7 @@ function AvatarPicker({
 
   async function generate() {
     setBusy(true);
-    const id = await s.generateAvatar(prompt);
+    const id = await s.generateAvatar({ ...subject, description: extra.trim() || subject.description });
     setBusy(false);
     if (id) onPick(id);
   }
@@ -1277,18 +1301,26 @@ function AvatarPicker({
       </label>
 
       <div className="rounded-xl bg-white/5 p-2.5 mb-3">
-        <div className="text-[11px] text-white/50 mb-1.5">Или сгенерировать по описанию:</div>
+        <div className="text-[11px] text-white/50 mb-1.5">
+          {subject.kind === 'group' ? 'Или сгенерировать иконку группы:' : 'Или сгенерировать в стиле проекта:'}
+        </div>
+        {subject.kind === 'person' && (
+          <div className="text-[11px] text-white/40 mb-1.5 leading-snug">
+            {refAsset ? '✓ реф из CG-студии' : '⚠ рефа нет — задайте его в 🎬 CG-студии'}
+            {known ? ` · внешность из карточки: ${known.slice(0, 90)}${known.length > 90 ? '…' : ''}` : ' · описания внешности нет'}
+          </div>
+        )}
         <div className="flex gap-2">
           <input
             className="flex-1 rounded-lg bg-black/40 px-2.5 py-1.5 text-sm text-white outline-none"
-            placeholder="кто на аватарке"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={subject.kind === 'group' ? 'о чём чат (необязательно)' : 'уточнение (необязательно)'}
+            value={extra}
+            onChange={(e) => setExtra(e.target.value)}
           />
           <button
             className="text-sm px-3 py-1.5 rounded-lg bg-fuchsia-500/80 hover:bg-fuchsia-500 text-white disabled:opacity-40"
             onClick={generate}
-            disabled={busy || !prompt.trim()}
+            disabled={busy || (subject.kind === 'group' && !subject.name.trim())}
           >
             {busy ? '…' : '✨'}
           </button>
@@ -1328,10 +1360,13 @@ function ContactEditor({
   contactId,
   onClose,
   onDeleted,
+  onOpenChat,
 }: {
   contactId: string;
   onClose: () => void;
   onDeleted?: () => void;
+  // Есть — показываем кнопку «Написать» (заводит личный чат и открывает его).
+  onOpenChat?: (chatId: string) => void;
 }) {
   const { s, project, contacts, nameOf, avatarOf } = useMessenger();
   const contact = contacts.find((c) => c.id === contactId);
@@ -1390,7 +1425,19 @@ function ContactEditor({
         </optgroup>
       </select>
       <div className="text-[11px] text-white/40 mb-3">
-        Привязка даёт боту характер и память о персонаже. Без неё он отвечает только по этой переписке.
+        Привязка даёт боту характер и память о персонаже. Если карточки нет (мама, папа, коллега) —
+        опишите его ниже, этого достаточно.
+      </div>
+
+      <label className="block text-[11px] text-white/50 mb-1">Кто это и как себя ведёт</label>
+      <textarea
+        className="w-full rounded-lg bg-black/40 px-2.5 py-2 text-sm text-white outline-none resize-y min-h-[64px] mb-1"
+        placeholder="Например: мама героя, 52 года, заботливая и тревожная, шлёт голосовые и открытки, зовёт домой на выходные"
+        value={contact.note || ''}
+        onChange={(e) => s.updateContact(contactId, { note: e.target.value })}
+      />
+      <div className="text-[11px] text-white/40 mb-3">
+        Уходит боту в промпт — из этого он и берёт характер, если карточки персонажа нет.
       </div>
 
       <label className="block text-[11px] text-white/50 mb-1">
@@ -1408,14 +1455,35 @@ function ContactEditor({
         Насколько охотно встревает в групповых чатах и пишет первым.
       </div>
 
-      <button className="w-full py-2 rounded-xl bg-red-500/20 border border-red-400/40 text-sm text-red-200" onClick={() => setConfirm(true)}>
-        Удалить контакт
-      </button>
+      <div className="flex gap-2">
+        {onOpenChat && (
+          <button
+            className="flex-1 py-2 rounded-xl bg-emerald-500 text-white text-sm"
+            onClick={() => {
+              const chatId = s.openDirectChat(contactId);
+              onClose();
+              onOpenChat(chatId);
+            }}
+          >
+            Написать
+          </button>
+        )}
+        <button
+          className={`${onOpenChat ? 'px-3' : 'flex-1'} py-2 rounded-xl bg-red-500/20 border border-red-400/40 text-sm text-red-200`}
+          onClick={() => setConfirm(true)}
+        >
+          {onOpenChat ? '🗑' : 'Удалить контакт'}
+        </button>
+      </div>
 
       {avatarOpen && (
         <AvatarPicker
           title="Аватарка контакта"
-          hint={nameOf(contactId)}
+          subject={{
+            kind: 'person',
+            name: nameOf(contactId),
+            personId: contact.characterId || contact.registryId || contact.id,
+          }}
           onClose={() => setAvatarOpen(false)}
           onPick={(assetId) => {
             s.updateContact(contactId, { avatarAssetId: assetId });
@@ -1551,7 +1619,7 @@ function GroupEditor({
       {avatarOpen && (
         <AvatarPicker
           title="Фото группы"
-          hint={title}
+          subject={{ kind: 'group', name: title, description: topic }}
           onClose={() => setAvatarOpen(false)}
           onPick={(assetId) => {
             setAvatar(assetId);

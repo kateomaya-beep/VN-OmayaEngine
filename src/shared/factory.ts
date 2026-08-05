@@ -520,6 +520,7 @@ function normalizePhoneState(raw: any, protagonistId?: string): PhoneState {
       registryId: typeof c.registryId === 'string' ? c.registryId : undefined,
       name: typeof c.name === 'string' ? c.name : undefined,
       avatarAssetId: typeof c.avatarAssetId === 'string' ? c.avatarAssetId : undefined,
+      note: typeof c.note === 'string' ? c.note : undefined,
       chattiness: typeof c.chattiness === 'number' ? Math.max(0, Math.min(100, c.chattiness)) : undefined,
       hidden: !!c.hidden,
     }));
