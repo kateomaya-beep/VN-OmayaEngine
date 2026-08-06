@@ -27,6 +27,16 @@ export function nameOfContact(project: Project, state: RuntimeState, contact: Ph
   });
 }
 
+// Имя героя для промптов мессенджера. Безымянный «the hero» рядом с названным
+// собеседником — второй референт, на который модель и соскакивала.
+export function heroNameOf(project: Project, state: RuntimeState): string {
+  return (
+    state.protagonistName?.trim() ||
+    project.characters.find((c) => c.role === 'protagonist')?.name ||
+    'the hero'
+  );
+}
+
 export function findContact(state: RuntimeState, id: string): PhoneContact | undefined {
   const list = state.phone?.contacts || [];
   return list.find((c) => c.id === id) || list.find((c) => c.characterId === id);
@@ -40,12 +50,13 @@ function contactProfile(project: Project, state: RuntimeState, contact: PhoneCon
   // Карточка персонажа — лучший источник; но она бывает пустой (например у
   // контакта, заведённого сканированием), поэтому это не «либо-либо»: досье,
   // реестр и авторская заметка ДОПОЛНЯЮТ карточку, а не заменяются ею.
+  const heroName = heroNameOf(project, state);
   const char = contact.characterId ? project.characters.find((c) => c.id === contact.characterId) : undefined;
   const cardFilled = !!char && !!(char.card.personality.trim() || char.card.speechStyle.trim() || char.card.backstory.trim());
   if (char && cardFilled) {
     parts.push(characterProfile(project, state, char.id));
   } else {
-    parts.push(`You ARE ${name}. You are texting the hero from your phone — this is a private messenger chat, NOT the main story scene.`);
+    parts.push(`You ARE ${name}. You are texting ${heroName} from your phone — this is a private messenger chat, NOT the main story scene.`);
   }
   const reg = contact.registryId ? state.gm.registry?.find((r) => r.id === contact.registryId) : undefined;
   if (reg) {
@@ -56,7 +67,7 @@ function contactProfile(project: Project, state: RuntimeState, contact: PhoneCon
     (c) => (contact.characterId && c.charId === contact.characterId) || c.name.toLowerCase() === name.toLowerCase()
   );
   if (dossier) {
-    const bits = [dossier.dossier, dossier.roleToHero && `For the hero you are: ${dossier.roleToHero}`, dossier.personality && `Personality: ${dossier.personality}`, dossier.mood && `Current mood: ${dossier.mood}`]
+    const bits = [dossier.dossier, dossier.roleToHero && `For ${heroName} you are: ${dossier.roleToHero}`, dossier.personality && `Personality: ${dossier.personality}`, dossier.mood && `Current mood: ${dossier.mood}`]
       .filter(Boolean)
       .join('\n');
     if (bits) parts.push(bits);
@@ -70,33 +81,93 @@ function contactProfile(project: Project, state: RuntimeState, contact: PhoneCon
 
 function characterProfile(project: Project, state: RuntimeState, characterId: string): string {
   const c = project.characters.find((x) => x.id === characterId);
-  if (!c) return `You are texting the hero. Stay in character.`;
+  const heroName = heroNameOf(project, state);
+  if (!c) return `You are texting ${heroName}. Stay in character.`;
   const ctx = { project, state };
   const rel = state.relationship[c.id] || c.relationship;
   const parts = [
-    `You ARE ${c.name}. You are texting the hero from your phone — this is a private SMS/messenger chat, NOT the main story scene.`,
+    `You ARE ${c.name}. You are texting ${heroName} from your phone — this is a private SMS/messenger chat, NOT the main story scene.`,
     `Personality: ${expandMacros(c.card.personality, ctx)}`,
     `Speech style: ${expandMacros(c.card.speechStyle, ctx)}`,
   ];
   if (c.card.backstory?.trim()) parts.push(`Backstory (for consistency): ${expandMacros(c.card.backstory, ctx).slice(0, 400)}`);
   parts.push(
-    `Your feelings toward the hero right now (range -100..100): affection ${rel.affection}, passion ${rel.passion_stat}, friendship ${rel.friendship}, respect ${rel.respect}. Let these tint your tone.`
+    `Your feelings toward ${heroName} right now (range -100..100): affection ${rel.affection}, passion ${rel.passion_stat}, friendship ${rel.friendship}, respect ${rel.respect}. Let these tint your tone.`
   );
   return parts.join('\n');
 }
 
 function worldContext(project: Project, state: RuntimeState): string {
   const parts: string[] = [];
+  const heroName = heroNameOf(project, state);
   const clock = formatClock(state.gm.clock);
   if (clock) parts.push(`In-story time: ${clock}.`);
   // Короткая сводка последних событий, чтобы бот «был в курсе».
   const events = state.gm.events.slice(-3).map((e) => e.summary);
-  if (events.length) parts.push(`Recent events the hero and you both know: ${events.join('; ')}.`);
-  const heroName = state.protagonistName;
-  if (heroName) parts.push(`The hero's name is ${heroName}.`);
+  if (events.length) parts.push(`Recent events ${heroName} and you both know: ${events.join('; ')}.`);
   const bal = state.statValues[PHONE_BALANCE_STAT];
-  if (typeof bal === 'number') parts.push(`(The hero's wallet balance is ${bal} ${project.phone?.currencyName || '$'} — only relevant if money comes up.)`);
+  if (typeof bal === 'number') parts.push(`(${heroName}'s wallet balance is ${bal} ${project.phone?.currencyName || '$'} — only relevant if money comes up.)`);
   return parts.join('\n');
+}
+
+// КТО НА ТОМ КОНЦЕ. Без этого блока в промпте был безымянный «the hero», и модель
+// достраивала собеседника из карточки самого персонажа: сестра парня писала так,
+// будто переписывается с братом. Теперь герой назван по имени, описан, и явно
+// сказано, кем он приходится ЭТОМУ контакту.
+function heroBlock(project: Project, state: RuntimeState, contact?: PhoneContact): string {
+  const hero = project.characters.find((c) => c.role === 'protagonist');
+  const heroName = heroNameOf(project, state);
+  const lines = [
+    `WHO YOU ARE TEXTING (this never changes): the person on the other side of this chat is ${heroName} — the player's character — and NOBODY else.`,
+  ];
+
+  // Кто такой герой: карточка протагониста + досье Game Master о нём.
+  const ctx = { project, state };
+  const about: string[] = [];
+  if (hero) {
+    if (hero.card.appearance.trim()) about.push(expandMacros(hero.card.appearance, ctx).slice(0, 300));
+    if (hero.card.personality.trim()) about.push(expandMacros(hero.card.personality, ctx).slice(0, 300));
+  }
+  const heroDossier = state.gm.characters.find(
+    (c) => (hero && c.charId === hero.id) || c.name.toLowerCase() === heroName.toLowerCase()
+  );
+  if (heroDossier?.dossier?.trim()) about.push(heroDossier.dossier.trim().slice(0, 300));
+  if (about.length) lines.push(`Who ${heroName} is: ${about.join('. ')}`);
+
+  // Кем герой приходится ИМЕННО ЭТОМУ собеседнику.
+  if (contact) {
+    const contactName = nameOfContact(project, state, contact);
+    const tie: string[] = [];
+    const dossier = state.gm.characters.find(
+      (c) => (contact.characterId && c.charId === contact.characterId) || c.name.toLowerCase() === contactName.toLowerCase()
+    );
+    if (dossier?.roleToHero?.trim()) tie.push(`for ${heroName} you are: ${dossier.roleToHero.trim()}`);
+    // Сетка связей Game Master — по именам, в обе стороны.
+    for (const edge of state.gm.relations || []) {
+      const from = edge.from?.trim().toLowerCase();
+      const to = edge.to?.trim().toLowerCase();
+      const cn = contactName.toLowerCase();
+      const hn = heroName.toLowerCase();
+      if (!edge.label?.trim()) continue;
+      if (from === cn && to === hn) tie.push(`${contactName} → ${heroName}: ${edge.label.trim()}`);
+      else if (from === hn && to === cn) tie.push(`${heroName} → ${contactName}: ${edge.label.trim()}`);
+    }
+    if (contact.note?.trim()) tie.push(contact.note.trim().slice(0, 200));
+    if (tie.length) lines.push(`How ${heroName} and you are connected: ${tie.join('; ')}.`);
+  }
+
+  lines.push(
+    `Never confuse ${heroName} with anyone else from your life — not a sibling, not a partner, not a friend mentioned in your own backstory. ` +
+      `Do not greet them by another name, do not bring up shared history that belongs to someone else, and if you are unsure who they are, treat them as ${heroName} and nobody else.`
+  );
+  // Второе лицо. Модель то и дело сбивалась на «он/она» ПРО героя, хотя пишет
+  // ЕМУ — в переписке это выглядит так, будто говорят у него за спиной.
+  lines.push(
+    `You are writing TO ${heroName}, so address them DIRECTLY, in the second person — "ты" / "вы" / "you", by name if it fits. ` +
+      `NEVER speak about ${heroName} in the third person ("он", "она", "${heroName} сделала…") and never narrate their actions or feelings: ` +
+      `you are one side of a real text conversation, not a storyteller. Third person is only for people who are NOT in this chat.`
+  );
+  return lines.join('\n');
 }
 
 // Ответ в чате (личном или групповом). Возвращает список «пузырей»: кто написал,
@@ -165,7 +236,7 @@ async function generateGroupReplies(
     .map((id) => findContact(state, id))
     .filter((c): c is PhoneContact => !!c && !c.hidden);
   if (!members.length) return [];
-  const heroName = state.protagonistName || 'the hero';
+  const heroName = heroNameOf(project, state);
   const roster = members
     .map((c) => {
       const nm = nameOfContact(project, state, c);
@@ -175,7 +246,7 @@ async function generateGroupReplies(
     .join('\n\n');
 
   const system = [
-    `You are running a GROUP CHAT in a messenger app. You play EVERY participant except the hero (${heroName}) — the hero is the human player and you NEVER write for them.`,
+    `You are running a GROUP CHAT in a messenger app. You play EVERY participant EXCEPT ${heroName} — ${heroName} is the human player, and you NEVER write a line for them.`,
     `Group name: ${chat.title || 'Без названия'}.`,
     chat.topic?.trim() ? `What this group is about / how people behave here: ${chat.topic.trim()}` : '',
     `Group liveliness: ${typeof chat.groupActivity === 'number' ? chat.groupActivity : 50}/100 — higher means people chime in more and more often.`,
@@ -183,13 +254,16 @@ async function generateGroupReplies(
     `PARTICIPANTS (each with their own personality and chattiness):`,
     roster,
     ``,
+    heroBlock(project, state),
+    ``,
     worldContext(project, state),
     ``,
     `HOW TO ANSWER:`,
     `- YOU decide who speaks up, based on the context of the conversation and each person's chattiness: a talkative person jumps in often, a quiet one only when addressed or when it really matters. Someone directly addressed by name almost always answers.`,
     `- Not everyone has to answer. Sometimes only one person replies. Never make all participants answer every time just because they are in the group.`,
     `- Format: EVERY line is one message bubble and MUST start with the sender's name and a colon, e.g. "${nameOfContact(project, state, members[0])}: текст". No other prefixes.`,
-    `- Real texting style, in ${narr}: short lines, several in a row are fine, people talk over each other, react to each other — not only to the hero.`,
+    `- Real texting style, in ${narr}: short lines, several in a row are fine, people talk over each other, react to each other — not only to ${heroName}.`,
+    `- When someone speaks TO ${heroName}, they address them in the second person ("ты"/"вы"/"you"), like in a real group chat. Third person is only for people who are not in this chat.`,
     photoRule().replace('[photo:', '[photo:'),
     `- For a photo the line is "Name: [photo: english description]" — the sender's name still comes first.`,
     `- FORBIDDEN: narration, asterisk actions (*smiles*), tone labels, quotes around a whole message, JSON, writing for ${heroName}.`,
@@ -214,7 +288,7 @@ async function generateGroupReplies(
   });
 
   const raw = await completeWithRetry(system, normalizeChatHistory(history), ps.temperature ?? 0.9, opts?.signal);
-  return parseGroupReplies(raw, project, state, members);
+  return parseGroupReplies(raw, project, state, members, heroName);
 }
 
 // Разбор ответа группы: строка «Имя: текст» → пузырь от этого участника.
@@ -222,7 +296,8 @@ export function parseGroupReplies(
   raw: string,
   project: Project,
   state: RuntimeState,
-  members: PhoneContact[]
+  members: PhoneContact[],
+  heroName?: string
 ): ChatReply[] {
   const byName = new Map<string, PhoneContact>();
   for (const c of members) {
@@ -239,7 +314,15 @@ export function parseGroupReplies(
     const m = line.match(/^([^:\n]{1,40}):\s*(.*)$/);
     let text = line;
     if (m) {
-      const who = byName.get(m[1].trim().toLowerCase());
+      const label = m[1].trim().toLowerCase();
+      // Страховка: строку, подписанную именем ГЕРОЯ, выбрасываем — за игрока
+      // модель писать не должна, а иначе такая реплика доставалась бы
+      // случайному участнику и он «говорил голосом героя».
+      if (heroName && label === heroName.trim().toLowerCase()) {
+        current = undefined;
+        continue;
+      }
+      const who = byName.get(label);
       if (who) {
         current = who;
         text = m[2].trim();
@@ -274,9 +357,10 @@ export async function generatePhoneReply(
     : project.characters.find((c) => c.id === characterId)?.name || 'the character';
   const system = [
     contact ? contactProfile(project, state, contact) : characterProfile(project, state, characterId),
+    heroBlock(project, state, contact),
     worldContext(project, state),
     `TEXTING RULES (this is a plain text-message chat, NOT the visual-novel narration engine):`,
-    `- Reply as ${charName} would type in a messenger: short, natural, in-character. React to the hero's last message.`,
+    `- Reply as ${charName} would type in a messenger: short, natural, in-character. React to ${heroNameOf(project, state)}'s last message.`,
     photoRule(),
     `- MESSAGE BURSTS: reply the way people really text — sometimes ONE message, sometimes several short ones fired in a row (up to 4). Put EACH separate message on ITS OWN LINE (a line break = a new message bubble). Split when it feels natural (a quick thought, then another), keep it to one message when that's natural.`,
     `- Write in ${narr}. Use real texting culture WHEN IT FITS the character: casual tone, common abbreviations, emoji, and (for Russian) smiley parentheses like ), )), ))) or :). Lowercase and dropped punctuation are fine for a casual character. Match the character's personality — a formal or cold character texts differently; don't force slang on them.`,
@@ -294,7 +378,7 @@ export async function generatePhoneReply(
       role: m.from === 'protagonist' ? ('user' as const) : ('assistant' as const),
       // Текстовая пометка остаётся всегда: если модель картинки не принимает,
       // персонаж хотя бы знает, что ему прислали фото.
-      content: m.text || (m.attachedAssetId ? '[the hero sent you a photo]' : '…'),
+      content: m.text || (m.attachedAssetId ? '[they sent you a photo]' : '…'),
     }));
 
   // VISION: последнее фото герой отправил только что — прикладываем саму картинку,
@@ -353,7 +437,7 @@ export function normalizeChatHistory(msgs: LlmMessage[]): LlmMessage[] {
   if (leading.length) {
     out.push({
       role: 'user',
-      content: `(Earlier you texted the hero first: ${leading.join(' / ')})`,
+      content: `(Earlier you texted first: ${leading.join(' / ')})`,
     });
   }
   // 2) Склеиваем подряд идущие одинаковые роли.
@@ -428,8 +512,9 @@ export async function generateIncomingSms(
 
   const system = [
     contact ? contactProfile(project, state, contact) : characterProfile(project, state, characterId),
+    heroBlock(project, state, contact),
     worldContext(project, state),
-    `TASK: ${charName} texts the hero FIRST, out of the blue — the hero did not write to them just now.`,
+    `TASK: ${charName} texts ${heroNameOf(project, state)} FIRST, out of the blue — they did not write to you just now.`,
     `- Pick a natural reason to reach out that fits the current story moment and your relationship: checking in, a question, a complaint, teasing, news, a request, missing them.`,
     `- Write in ${narr}, in real texting style: short, casual, in character. 1-2 messages, EACH ON ITS OWN LINE.`,
     photoRule(),
