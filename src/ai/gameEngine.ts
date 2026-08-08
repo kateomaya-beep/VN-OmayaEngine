@@ -119,7 +119,7 @@ export async function applyTurn(
   playerMove: string,
   turn: AiTurn,
   raw: string,
-  opts?: { eventFired?: boolean; smsFired?: boolean }
+  opts?: { eventFired?: boolean; smsFired?: boolean; forceCompress?: boolean }
 ): Promise<RuntimeState> {
   const nextTurnNumber = state.turnCount + 1;
 
@@ -578,7 +578,7 @@ export async function applyTurn(
   // «Веха» из ИИ (бывший chapter_end) — форсируем немедленную свёртку живого окна,
   // не дожидаясь счётчика (глав больше нет, но крупный сюжетный рубеж всё ещё
   // повод подытожить историю — см. CR v2 §E).
-  nextState = await maybeCompress(project, nextState, turn.chapterEvent === 'chapter_end');
+  nextState = await maybeCompress(project, nextState, turn.chapterEvent === 'chapter_end' || !!opts?.forceCompress);
 
   return nextState;
 }
@@ -682,7 +682,14 @@ export async function runTurn(
   const turn = await selectAssets(project, state, parsed.turn);
   // Проверяем ДО applyTurn: он вырезает управляющие биты из потока.
   const modelSentSms = turn.beats.some((b) => b.type === 'sms_incoming');
-  const nextState = await applyTurn(project, state, playerMove, turn, raw, { eventFired: evt.fired, smsFired: sms.fired });
+  const nextState = await applyTurn(project, state, playerMove, turn, raw, {
+    eventFired: evt.fired,
+    smsFired: sms.fired,
+    // Живая история не влезла в бюджет и часть ещё не свёрнутых ходов выпала из
+    // контекста — сворачиваем НЕМЕДЛЕННО, чтобы эти события ушли в память, а не
+    // пропали между контекстом и саммари.
+    forceCompress: (req.droppedUnfolded ?? 0) > 0,
+  });
 
   // ГАРАНТИЯ ДВИЖКА: событие «входящее СМС» сработало, но модель не прислала
   // sms_incoming-бит (частый случай — она увлекается основной сценой). Тогда СМС

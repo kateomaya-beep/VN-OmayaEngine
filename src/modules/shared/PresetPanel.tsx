@@ -281,7 +281,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
               onChange={(e) => patch({ temperature: Number(e.target.value) })}
             />
           </Field>
-          <Field label={`Живое окно (K ходов): ${cfg.liveWindow}`}>
+          <Field label={`Живое окно — максимум ${cfg.liveWindow} ходов дословно`}>
             <input
               type="range"
               min={4}
@@ -296,12 +296,18 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
             <input
               type="range"
               min={4000}
-              max={64000}
-              step={1000}
+              max={200000}
+              step={2000}
               className="w-full"
               value={cfg.contextBudget}
               onChange={(e) => patch({ contextBudget: Number(e.target.value) })}
             />
+            <p className="text-[11px] text-gray-500 mt-1">
+              Он же задаёт, сколько истории живёт дословно: как только живая история перестаёт
+              помещаться в свою долю бюджета, память сворачивается в журнал эпизодов — раньше, чем
+              хоть один ход выпадет из контекста. Больше бюджет — длиннее дословная память и реже
+              свёртки, но дороже и медленнее каждый запрос.
+            </p>
           </Field>
         </div>
       </div>

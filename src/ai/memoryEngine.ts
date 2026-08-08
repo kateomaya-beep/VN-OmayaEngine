@@ -27,6 +27,51 @@ export function historyTokens(history: LlmMessage[]): number {
   return history.reduce((sum, m) => sum + estimateTokens(m.content), 0);
 }
 
+// Доля бюджета контекста, отведённая живой (ещё не свёрнутой) истории. Остальное —
+// системная часть: мир, персонажи, манифест, реестр, память, телефон.
+const LIVE_HISTORY_SHARE = 0.45;
+
+// Насколько ниже лимита опускаем живую историю при свёртке (запас, чтобы не
+// сворачивать каждые пару ходов).
+const HYSTERESIS = 0.6;
+
+// Сколько последних сообщений истории влезает в `budgetTokens`. Ограничено сверху
+// «живым окном» из пресета, снизу — двумя ходами. Возвращает границу так, чтобы
+// окно начиналось с реплики игрока (историю, открытую ходом ИИ, часть шлюзов не
+// принимает).
+function keepWithinTokens(
+  project: Project,
+  state: RuntimeState,
+  budgetTokens: number,
+  maxMessages: number
+): number {
+  let keep = 0;
+  let used = 0;
+  for (let i = state.history.length - 1; i >= 0 && keep < maxMessages; i--) {
+    const m = state.history[i];
+    const text =
+      m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content;
+    const t = estimateTokens(text);
+    if (keep >= 4 && used + t > budgetTokens) break;
+    used += t;
+    keep++;
+  }
+  keep = Math.min(maxMessages, Math.max(4, keep));
+  // Висящий ответ ИИ в начале окна отправляем в свёртку вместе со старым куском.
+  if (keep < state.history.length && state.history[state.history.length - keep]?.role === 'assistant') keep--;
+  return Math.max(2, keep);
+}
+
+// Сколько токенов займёт ещё не свёрнутая история В ТОМ ВИДЕ, в каком она уходит
+// модели (ходы ассистента идут сжатой прозой, а не сырым JSON).
+export function liveHistoryTokens(project: Project, state: RuntimeState): number {
+  return state.history.reduce((sum, m) => {
+    const text =
+      m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content;
+    return sum + estimateTokens(text);
+  }, 0);
+}
+
 // Свёртке нужен явный потолок ответа: без него шлюзы режут по своему дефолту
 // (512/1024 токена). Но и 3000 не хватало — двухсекционный ответ обрывался на
 // «CURRENT SITUATION» в конце снапшота. Дефолт 8000, правится в настройках саммари.
@@ -141,16 +186,42 @@ export async function maybeCompress(
   state: RuntimeState,
   force = false
 ): Promise<RuntimeState> {
-  const K = Math.max(2, getPresetSettings().liveWindow);
-  const keep = K * 2; // user+assistant per turn
+  const ps = getPresetSettings();
+  const K = Math.max(2, ps.liveWindow);
   const everyN = Math.max(4, project.memoryConfig.summaryEveryN) * 2;
-  // Триггер ТОЛЬКО по счётчику ходов (summaryEveryN) или принудительно. Раньше был
-  // ещё overBudget по «сырой» истории (полный JSON каждого хода) — он превышал бюджет
-  // почти всегда и запускал саммари КАЖДЫЙ ход, при этом не мог опустить контекст
-  // (живое окно само крупнее бюджета). В контекст ИИ история теперь идёт сжатой
-  // прозой, так что этот замер был некорректен. Оставляем чистый счётчик.
   const dueByCount = state.memory.messagesSinceSummary >= everyN;
-  if ((!force && !dueByCount) || state.history.length <= keep) return state;
+
+  // ТРИГГЕР ПО ОБЪЁМУ — главный (фикс «глобальной шизофрении»).
+  // Раньше свёртка шла ТОЛЬКО по счётчику ходов, а бюджет контекста при сборке
+  // запроса резал живую историю до минимума. Между этими двумя числами возникала
+  // СЛЕПАЯ ЗОНА: ходы уже не влезали в контекст, но ещё не были свёрнуты в память —
+  // то есть исчезали для модели полностью. На дефолтах это 24 хода из 30: игра
+  // «забывала» имена, введённые 6 ходов назад, и заново отправляла героя туда, где
+  // он уже был. Теперь память сворачивается ровно тогда, когда живая история
+  // перестаёт помещаться в отведённую ей долю бюджета — то есть до того, как
+  // хоть один ход выпадет из контекста.
+  const allowance = Math.max(1500, Math.round((ps.contextBudget || 24000) * LIVE_HISTORY_SHARE));
+  const liveTokens = liveHistoryTokens(project, state);
+
+  // ГИСТЕРЕЗИС. Свернуть надо, когда живая история переросла лимит, но оставить
+  // после свёртки ровно лимит нельзя — тогда следующие 2-3 хода снова его перебьют
+  // и свёртка пойдёт почти каждый ход. Поэтому режем с запасом: оставляем столько
+  // последних сообщений, сколько влезает в 60% лимита (но не больше «живого окна»
+  // из пресета и не меньше двух ходов).
+  const target = Math.round(allowance * HYSTERESIS);
+  const keep = keepWithinTokens(project, state, target, K * 2);
+  // Не сворачиваем по объёму ради пары сообщений.
+  const dueBySize = liveTokens > allowance && state.history.length >= keep + 4;
+
+  if ((!force && !dueByCount && !dueBySize) || state.history.length <= keep) return state;
+  if (dueBySize && !dueByCount && !force) {
+    logEvent(
+      'info',
+      'memory',
+      `Свёртка по объёму: живая история ~${liveTokens} ток. при лимите ~${allowance} ` +
+        `(бюджет ${ps.contextBudget}). Сворачиваю, пока ходы не начали выпадать из контекста.`
+    );
+  }
 
   const stale = state.history.slice(0, state.history.length - keep);
   if (!stale.length) return state;
@@ -374,7 +445,12 @@ async function recompactChronicle(
   try {
     const transcript = toFold.map((c, i) => `[${i + 1}] ${c.text}`).join('\n');
     const text = await summarize(project, CONDENSE_PROMPT, transcript);
-    if (!text) return { ...memory, chronicle: rest };
+    // Пустой ответ = сжатия не было. Раньше 10 самых старых эпизодов при этом
+    // просто выбрасывались — журнал терял начало истории молча.
+    if (!text) {
+      logEvent('warn', 'memory', 'Уплотнение журнала вернуло пустой ответ — журнал оставлен как есть');
+      return memory;
+    }
     const folded = {
       id: uid('chr'),
       text,

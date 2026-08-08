@@ -32,10 +32,12 @@ function defaults(): PresetSettings {
     narrativeLanguage: 'ru',
     temperature: 0.9,
     liveWindow: 12,
-    // Бюджет контекста теперь ЖЁСТКО ограничивает запрос (см. promptBuilder), а не
-    // только красит счётчик. Прежние 8000 не вмещали даже системную часть со всеми
-    // блоками (мир/персонажи/манифест/память/GM) — живой истории не осталось бы вовсе.
-    contextBudget: 24000,
+    // Бюджет контекста ЖЁСТКО ограничивает запрос (см. promptBuilder), а не только
+    // красит счётчик. Он же задаёт, сколько истории живёт дословно: память
+    // сворачивается, когда живая история перестаёт помещаться в свою долю бюджета.
+    // 24000 при системной части в ~14k оставляли всего 5–6 ходов дословно — модель
+    // выглядела амнезиком. 40000 — примерно 11–12 ходов на типичной длине хода.
+    contextBudget: 40000,
     turnLength: { ...DEFAULT_TURN_LENGTH },
     choiceMinGap: 0,
     guidedThinking: false,
@@ -55,9 +57,11 @@ function load(): PresetSettings {
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
       liveWindow: num(v.liveWindow, d.liveWindow),
-      // Ровно прежний дефолт (8000) считаем «не настраивал» и поднимаем до нового:
-      // иначе включённый теперь жёсткий бюджет обрезал бы историю почти в ноль.
-      contextBudget: num(v.contextBudget, d.contextBudget) === 8000 ? d.contextBudget : num(v.contextBudget, d.contextBudget),
+      // Прежние дефолты (8000, 24000) считаем «пользователь не настраивал» и
+      // поднимаем до нового: на них живая история резалась до 5–6 ходов.
+      contextBudget: [8000, 24000].includes(num(v.contextBudget, d.contextBudget))
+        ? d.contextBudget
+        : num(v.contextBudget, d.contextBudget),
       turnLength: v.turnLength ? normalizeTurnLength(v.turnLength) : d.turnLength,
       choiceMinGap: Math.max(0, Math.min(20, Math.round(num(v.choiceMinGap, 0)))),
       reasoningEffort: ['none', 'low', 'medium', 'high'].includes(v.reasoningEffort)

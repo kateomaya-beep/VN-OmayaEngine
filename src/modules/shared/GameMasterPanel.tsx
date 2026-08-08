@@ -1032,6 +1032,12 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
           ))}
           <input type="number" min={4} className="input w-24" value={mc.summaryEveryN} onChange={(e) => patchMem({ summaryEveryN: Number(e.target.value) })} />
         </div>
+        <p className="text-[11px] text-gray-500 mt-1">
+          {L(
+            'Это ПОТОЛОК, а не единственный триггер: память сворачивается и раньше — как только живая история перестаёт помещаться в бюджет контекста. Так ходы не зависают между контекстом и саммари.',
+            'This is a CAP, not the only trigger: memory also folds earlier — as soon as the live history stops fitting the context budget. That keeps turns from getting stranded between the context and the summary.'
+          )}
+        </p>
       </Field>
       <Field label={L(`Лимит «мелких событий» в саммари: ${mc.minorEventsLimit ?? 10}`, `Minor-events limit in summary: ${mc.minorEventsLimit ?? 10}`)}>
         <input
