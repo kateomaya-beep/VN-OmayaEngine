@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Field } from '../../shared/ui';
 import { useLang } from '../../shared/i18n';
 import { usePlayerStore } from '../player/playerStore';
@@ -14,7 +14,9 @@ import type {
   Project, MemoryConfig, VectorizationMode, GmCharacter, GameMasterState, RelationshipStats,
   AssetSelectorSource, CharacterRole, MemoryState,
 } from '../../shared/types';
-import { resummarizeArchived, rebuildStoryState } from '../../ai/memoryEngine';
+import { resummarizeArchived, rebuildStoryState, liveHistoryTokens, liveHistoryAllowance } from '../../ai/memoryEngine';
+import { buildRequest } from '../../ai/promptBuilder';
+import { getPresetSettings } from '../../ai/presetSettings';
 
 // Game Master (вдохновлено Horae): динамическое состояние мира — персонажи с
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
@@ -846,6 +848,8 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
         {L('Вместо раздутого контекста — краткие свёртки каждые N сообщений (всегда на английском). Список свёрток можно править и удалять.', 'Instead of a bloated context — short recaps every N messages (always English). The recap list is editable and deletable.')}
       </p>
 
+      {project && s.state && <MemoryStatus project={project} L={L} />}
+
       {/* Живой снапшот состояния — редактируемый (единый источник «где мы сейчас»). */}
       {memory && (
         <div className="space-y-1">
@@ -935,6 +939,99 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
 
 // Архив периодов: сырой текст каждого свёрнутого куска истории. Если свёртка
 // вышла плохой или её вовсе нет (сбой саммарайзера), запись пересобирается отсюда.
+// «Что сейчас в контексте» — чтобы автоматическая память была видна так же явно,
+// как ручная. Показывает, сколько ходов уходит модели ДОСЛОВНО, сколько занимает
+// системная часть, сколько осталось до свёртки и не выпадает ли что-то.
+function MemoryStatus({ project, L }: { project: Project; L: Lf }) {
+  const s = usePlayerStore();
+  const state = s.state;
+  const [fixed, setFixed] = useState(0);
+  const [dropped, setDropped] = useState(0);
+
+  // Считаем по РЕАЛЬНО собранному запросу (без векторного подсоса — он только
+  // ради индикатора гонял бы эмбеддинги).
+  useEffect(() => {
+    let alive = true;
+    if (!state) return;
+    void buildRequest(project, state, '(next turn)', { skipVector: true, preview: true })
+      .then((req) => {
+        if (!alive) return;
+        setFixed(req.fixedTokens ?? 0);
+        setDropped(req.droppedUnfolded ?? 0);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [project, state?.turnCount, state?.history.length]);
+
+  if (!state) return null;
+  const budget = getPresetSettings().contextBudget;
+  const live = liveHistoryTokens(project, state);
+  const allowance = liveHistoryAllowance(budget, fixed || undefined);
+  const liveTurns = Math.ceil(state.history.filter((m) => m.role === 'assistant').length);
+  const snapAge = state.memory.storyStateAtTurn ? state.turnCount - state.memory.storyStateAtTurn : null;
+  const pct = Math.min(100, Math.round((live / Math.max(1, allowance)) * 100));
+
+  const Row = ({ label, value, hint }: { label: string; value: string; hint?: string }) => (
+    <div className="flex items-baseline justify-between gap-2 text-xs">
+      <span className="text-gray-500">{label}</span>
+      <span className="text-gray-300 text-right">
+        {value}
+        {hint && <span className="text-gray-600"> {hint}</span>}
+      </span>
+    </div>
+  );
+
+  return (
+    <div className="card !bg-panel2 !p-3 space-y-2">
+      <h4 className="font-semibold text-sm">{L('Что сейчас уходит модели', 'What the model gets right now')}</h4>
+      <Row
+        label={L('Дословно (живая история)', 'Verbatim (live history)')}
+        value={`${liveTurns} ${L('ходов', 'turns')}`}
+        hint={`· ~${live.toLocaleString()} ${L('ток.', 'tok.')}`}
+      />
+      <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+        <div
+          className={`h-full ${pct >= 100 ? 'bg-amber-400' : 'bg-emerald-500'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <p className="text-[11px] text-gray-500">
+        {L(
+          `Лимит живой истории ~${allowance.toLocaleString()} ток. При его достижении самое старое сворачивается в эпизод журнала — дословный текст при этом сохраняется в архиве периода (ниже) и его можно вернуть.`,
+          `Live-history limit ~${allowance.toLocaleString()} tok. On reaching it the oldest part folds into an episode — the verbatim text is kept in the period archive below and can be restored.`
+        )}
+      </p>
+      <Row label={L('Системная часть', 'System part')} value={`~${fixed.toLocaleString()} ${L('ток.', 'tok.')}`} hint={L('мир, персонажи, память, телефон', 'world, characters, memory, phone')} />
+      <Row label={L('Бюджет контекста', 'Context budget')} value={`${budget.toLocaleString()} ${L('ток.', 'tok.')}`} />
+      <Row
+        label={L('Журнал эпизодов', 'Episode log')}
+        value={`${state.memory.chronicle.length} ${L('записей', 'entries')}`}
+        hint={`· ${L('архив периодов', 'period archive')}: ${state.memory.rawArchive.length}`}
+      />
+      <Row
+        label={L('Снапшот состояния', 'State snapshot')}
+        value={
+          snapAge === null
+            ? L('ещё не собирался', 'not built yet')
+            : snapAge <= 0
+              ? L('свежий', 'fresh')
+              : L(`отстаёт на ${snapAge} ход(ов)`, `${snapAge} turn(s) behind`)
+        }
+      />
+      {dropped > 0 && (
+        <p className="text-[11px] text-amber-400">
+          {L(
+            `⚠ ${dropped} сообщений не влезают в бюджет и обрезаются. Движок сворачивает их в память тем же ходом, но лучше поднять «Бюджет контекста» в пресете (🎚).`,
+            `⚠ ${dropped} messages do not fit the budget and get trimmed. The engine folds them into memory the same turn, but raising the context budget in the preset (🎚) is better.`
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function RawArchiveList({
   memory,
   project,

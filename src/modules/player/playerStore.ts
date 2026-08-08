@@ -1243,9 +1243,23 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       pushToast('info', 'Этот период уже в живой истории.');
       return;
     }
-    const next: RuntimeState = { ...st.state, history: [...msgs, ...st.state.history] };
+    // Период вернулся ДОСЛОВНО — значит его пересказ в журнале и копия в архиве
+    // больше не нужны. Если их оставить, движок рано или поздно свернёт период
+    // заново и в журнале появится второй пересказ тех же событий: для модели это
+    // выглядит как «всё это случилось дважды». При следующей свёртке период будет
+    // пересказан один раз и заново ляжет в архив — ничего не теряется.
+    const memory: MemoryState = JSON.parse(JSON.stringify(st.state.memory));
+    const chronIdx = memory.chronicle.findIndex((c) => c.atTurn === chunk.turn);
+    if (chronIdx >= 0) memory.chronicle.splice(chronIdx, 1);
+    memory.rawArchive = memory.rawArchive.filter((_, i) => i !== archiveIndex);
+    const next: RuntimeState = { ...st.state, history: [...msgs, ...st.state.history], memory };
     set({ state: next });
-    logEvent('info', 'memory', `Период (ход ${chunk.turn}) возвращён в живую историю: ${msgs.length} сообщений`);
+    logEvent(
+      'info',
+      'memory',
+      `Период (ход ${chunk.turn}) возвращён в живую историю: ${msgs.length} сообщений; ` +
+        `его свёртка убрана из журнала${chronIdx >= 0 ? '' : ' (записи не было)'}, чтобы не задвоиться`
+    );
     pushToast('success', `Вернула ${msgs.length} сообщений периода в живую историю.`);
     void get().autosave();
   },

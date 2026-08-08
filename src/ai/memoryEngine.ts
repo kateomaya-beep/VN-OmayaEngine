@@ -19,9 +19,13 @@ function tt(ru: string, en: string): string {
 // Ниже этого порога ответ саммарайзера считаем неудачей (пустой/обрезанный):
 // историю в таком случае НЕ трогаем.
 const MIN_EPISODE_CHARS = 40;
-// Сколько сырого текста периода хранить в архиве. Из него можно пересобрать
-// свёртку вручную, поэтому запас нужен приличный.
-const RAW_ARCHIVE_CHARS = 20000;
+// Максимальный вход одной свёртки. Больше этого за раз не сворачиваем — остаток
+// подождёт следующей (см. maybeCompress), чтобы ни один ход не пропал мимо памяти.
+const MAX_TRANSCRIPT_CHARS = 40000;
+// В архив кладём ВЕСЬ свёрнутый период целиком: из него восстанавливают период
+// дословно и пересобирают свёртку. Обрезка здесь означала бы, что «восстановить»
+// вернёт не всё. Размер ограничен тем же потолком свёртки.
+const RAW_ARCHIVE_CHARS = MAX_TRANSCRIPT_CHARS;
 
 export function historyTokens(history: LlmMessage[]): number {
   return history.reduce((sum, m) => sum + estimateTokens(m.content), 0);
@@ -37,8 +41,8 @@ const FREE_SPACE_SHARE = 0.85;
 
 // Сколько токенов может занимать ещё не свёрнутая история. Считаем по РЕАЛЬНОМУ
 // размеру системной части прошлого запроса, а не по грубой доле бюджета.
-export function liveHistoryAllowance(budget: number): number {
-  const fixed = lastFixedContextTokens();
+export function liveHistoryAllowance(budget: number, fixedOverride?: number): number {
+  const fixed = fixedOverride ?? lastFixedContextTokens();
   if (!fixed) return Math.max(1500, Math.round(budget * LIVE_HISTORY_SHARE));
   return Math.max(1500, Math.round((budget - fixed) * FREE_SPACE_SHARE));
 }
@@ -46,6 +50,13 @@ export function liveHistoryAllowance(budget: number): number {
 // Насколько ниже лимита опускаем живую историю при свёртке (запас, чтобы не
 // сворачивать каждые пару ходов).
 const HYSTERESIS = 0.6;
+
+// Пауза после неудачной свёртки. Повторять надо (иначе кусок истории так и не
+// попадёт в память), но не каждый ход: при сломанном саммарайзере это два лишних
+// запроса КАЖДЫЙ ход. Живёт только в памяти вкладки — после перезагрузки пробуем
+// снова сразу. Ход игрока при этом не страдает: история остаётся целой.
+const FAIL_BACKOFF_TURNS = 3;
+let lastFailedTurn = -1e9;
 
 // Сколько последних сообщений истории влезает в `budgetTokens`. Ограничено сверху
 // «живым окном» из пресета, снизу — двумя ходами. Возвращает границу так, чтобы
@@ -226,6 +237,10 @@ export async function maybeCompress(
   const dueBySize = liveTokens > allowance && state.history.length >= keep + 4;
 
   if ((!force && !dueByCount && !dueBySize) || state.history.length <= keep) return state;
+  if (state.turnCount - lastFailedTurn < FAIL_BACKOFF_TURNS) {
+    logEvent('info', 'memory', `Свёртка недавно не удалась — жду ещё ход-другой перед повтором (история цела)`);
+    return state;
+  }
   if (dueBySize && !dueByCount && !force) {
     logEvent(
       'info',
@@ -235,31 +250,43 @@ export async function maybeCompress(
     );
   }
 
-  const stale = state.history.slice(0, state.history.length - keep);
+  let stale = state.history.slice(0, state.history.length - keep);
   if (!stale.length) return state;
+
+  // ПОТОЛОК ВХОДА САММАРАЙЗЕРА. Раньше транскрипт просто обрезался с начала, если
+  // выходил длиннее лимита, — а из истории удалялись ВСЕ сворачиваемые сообщения.
+  // Самые старые ходы при этом исчезали, не попав ни в свёртку, ни в архив. Теперь
+  // за раз сворачиваем ровно столько, сколько влезает в лимит; остальное остаётся в
+  // живой истории и уйдёт в память следующей свёрткой.
+  const staleAll = stale.length;
+  let chars = 0;
+  let fits = 0;
+  for (const msg of stale) {
+    chars += msg.content.length + 2;
+    if (chars > MAX_TRANSCRIPT_CHARS && fits >= 4) break;
+    fits++;
+  }
+  if (fits < stale.length) {
+    stale = stale.slice(0, fits);
+    logEvent(
+      'info',
+      'memory',
+      `Период великоват для одной свёртки: сворачиваю ${fits} из ${staleAll} сообщений, ` +
+        `остальные останутся в живой истории и попадут в память следующей свёрткой`
+    );
+  }
 
   // Транскрипт для саммарайзера — ПРОЗОЙ, а не сырым JSON хода. Сырые ответы несут
   // служебные поля (id, эмоции, наряды, statChanges) и раздували вход свёртки в 3–5
   // раз: на 30 ходах это десятки тысяч токенов, отсюда «ошибка автосаммари» на
-  // рабочем API. Плюс жёсткий потолок по символам — режем самые старые.
-  const MAX_TRANSCRIPT_CHARS = 60000;
+  // рабочем API.
   const lines = stale.map(
     (m) =>
       `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${
         m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content
       }`
   );
-  let transcript = lines.join('\n\n');
-  if (transcript.length > MAX_TRANSCRIPT_CHARS) {
-    let start = 0;
-    let len = transcript.length;
-    while (start < lines.length - 1 && len > MAX_TRANSCRIPT_CHARS) {
-      len -= lines[start].length + 2;
-      start++;
-    }
-    transcript = lines.slice(start).join('\n\n');
-    logEvent('warn', 'memory', `Транскрипт свёртки обрезан: пропущено ${start} самых старых сообщений`);
-  }
+  const transcript = lines.join('\n\n');
 
   const toastId = pushToast('info', tt('Сжимаю память…', 'Summarizing memory…'));
   logEvent('info', 'memory', `Саммаризация: сворачиваю ${stale.length} сообщений`);
@@ -297,6 +324,7 @@ export async function maybeCompress(
         `Саммарайзер вернул непригодный ответ (${raw.length} симв., эпизод ${episode.trim().length} симв.) — история НЕ обрезана`,
         raw.slice(0, 500)
       );
+      lastFailedTurn = state.turnCount;
       return state;
     }
     // Журнал эпизодов: append-only, хронологический (нужен и для пересборки снапшота).
@@ -353,7 +381,10 @@ export async function maybeCompress(
 
     return {
       ...state,
-      history: state.history.slice(state.history.length - keep),
+      // Удаляем РОВНО то, что ушло в свёртку. Считать от `keep` нельзя: когда период
+      // не влез в один заход, свёрнута только его часть — остальное обязано остаться
+      // в живой истории, иначе оно исчезнет мимо и контекста, и архива.
+      history: state.history.slice(stale.length),
       memory: await recompactChronicle(project, {
         ...state.memory,
         chronicle,
@@ -373,7 +404,8 @@ export async function maybeCompress(
       tt('Ошибка автосаммари: ', 'Auto-summary error: ') + (e as Error).message
     );
     logEvent('error', 'memory', 'Саммаризация не удалась: ' + (e as Error).message);
-    return state; // graceful: keep verbatim history, retry next turn
+    lastFailedTurn = state.turnCount;
+    return state; // graceful: keep verbatim history, retry a couple of turns later
   }
 }
 

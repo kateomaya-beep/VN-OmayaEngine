@@ -500,13 +500,16 @@ export interface BuiltRequest {
   // бюджет. Больше нуля — значит образовалась «слепая зона»: этих ходов нет ни в
   // контексте, ни в памяти. Движок отвечает на это немедленной свёрткой.
   droppedUnfolded?: number;
+  // Неизменяемая часть запроса (системный промпт + блоки пресета + ход игрока)
+  // в токенах — для индикатора памяти и расчёта места под живую историю.
+  fixedTokens?: number;
 }
 
 export async function buildRequest(
   project: Project,
   state: RuntimeState,
   playerMove: string,
-  opts?: { skipVector?: boolean; extraDirective?: string }
+  opts?: { skipVector?: boolean; extraDirective?: string; preview?: boolean }
 ): Promise<BuiltRequest> {
   const cfg = project.aiConfig;
   const ps = getPresetSettings(); // ГЛОБАЛЬНЫЙ пресет/настройки генерации (не на проект)
@@ -687,7 +690,10 @@ export async function buildRequest(
   // Минимум 6 ходов живой истории: при 2 ходах (как раньше) модель выглядела
   // амнезиком — «забывала», что было парой сообщений раньше, стоило системной
   // части (память+реестр+world state+переписка) перерасти бюджет.
-  lastFixed = fixedTokens;
+  // preview — сборка «начерно» (индикатор токенов, панель памяти). Такой замер не
+  // должен подменять настоящий: по нему свёртка решает, сколько истории живёт
+  // дословно, а начерно считается без векторного подсоса и с фиктивным ходом.
+  if (!opts?.preview) lastFixed = fixedTokens;
   const MIN_WINDOW = 12;
   let winTokens = window.reduce((n, m) => n + estimateTokens(m.content), 0);
   let dropped = 0;
@@ -698,10 +704,16 @@ export async function buildRequest(
   }
   // Первым в диалоге должно идти сообщение игрока: Gemini (и часть шлюзов) отвечают
   // 400/пустотой, если история начинается с assistant. Срез сверху может оставить
-  // «висящий» ответ ИИ — убираем его.
+  // «висящий» ответ ИИ — убираем его. Это ПРОТОКОЛЬНАЯ правка, а не нехватка места:
+  // в droppedUnfolded её не считаем, иначе движок форсировал бы свёртку каждый ход
+  // на истории, которая открывается ходом ИИ (бывает после возврата архива).
+  let strippedLead = 0;
   while (window.length && window[0].role === 'assistant') {
     window = window.slice(1);
-    dropped++;
+    strippedLead++;
+  }
+  if (strippedLead) {
+    logEvent('info', 'prompt', `Срезан висящий ответ ИИ в начале окна (${strippedLead}) — история должна открываться ходом игрока`);
   }
   if (dropped) {
     // ВАЖНО: всё, что лежит в state.history, ещё НЕ свёрнуто в память. Выбросив
@@ -788,7 +800,7 @@ export async function buildRequest(
       tail.join('\n\n'),
   });
 
-  return { system, messages: withMove, prefill, droppedUnfolded: dropped };
+  return { system, messages: withMove, prefill, droppedUnfolded: dropped, fixedTokens };
 }
 
 // Живой счётчик токенов/контекста (см. CR v2 §J) — считает по РЕАЛЬНО собранному
@@ -801,6 +813,7 @@ export async function estimateContextTokens(
   try {
     const req = await buildRequest(project, state, playerMove || '(next turn)', {
       skipVector: true,
+      preview: true,
     });
     const text = req.system + req.messages.map((m) => m.content).join('\n');
     return estimateTokens(text);
