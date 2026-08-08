@@ -17,6 +17,15 @@ import { estimateTokens } from '../shared/utils';
 // Builds the full request as a system string (layered core → style → jailbreak →
 // dynamic context) plus the live-window history and the player's move.
 
+// Размер НЕИЗМЕНЯЕМОЙ части последнего запроса (системный промпт + блоки пресета +
+// ход игрока). Нужен свёртке памяти: она решает, сколько истории может жить
+// дословно, и без этого числа считала по грубой доле бюджета — то отдавая истории
+// меньше, чем есть свободного места, то больше, чем реально влезает.
+let lastFixed = 0;
+export function lastFixedContextTokens(): number {
+  return lastFixed;
+}
+
 // Сжимает сырой JSON-ход ассистента до чистой прозы (что видел игрок): нарратив/
 // мысли как есть, реплики как «Имя: текст». Возвращает null при неразборе — тогда
 // вызывающий оставит сырой контент. Снимает дублирование JSON-обвязки в контексте.
@@ -678,6 +687,7 @@ export async function buildRequest(
   // Минимум 6 ходов живой истории: при 2 ходах (как раньше) модель выглядела
   // амнезиком — «забывала», что было парой сообщений раньше, стоило системной
   // части (память+реестр+world state+переписка) перерасти бюджет.
+  lastFixed = fixedTokens;
   const MIN_WINDOW = 12;
   let winTokens = window.reduce((n, m) => n + estimateTokens(m.content), 0);
   let dropped = 0;

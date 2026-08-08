@@ -2,7 +2,7 @@ import type { Project, RuntimeState, LlmMessage } from '../shared/types';
 import { runCompletionWith } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { SUMMARIZER_PROMPT } from './directorPrompt';
-import { condenseAssistantTurn } from './promptBuilder';
+import { condenseAssistantTurn, lastFixedContextTokens } from './promptBuilder';
 import { estimateTokens, uid } from '../shared/utils';
 import { pushToast, updateToast } from '../shared/toast';
 import { useLang } from '../shared/i18n';
@@ -27,9 +27,21 @@ export function historyTokens(history: LlmMessage[]): number {
   return history.reduce((sum, m) => sum + estimateTokens(m.content), 0);
 }
 
-// Доля бюджета контекста, отведённая живой (ещё не свёрнутой) истории. Остальное —
-// системная часть: мир, персонажи, манифест, реестр, память, телефон.
+// Запасная доля бюджета под живую историю — на первый ход, пока запрос ещё ни разу
+// не собирался и реальный размер системной части неизвестен.
 const LIVE_HISTORY_SHARE = 0.45;
+// Какую часть СВОБОДНОГО места (бюджет минус системная часть) отдаём дословной
+// истории. Остаток — запас на рост системной части между свёртками (журнал
+// эпизодов и снапшот прибавляют после каждой свёртки).
+const FREE_SPACE_SHARE = 0.85;
+
+// Сколько токенов может занимать ещё не свёрнутая история. Считаем по РЕАЛЬНОМУ
+// размеру системной части прошлого запроса, а не по грубой доле бюджета.
+export function liveHistoryAllowance(budget: number): number {
+  const fixed = lastFixedContextTokens();
+  if (!fixed) return Math.max(1500, Math.round(budget * LIVE_HISTORY_SHARE));
+  return Math.max(1500, Math.round((budget - fixed) * FREE_SPACE_SHARE));
+}
 
 // Насколько ниже лимита опускаем живую историю при свёртке (запас, чтобы не
 // сворачивать каждые пару ходов).
@@ -200,7 +212,7 @@ export async function maybeCompress(
   // он уже был. Теперь память сворачивается ровно тогда, когда живая история
   // перестаёт помещаться в отведённую ей долю бюджета — то есть до того, как
   // хоть один ход выпадет из контекста.
-  const allowance = Math.max(1500, Math.round((ps.contextBudget || 24000) * LIVE_HISTORY_SHARE));
+  const allowance = liveHistoryAllowance(ps.contextBudget || 80000);
   const liveTokens = liveHistoryTokens(project, state);
 
   // ГИСТЕРЕЗИС. Свернуть надо, когда живая история переросла лимит, но оставить

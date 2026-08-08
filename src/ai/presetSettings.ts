@@ -35,9 +35,11 @@ function defaults(): PresetSettings {
     // Бюджет контекста ЖЁСТКО ограничивает запрос (см. promptBuilder), а не только
     // красит счётчик. Он же задаёт, сколько истории живёт дословно: память
     // сворачивается, когда живая история перестаёт помещаться в свою долю бюджета.
-    // 24000 при системной части в ~14k оставляли всего 5–6 ходов дословно — модель
-    // выглядела амнезиком. 40000 — примерно 11–12 ходов на типичной длине хода.
-    contextBudget: 40000,
+    // Замер на типичном проекте (системная часть ~15k, ход ~700 слов): 24000 и 40000
+    // дают одинаковые 9–17 ходов дословно (упирается в другой лимит), 80000 — уже
+    // 12–32 хода и втрое меньше свёрток, 120000 сверх этого почти ничего не добавляет.
+    // Запрос при 80000 — в среднем ~46k токенов: нужна модель со 128k контекста.
+    contextBudget: 80000,
     turnLength: { ...DEFAULT_TURN_LENGTH },
     choiceMinGap: 0,
     guidedThinking: false,
@@ -57,9 +59,9 @@ function load(): PresetSettings {
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
       liveWindow: num(v.liveWindow, d.liveWindow),
-      // Прежние дефолты (8000, 24000) считаем «пользователь не настраивал» и
-      // поднимаем до нового: на них живая история резалась до 5–6 ходов.
-      contextBudget: [8000, 24000].includes(num(v.contextBudget, d.contextBudget))
+      // Прежние дефолты (8000, 24000, 40000) считаем «пользователь не настраивал» и
+      // поднимаем до нового: на них живая история была заметно короче.
+      contextBudget: [8000, 24000, 40000].includes(num(v.contextBudget, d.contextBudget))
         ? d.contextBudget
         : num(v.contextBudget, d.contextBudget),
       turnLength: v.turnLength ? normalizeTurnLength(v.turnLength) : d.turnLength,
