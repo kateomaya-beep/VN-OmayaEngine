@@ -17,6 +17,7 @@ import type {
 import { resummarizeArchived, rebuildStoryState, liveHistoryTokens, liveHistoryAllowance } from '../../ai/memoryEngine';
 import { buildRequest } from '../../ai/promptBuilder';
 import { getPresetSettings } from '../../ai/presetSettings';
+import { estimateTokens } from '../../shared/utils';
 
 // Game Master (вдохновлено Horae): динамическое состояние мира — персонажи с
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
@@ -970,6 +971,13 @@ function MemoryStatus({ project, L }: { project: Project; L: Lf }) {
   const live = liveHistoryTokens(project, state);
   const allowance = liveHistoryAllowance(budget, fixed || undefined);
   const liveTurns = Math.ceil(state.history.filter((m) => m.role === 'assistant').length);
+  // Память — единственная часть системного блока, которая растёт по ходу игры
+  // (журнал пополняется каждой свёрткой, снапшот пухнет). Показываем её отдельно
+  // с её потолком: иначе непонятно, почему «контекст растёт», хотя история сжата.
+  const memTokens =
+    state.memory.chronicle.reduce((n, c) => n + estimateTokens(c.text), 0) +
+    estimateTokens(state.memory.storyState || '');
+  const memCap = Math.max(1500, Math.round(budget * 0.35));
   const snapAge = state.memory.storyStateAtTurn ? state.turnCount - state.memory.storyStateAtTurn : null;
   const pct = Math.min(100, Math.round((live / Math.max(1, allowance)) * 100));
 
@@ -1004,6 +1012,11 @@ function MemoryStatus({ project, L }: { project: Project; L: Lf }) {
         )}
       </p>
       <Row label={L('Системная часть', 'System part')} value={`~${fixed.toLocaleString()} ${L('ток.', 'tok.')}`} hint={L('мир, персонажи, память, телефон', 'world, characters, memory, phone')} />
+      <Row
+        label={L('· из них память', '· of which memory')}
+        value={`~${memTokens.toLocaleString()} ${L('ток.', 'tok.')}`}
+        hint={`${L('лимит', 'cap')} ~${memCap.toLocaleString()}`}
+      />
       <Row label={L('Бюджет контекста', 'Context budget')} value={`${budget.toLocaleString()} ${L('ток.', 'tok.')}`} />
       <Row
         label={L('Журнал эпизодов', 'Episode log')}

@@ -577,9 +577,25 @@ async function recompactChronicle(
   project: Project,
   memory: RuntimeState['memory']
 ): Promise<RuntimeState['memory']> {
-  if (memory.chronicle.length <= 15) return memory;
-  const toFold = memory.chronicle.slice(0, 10);
-  const rest = memory.chronicle.slice(10);
+  // Уплотняем не только по КОЛИЧЕСТВУ записей, но и по ОБЪЁМУ: длинные эпизоды
+  // раздували журнал (а с ним всю системную часть) задолго до 16-й записи. Порог —
+  // половина доли памяти в бюджете: дальше журнал начинает вытеснять живую историю.
+  const ps = getPresetSettings();
+  const chronTokens = memory.chronicle.reduce((n, c) => n + estimateTokens(c.text), 0);
+  const chronCap = Math.max(1200, Math.round((ps.contextBudget || 80000) * 0.18));
+  const tooMany = memory.chronicle.length > 15;
+  const tooBig = chronTokens > chronCap && memory.chronicle.length >= 4;
+  if (!tooMany && !tooBig) return memory;
+  // По объёму сворачиваем половину самых старых, по количеству — как раньше, 10.
+  const foldCount = tooMany ? 10 : Math.max(2, Math.floor(memory.chronicle.length / 2));
+  const toFold = memory.chronicle.slice(0, foldCount);
+  const rest = memory.chronicle.slice(foldCount);
+  logEvent(
+    'info',
+    'memory',
+    `Уплотняю журнал эпизодов: ${toFold.length} старых записей в одну сводку ` +
+      `(журнал ~${chronTokens} ток. при лимите ~${chronCap})`
+  );
   try {
     const transcript = toFold.map((c, i) => `[${i + 1}] ${c.text}`).join('\n');
     const text = await summarize(project, CONDENSE_PROMPT, transcript);

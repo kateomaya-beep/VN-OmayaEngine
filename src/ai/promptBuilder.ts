@@ -178,6 +178,40 @@ function statsState(project: Project, values: Record<string, number>): string {
     .join('\n');
 }
 
+// Доля бюджета, которую вправе занять БЛОК ПАМЯТИ (журнал эпизодов + снапшот).
+// Раньше потолка не было вообще: живую историю мы ограничили, а память росла
+// бесконечно — каждая свёртка дописывает эпизод, снапшот пухнет, и системная часть
+// в итоге перерастала весь бюджет. Тогда живая история зажималась в минимум, движок
+// форсировал свёртку, свёртка добавляла ЕЩЁ один эпизод — и так по кругу.
+const MEMORY_SHARE = 0.35;
+
+// Ужимаем журнал под потолок: свежие эпизоды оставляем целиком (они важнее для
+// продолжения), самые старые сокращаем до начала записи. Ничего не удаляем
+// насовсем — полные тексты лежат в состоянии и правятся в Game Master → Саммари.
+function fitChronicle(
+  chronicle: { text: string; atTurn?: number }[],
+  budgetTokens: number
+): { text: string; trimmed: number } {
+  const render = (c: { text: string; atTurn?: number }, i: number) =>
+    `[Period ${i + 1}${c.atTurn ? `, up to turn ${c.atTurn}` : ''}]\n${c.text}`;
+  const full = chronicle.map(render);
+  let total = full.reduce((n, t) => n + estimateTokens(t), 0);
+  if (total <= budgetTokens) return { text: full.join('\n\n'), trimmed: 0 };
+
+  // Режем с самых старых, пока не влезем. Минимум — заголовок и первые строки,
+  // чтобы хронология не рвалась и модель видела, что период был.
+  const out = [...full];
+  let trimmed = 0;
+  for (let i = 0; i < out.length - 1 && total > budgetTokens; i++) {
+    const short = `${render({ ...chronicle[i], text: chronicle[i].text.slice(0, 300) }, i)}\n… (запись сокращена, полный текст — в Game Master → Саммари)`;
+    if (estimateTokens(short) >= estimateTokens(out[i])) continue;
+    total -= estimateTokens(out[i]) - estimateTokens(short);
+    out[i] = short;
+    trimmed++;
+  }
+  return { text: out.join('\n\n'), trimmed };
+}
+
 async function memoryBlock(
   project: Project,
   state: RuntimeState,
@@ -186,12 +220,25 @@ async function memoryBlock(
 ): Promise<string> {
   const m = state.memory;
   const parts: string[] = [];
+  // Потолок памяти в токенах. Снапшот приоритетнее журнала (он описывает «сейчас»),
+  // поэтому сначала считаем его, а журналу отдаём остаток.
+  const memBudget = Math.max(1500, Math.round((getPresetSettings().contextBudget || 80000) * MEMORY_SHARE));
+  const snapTokens = m.storyState?.trim() ? estimateTokens(m.storyState) : 0;
+  const chronBudget = Math.max(600, memBudget - Math.min(snapTokens, Math.round(memBudget * 0.6)));
+
   // Журнал эпизодов — хронологически, от старых к новым, с явной нумерацией периодов.
   if (m.chronicle.length) {
+    const fitted = fitChronicle(m.chronicle, chronBudget);
+    if (fitted.trimmed) {
+      logEvent(
+        'info',
+        'prompt',
+        `Журнал эпизодов не влезал в свою долю бюджета (~${chronBudget} ток.): ${fitted.trimmed} самых старых записей сокращены до начала. ` +
+          `Полные тексты целы — уплотните журнал в Game Master → Саммари, если это мешает.`
+      );
+    }
     parts.push(
-      `EPISODE LOG (chronological, oldest → newest; ALL of this has already happened — never contradict it and NEVER replay these events as if new):\n${m.chronicle
-        .map((c, i) => `[Period ${i + 1}${c.atTurn ? `, up to turn ${c.atTurn}` : ''}]\n${c.text}`)
-        .join('\n\n')}`
+      `EPISODE LOG (chronological, oldest → newest; ALL of this has already happened — never contradict it and NEVER replay these events as if new):\n${fitted.text}`
     );
   }
   // Снапшот состояния — с ЯВНЫМ возрастом. Раньше он объявлял себя «положением дел
@@ -211,8 +258,23 @@ async function memoryBlock(
       age !== null && age > 0
         ? ' Anything in the recent messages or the newest episode-log entries OVERRIDES this snapshot: continue from where the story is NOW, not from the situation described here.'
         : '';
+    const snapCap = Math.round(memBudget * 0.6);
+    let snapText = m.storyState.trim();
+    if (estimateTokens(snapText) > snapCap) {
+      // Обрезаем по границе секции, чтобы не оборвать на полуслове.
+      const keep = Math.round(snapText.length * (snapCap / estimateTokens(snapText)));
+      const cut = snapText.slice(0, keep);
+      const lastSection = cut.lastIndexOf('\n##');
+      snapText = (lastSection > keep * 0.5 ? cut.slice(0, lastSection) : cut) + '\n… (снапшот сокращён под бюджет — пересоберите его в Game Master → Саммари)';
+      logEvent(
+        'info',
+        'prompt',
+        `Снапшот состояния больше своей доли бюджета (~${snapCap} ток.) — в запрос ушла сокращённая версия. ` +
+          `Нажмите «пересобрать» в Game Master → Саммари или уменьшите лимит токенов саммари.`
+      );
+    }
     parts.push(
-      `STORY STATE SNAPSHOT (${stamp}) — background on who is who, relationships and open threads.${warn}\n${m.storyState.trim()}`
+      `STORY STATE SNAPSHOT (${stamp}) — background on who is who, relationships and open threads.${warn}\n${snapText}`
     );
   }
   if (m.liveSummary.trim()) {
@@ -503,6 +565,9 @@ export interface BuiltRequest {
   // Неизменяемая часть запроса (системный промпт + блоки пресета + ход игрока)
   // в токенах — для индикатора памяти и расчёта места под живую историю.
   fixedTokens?: number;
+  // Системная часть больше всего бюджета. Свёртку в этом случае форсировать
+  // вредно (она наращивает журнал) — надо уплотнять память, а не историю.
+  systemOverBudget?: boolean;
 }
 
 export async function buildRequest(
@@ -694,6 +759,7 @@ export async function buildRequest(
   // должен подменять настоящий: по нему свёртка решает, сколько истории живёт
   // дословно, а начерно считается без векторного подсоса и с фиктивным ходом.
   if (!opts?.preview) lastFixed = fixedTokens;
+  let overloaded = false;
   const MIN_WINDOW = 12;
   let winTokens = window.reduce((n, m) => n + estimateTokens(m.content), 0);
   let dropped = 0;
@@ -732,6 +798,11 @@ export async function buildRequest(
   // Системная часть сама по себе больше бюджета — живая история зажата в минимум.
   // Это надо видеть: иначе жалоба выглядит как «память не работает».
   if (fixedTokens > budget) {
+    // Системная часть сама перерос­ла бюджет. Форсировать свёртку здесь НЕЛЬЗЯ:
+    // она дописывает в журнал ещё один эпизод, то есть системная часть станет
+    // только больше — получался порочный круг «зажали историю → свернули →
+    // память выросла → зажали сильнее». Сигналим отдельным флагом.
+    overloaded = true;
     logEvent(
       'warn',
       'prompt',
@@ -800,7 +871,7 @@ export async function buildRequest(
       tail.join('\n\n'),
   });
 
-  return { system, messages: withMove, prefill, droppedUnfolded: dropped, fixedTokens };
+  return { system, messages: withMove, prefill, droppedUnfolded: dropped, fixedTokens, systemOverBudget: overloaded };
 }
 
 // Живой счётчик токенов/контекста (см. CR v2 §J) — считает по РЕАЛЬНО собранному
