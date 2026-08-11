@@ -171,8 +171,26 @@ function providerMessage(bodyText: string): string {
   return htmlToText(t);
 }
 
+// Отказ модели по фильтру безопасности. Приходит как обычный 400 (у Gemini —
+// PROHIBITED_CONTENT/SAFETY), и общий хинт про «префилл/имя модели» тут прямо врёт:
+// запрос корректный, модель просто отказалась работать с содержимым. Для 18+
+// историй это штатная ситуация, и лечится она не параметрами, а другой моделью.
+export function isContentFilterRefusal(bodyText: string): boolean {
+  return /PROHIBITED_CONTENT|BLOCKLIST|SAFETY|blocked by .* API|content[_ ]filter|content[_ ]policy|responsible ?ai/i.test(
+    bodyText || ''
+  );
+}
+
 function providerHttpError(status: number, bodyText: string): Error {
   const detail = providerMessage(bodyText);
+  if (isContentFilterRefusal(bodyText)) {
+    return new Error(
+      `Модель отказалась обрабатывать содержимое (фильтр безопасности провайдера, HTTP ${status}). ` +
+        `Запрос корректный — дело в контенте истории. Что помогает: выбрать для этой задачи другую модель ` +
+        `(Game Master → Саммари → своё подключение для свёртки) или включить jailbreak-блок в пресете.` +
+        (detail ? `\nОтвет провайдера: ${detail}` : '')
+    );
+  }
   const hint = HTTP_HINTS[status];
   if (hint) {
     const tail = RETRYABLE.has(status)
@@ -376,11 +394,18 @@ const openAiCompatible: Provider = {
     // «размышление» и до видимого текста не дошла. Логируем причину: иначе наверху
     // виден лишь пустой ответ (в мессенджере это выглядело как «три точки»).
     if (!content.trim()) {
+      // Причин у пустого текста две, и путать их нельзя: фильтр безопасности
+      // лечится другой моделью, а исчерпанный бюджет — лимитом токенов.
+      const fr = String(choice?.finish_reason ?? '—');
+      const filtered = /content[_ ]?filter|safety|blocked|prohibited/i.test(fr);
       logEvent(
         'error',
         'llm',
-        `Пустой текст в ответе (finish_reason: ${choice?.finish_reason ?? '—'}). ` +
-          'Вероятно, весь бюджет токенов ушёл на reasoning — увеличьте лимит или снизьте глубину размышления.'
+        filtered
+          ? `Модель вернула пустой ответ по фильтру безопасности (finish_reason: ${fr}). Запрос корректный — ` +
+              'дело в содержимом. Возьмите для этой задачи другую модель или включите jailbreak-блок в пресете.'
+          : `Пустой текст в ответе (finish_reason: ${fr}). ` +
+              'Вероятно, весь бюджет токенов ушёл на reasoning — увеличьте лимит или снизьте глубину размышления.'
       );
     }
     return prefill ? prefill + content : content;
