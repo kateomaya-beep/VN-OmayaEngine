@@ -444,6 +444,10 @@ export async function applyTurn(
   // Продвижение времени (Batch 8 §II): time_advance-биты — авторитетны для даты/времени.
   const oldDate = state.gm.clock.date || '';
   if (pendingDate) gm.clock.date = pendingDate;
+  // Якорь начала истории — ставим один раз, при первой известной дате. По нему
+  // считается «сколько прошло», и таймскип остаётся видимым, даже когда запись
+  // о нём вытеснится из ленты событий.
+  if (!gm.clock.startDate && (oldDate || gm.clock.date)) gm.clock.startDate = oldDate || gm.clock.date;
   if (pendingTime) gm.clock.time = pendingTime;
   // Переезд: бит location_change авторитетнее необязательного worldState.clock.
   // Метку хода ставим при ЛЮБОМ обновлении места — по ней промпт показывает, насколько

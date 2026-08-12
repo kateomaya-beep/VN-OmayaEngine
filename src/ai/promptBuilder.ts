@@ -9,6 +9,7 @@ import { getGlobalNotes } from '../shared/globalNotes';
 import { characterOutfits, defaultOutfitTag, hasExtraOutfits } from '../shared/outfits';
 import { extractJson } from './responseParser';
 import { formatClock } from './gameMaster';
+import { parseDate, diffDays } from '../shared/gameDate';
 import { expandMacros, type MacroContext } from './macros';
 import { retrieveRelevant } from './vectorEngine';
 import { buildRegistryView, registryContextBlock } from './characterRegistry';
@@ -314,11 +315,39 @@ async function memoryBlock(
 
 // Компактный дамп состояния Game Master для контекста ИИ (Horae-подобная память):
 // часы, досье персонажей тегами, сетка отношений, открытые задачи, последние события.
+// Сколько внутриигрового времени прошло с начала истории, словами. Нужно, чтобы
+// крупный скачок («три года спустя») оставался ФАКТОМ в каждом запросе: запись о
+// нём живёт в ленте событий, а лента показывает только последние 12 — через
+// десяток ходов таймскип из контекста исчезал, и ИИ снова вёл историю так, будто
+// его не было.
+function elapsedPhrase(startDate?: string, nowDate?: string): string {
+  const a = startDate ? parseDate(startDate) : null;
+  const b = nowDate ? parseDate(nowDate) : null;
+  if (!a || !b) return '';
+  const days = diffDays(a, b);
+  if (days < 2) return '';
+  const years = Math.floor(days / 365);
+  const months = Math.floor((days % 365) / 30);
+  const bits: string[] = [];
+  if (years) bits.push(`${years} year(s)`);
+  if (months) bits.push(`${months} month(s)`);
+  if (!years && !months) bits.push(`${days} day(s)`);
+  return bits.join(' ');
+}
+
 function gameMasterBlock(state: RuntimeState): string {
   const gm = state.gm;
   const parts: string[] = [];
   const clockStr = formatClock(gm.clock);
-  if (clockStr) parts.push(`Now: ${clockStr}`);
+  if (clockStr) {
+    const elapsed = elapsedPhrase(gm.clock.startDate, gm.clock.date);
+    parts.push(
+      elapsed
+        ? `Now: ${clockStr}\nThe story began on ${gm.clock.startDate} — ${elapsed} of in-story time have passed since then. ` +
+            `Everyone has aged and moved on accordingly: never write or reason as if the story were still at its beginning.`
+        : `Now: ${clockStr}`
+    );
+  }
   if (gm.characters.length) {
     const lines = gm.characters.map((c) => {
       const bits = [
@@ -358,12 +387,29 @@ function gameMasterBlock(state: RuntimeState): string {
     );
   }
   if (gm.events.length) {
+    const line = (e: (typeof gm.events)[number]) =>
+      `- ${e.date ? `[${e.date}] ` : `[t${e.turn}] `}${e.summary}${e.chars.length ? ` (${e.chars.join(', ')})` : ''}`;
     const recent = gm.events.slice(-12);
-    parts.push(
-      `Recent events (chronological — these already happened):\n${recent
-        .map((e) => `- ${e.date ? `[${e.date}] ` : `[t${e.turn}] `}${e.summary}${e.chars.length ? ` (${e.chars.join(', ')})` : ''}`)
-        .join('\n')}`
-    );
+    // ВЕХИ ВРЕМЕНИ. Событие, на котором дата прыгнула больше чем на месяц, — это
+    // таймскип, и он не должен вытесняться свежей мелочёвкой: без него ИИ теряет
+    // счёт времени. Такие события показываем всегда, отдельным списком.
+    const skips: string[] = [];
+    for (let i = 1; i < gm.events.length; i++) {
+      const prev = parseDate(gm.events[i - 1].date);
+      const cur = parseDate(gm.events[i].date);
+      if (!prev || !cur) continue;
+      const gap = diffDays(prev, cur);
+      if (gap >= 30 && !recent.includes(gm.events[i])) {
+        const el = elapsedPhrase(gm.events[i - 1].date, gm.events[i].date);
+        skips.push(`${line(gm.events[i])} — TIME SKIP: ${el || `${gap} day(s)`} passed here`);
+      }
+    }
+    if (skips.length) {
+      parts.push(
+        `TIME SKIPS so far (major jumps in the timeline — the story is PAST these, never undo them):\n${skips.slice(-6).join('\n')}`
+      );
+    }
+    parts.push(`Recent events (chronological — these already happened):\n${recent.map(line).join('\n')}`);
   }
   return parts.length
     ? parts.join('\n\n')
@@ -462,7 +508,12 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
     // противореча уже сыгранным сценам. Теперь на месте/времени сюжет главнее.
     'DATE, TIME AND LOCATION are only as fresh as your last update. If the story (recent turns, memory, the episode log) says the hero has since moved elsewhere or time has passed, the STORY WINS: continue from where the story actually is and CORRECT this record the same turn — never drag the hero back to the location written here.',
     'WHENEVER the hero changes place — a trip, a flight, moving to another room, city or country — emit the control beat {"type":"location_change","location":"<where they are NOW>"} at that point in the beat flow. This is mandatory, not optional bookkeeping: without it the engine keeps showing the old place to you and to the player, and the story gets dragged back there.',
-    'TIME: the in-story date is always DD/MM/YYYY. When time passes (a night, "a week later", a jump), emit {"type":"time_advance","newDate":"DD/MM/YYYY","newTime":"HH:MM"}. Never write a date in any other format.',
+    'TIME (MANDATORY, same weight as the story text): the in-story date is always DD/MM/YYYY. ' +
+      'Whenever time moves — a night passes, "a week later", "three years later", a montage, a jump — you MUST emit ' +
+      '{"type":"time_advance","newDate":"DD/MM/YYYY","newTime":"HH:MM"} with the NEW date. ' +
+      'Writing the jump only in prose is NOT enough: the engine keeps its own clock, and if you skip this beat the clock ' +
+      'stays frozen at the old date. A few turns later the frozen clock is all that is left in context, and the story ' +
+      'silently rewinds to before the skip — characters un-age, events un-happen. Never write a date in any other format.',
     'INVENTORY: emit {"type":"inventory_add","name":...,"emoji":"<one emoji>","quantity":1,"category":...,"source":"куплено|получено|найдено"} when the hero acquires something meaningful, and {"type":"inventory_remove","name":...,"quantity":1} when they consume/lose/give it away. Consumables are really spent.',
   ];
   if (hasEconomy) {
