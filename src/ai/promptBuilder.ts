@@ -12,7 +12,7 @@ import { formatClock } from './gameMaster';
 import { parseDate, diffDays } from '../shared/gameDate';
 import { expandMacros, type MacroContext } from './macros';
 import { retrieveRelevant } from './vectorEngine';
-import { buildRegistryView, registryContextBlock } from './characterRegistry';
+import { buildRegistryView, registryContextBlock, normName } from './characterRegistry';
 import { estimateTokens } from '../shared/utils';
 
 // Builds the full request as a system string (layered core → style → jailbreak →
@@ -83,6 +83,147 @@ function assetManifest(project: Project): string {
   sections.push(`Audio moods (musicMood): ${moodLine}`);
 
   return sections.join('\n') || '  (no assets)';
+}
+
+// ЕДИНАЯ КАРТОТЕКА. Раньше один и тот же человек описывался в промпте ЧЕТЫРЕЖДЫ:
+// карточка проекта, строка «на сцене», досье Game Master и запись реестра. Четыре
+// независимо ведущихся источника об одном персонаже — и любой из них мог разойтись
+// с остальными: карточка говорит одно, досье (записанное сто ходов назад) другое,
+// реестр третье. Отсюда «алло, дочка уже есть, почему она снова беременна».
+// Теперь источник один: на каждого человека — один абзац, где идентичность, карточка
+// и текущее состояние собраны вместе, а у состояния стоит отметка свежести.
+function whoIsWhoBlock(
+  project: Project,
+  state: RuntimeState,
+  onScreenIds: string[],
+  ctx: MacroContext
+): string {
+  const turnNow = state.turnCount;
+  const roleLabel: Record<string, string> = {
+    protagonist: "PLAYER'S HERO",
+    love_interest: 'love interest',
+    important_character: 'important character',
+    npc: 'minor',
+  };
+  const reg = state.gm.registry || [];
+  const activeReg = reg.filter((e) => !reg.some((x) => x.merged?.includes(e.id)));
+  const dossierOf = (id: string | undefined, name: string) =>
+    state.gm.characters.find(
+      (c) => (id && c.charId === id) || c.name.toLowerCase() === name.toLowerCase()
+    );
+  const onScreenOf = (id: string) => state.onScreen.find((o) => o.characterId === id);
+  const rels = state.relationship || {};
+
+  // «Сейчас» одной строкой + отметка возраста. Пустое — не печатаем вовсе.
+  const nowLine = (id: string | undefined, name: string): string => {
+    const d = dossierOf(id, name);
+    const os = id ? onScreenOf(id) : undefined;
+    // ДВА РАЗНЫХ ПО СВЕЖЕСТИ ИСТОЧНИКА, и путать их нельзя. Присутствие на сцене
+    // движок знает точно на этот ход. Статус/настроение/место — запись из досье,
+    // сделанная когда-то и с тех пор не подтверждённая. Раньше они склеивались в
+    // одну строку, и если персонаж стоял на сцене, отметка возраста пропадала —
+    // «беременна» столетней давности выглядело как факт этого хода.
+    const out: string[] = [];
+    if (os) out.push(`Present in the scene right now (emotion: ${os.emotion}${os.outfit ? `, outfit: ${os.outfit}` : ''})`);
+    const recorded = [
+      d?.status && `status: ${d.status}`,
+      d?.mood && `mood: ${d.mood}`,
+      d?.outfit && !os?.outfit && `outfit: ${d.outfit}`,
+      d?.location && !os && `at: ${d.location}`,
+    ].filter(Boolean);
+    if (recorded.length) {
+      const age = d?.updatedAtTurn && turnNow ? turnNow - d.updatedAtTurn : null;
+      const stamp =
+        age === null
+          ? ' [age unknown — verify against the story]'
+          : age <= 1
+            ? ' [recorded this turn]'
+            : ` [recorded ${age} turns ago — may be stale]`;
+      out.push(`Last recorded: ${recorded.join('; ')}${stamp}`);
+    }
+    return out.join('\n');
+  };
+
+  const entries: string[] = [];
+  const seen = new Set<string>();
+
+  // 1) Персонажи проекта — с карточкой. В фокусе (на сцене + герой) карточка полная.
+  const present = project.characters.filter((c) => onScreenIds.includes(c.id));
+  const hero = project.characters.find((c) => c.role === 'protagonist' && !present.includes(c));
+  const focus = hero ? [hero, ...present] : present;
+  for (const c of project.characters) {
+    seen.add(c.id);
+    const inFocus = focus.includes(c);
+    const e = activeReg.find((r) => r.id === c.id || r.sheetId === c.id);
+    const aka = (e?.aliases || []).filter((a) => normName(a) !== normName(c.name));
+    const head = `### ${c.name} — id: ${c.id} | ${roleLabel[c.role] || c.role}${aka.length ? ` | aka: ${aka.join(', ')}` : ''}`;
+    const lines = [head];
+    if (inFocus) {
+      lines.push(`Who they are: ${expandMacros(c.card.personality, ctx)}`);
+      if (c.card.appearance.trim()) lines.push(`Appearance: ${expandMacros(c.card.appearance, ctx)}`);
+      if (c.card.backstory.trim()) lines.push(`Backstory: ${expandMacros(c.card.backstory, ctx)}`);
+      lines.push(`Speech: ${expandMacros(c.card.speechStyle, ctx)}`);
+      if (c.card.relationshipArc) lines.push(`Arc: ${expandMacros(c.card.relationshipArc, ctx)}`);
+    } else {
+      lines.push(`Who they are: ${c.card.personality.slice(0, 110)}`);
+    }
+    const d = dossierOf(c.id, c.name);
+    if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
+    const now = nowLine(c.id, c.name);
+    if (now) lines.push(now);
+    if (c.role !== 'protagonist') {
+      const r = rels[c.id] || c.relationship;
+      lines.push(
+        `Feelings toward the hero (ids for statChanges): ❤️ rel:${c.id}:affection=${r.affection}, 🔥 rel:${c.id}:passion_stat=${r.passion_stat}, 🍀 rel:${c.id}:friendship=${r.friendship}, 🎖 rel:${c.id}:respect=${r.respect} (range -100..100)`
+      );
+    }
+    if (inFocus) {
+      const emotions = Object.keys(c.sprites);
+      lines.push(`Emotions available: ${emotions.length ? emotions.join(', ') : '(no sprites — render as name + text)'}`);
+      if (hasExtraOutfits(c)) {
+        lines.push(
+          `Outfits — pick the tag matching the scene (default "${defaultOutfitTag(c)}"):\n${characterOutfits(c)
+            .map((tag) => {
+              if (tag === defaultOutfitTag(c)) return `  - ${tag} (default everyday look)`;
+              const desc = c.outfits?.find((o) => o.outfit === tag)?.description?.trim();
+              return `  - ${tag}${desc ? ` — use when: ${desc}` : ''}`;
+            })
+            .join('\n')}`
+        );
+      }
+    }
+    entries.push(lines.join('\n'));
+  }
+
+  // 2) Люди из реестра/досье без карточки проекта — те, кого завёл сам сюжет.
+  for (const e of activeReg) {
+    if (seen.has(e.id) || (e.sheetId && seen.has(e.sheetId))) continue;
+    seen.add(e.id);
+    const aka = e.aliases.filter((a) => normName(a) !== normName(e.canonicalName));
+    const lines = [`### ${e.canonicalName} — id: ${e.id} | ${e.role}${aka.length ? ` | aka: ${aka.join(', ')}` : ''}`];
+    const d = dossierOf(e.id, e.canonicalName);
+    if (d?.dossier) lines.push(`Who they are: ${d.dossier}`);
+    if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
+    const now = nowLine(e.id, e.canonicalName) || (e.status ? `Now: status: ${e.status}` : '');
+    if (now) lines.push(now);
+    entries.push(lines.join('\n'));
+  }
+
+  if (!entries.length) return '(no characters yet — introduce them via character_new)';
+
+  return (
+    entries.join('\n\n') +
+    `\n\nHOW TO USE THIS SECTION — it is the ONLY roster; there is no second list of people anywhere.\n` +
+    `- Identity is the id, never the bare name: nicknames drift ("Дэмиан"/"Дэм"/"парень из бара" are one person). ` +
+    `Before introducing anyone, look here. Already present under any name or alias → reuse that id.\n` +
+    `- "Now:" lines are a snapshot YOU maintain, and each carries its age. They are NOT eternal truth: if the recent ` +
+    `messages or the episode log show something newer — a pregnancy that ended in a birth, a wound that healed, a move, ` +
+    `a death — THE STORY WINS. Do not act on a stale line; describe the current reality and send the corrected value in ` +
+    `worldState.characters this turn.\n` +
+    `- Genuinely new person → {"type":"character_new",...}. Known person under a new nickname → ` +
+    `{"type":"character_alias_add","id":"<existing id>","alias":"..."}. Situation changed → ` +
+    `{"type":"character_update","id":"<id>","status":"..."}. Never create a second entry for the same person.`
+  );
 }
 
 function characterBlocks(
@@ -348,7 +489,10 @@ function gameMasterBlock(state: RuntimeState, turnNow = 0): string {
         : `Now: ${clockStr}`
     );
   }
-  if (gm.characters.length) {
+  // Досье персонажей ПЕРЕЕХАЛИ в единую картотеку (whoIsWhoBlock): держать их ещё
+  // и здесь значило бы снова описывать одного человека дважды — ровно та поломка,
+  // ради которой картотеку и свели воедино.
+  if (false) {
     const lines = gm.characters.map((c) => {
       const bits = [
         c.roleToHero && `to hero: ${c.roleToHero}`,
@@ -671,15 +815,12 @@ export async function buildRequest(
     plot: () =>
       project.lore.plotOutline ? `== PLOT ARC ==\n${expandMacros(project.lore.plotOutline, ctx)}` : '',
     lorebook: () => `== ACTIVE LOREBOOK ENTRIES ==\n${lorebookText}`,
-    characters: () => `== CHARACTERS ==\n${characterBlocks(project, onScreenIds, ctx)}`,
+    characters: () => `== WHO'S WHO (single roster: identity + card + current state) ==\n${whoIsWhoBlock(project, state, onScreenIds, ctx)}`,
     manifest: () => `== ASSET MANIFEST ==\n${assetManifest(project)}`,
     state: () =>
       `== CURRENT STATE ==\nStats:\n${statsState(project, state.statValues)}\nCurrent background: ${currentBg} (${
         state.currentBackgroundId ?? 'null'
-      })\nMusic mood: ${state.currentMusicMood ?? 'none'}\nOn screen (current emotion & outfit — keep them unless the scene changes): ${onScreenState(
-        project,
-        state
-      )}`,
+      })\nMusic mood: ${state.currentMusicMood ?? 'none'}`,
     memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
     gamemaster: () => gameMasterBlock(state, state.turnCount),
     // История вставляется как СООБЩЕНИЯ, а не текст: обработчик выше перехватывает
@@ -780,8 +921,11 @@ export async function buildRequest(
     `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts, character dialogue and choice texts — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate JSON keys, character ids, emotion keys, outfit tags, music moods or background ids — those stay exactly as given.`
   );
   // Реестр персонажей (patch character-registry) — идентичность по id + правило.
+  // Реестр как ОТДЕЛЬНЫЙ список тоже убран: id, псевдонимы и правила идентичности
+  // теперь живут прямо в картотеке, рядом с самим персонажем.
   const regView = buildRegistryView(project, state.gm);
-  const regBlock = registryContextBlock(regView);
+  const regBlock = '';
+  void regView;
   if (regBlock) {
     systemParts.push(
       `${regBlock}\n\nCHARACTER IDENTITY — CRITICAL:\n` +
