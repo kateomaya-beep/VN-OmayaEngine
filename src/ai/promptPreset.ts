@@ -13,7 +13,11 @@ export type DynamicSource =
   | 'manifest'
   | 'state'
   | 'memory'
-  | 'gamemaster';
+  | 'gamemaster'
+  // История переписки как ПОЛНОЦЕННЫЙ блок пресета — её положение можно менять,
+  // как в Таверне. Раньше она была вшита в код и всегда шла последней, из-за чего
+  // всё «состояние мира» неизбежно оказывалось ВЫШЕ живой истории и перебивало её.
+  | 'history';
 
 export interface PromptBlock {
   id: string;
@@ -239,6 +243,9 @@ the beats) so the player gets a rich stretch of narrative each turn before the n
     b('current_state', '↳ Current State', '', { dynamic: 'state' }),
     b('game_master', '↳ Game Master State', '', { dynamic: 'gamemaster' }),
     b('memory', '↳ Memory', '', { dynamic: 'memory' }),
+    // Живая переписка. Всё, что стоит НИЖЕ этого блока, модель читает как более
+    // свежее — держите здесь только то, что должно перебивать историю.
+    b('chat_history', '💬 История переписки', '', { dynamic: 'history' }),
   ];
 }
 

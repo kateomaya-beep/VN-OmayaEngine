@@ -682,6 +682,9 @@ export async function buildRequest(
       )}`,
     memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
     gamemaster: () => gameMasterBlock(state, state.turnCount),
+    // История вставляется как СООБЩЕНИЯ, а не текст: обработчик выше перехватывает
+    // этот блок раньше и запоминает позицию. Заглушка нужна лишь для полноты типа.
+    history: () => '',
   };
 
   // Собираем промпт из редактируемого пресета (Batch 3 §8): по порядку, только
@@ -692,6 +695,9 @@ export async function buildRequest(
   const systemParts: string[] = [];
   const presetMessages: LlmMessage[] = [];
   const renderedDynamics = new Set<DynamicSource>();
+  // Куда вставлять живую историю. null — блока «История переписки» в пресете нет
+  // (старые пресеты): тогда, как раньше, история идёт после всех блоков.
+  let historyAt: number | null = null;
   // Блоки, которые пользователь ВЫКЛЮЧИЛ осознанно. Их надо отличать от блоков,
   // которых в пресете нет вовсе (импорт из Таверны): первые уважаем, вторые
   // добавляем сами, иначе память или манифест выпадали из контекста целиком.
@@ -699,6 +705,14 @@ export async function buildRequest(
   for (const block of preset.blocks) {
     if (!block.enabled) {
       if (block.dynamic) disabledDynamics.add(block.dynamic);
+      continue;
+    }
+    // История переписки — не текст, а МЕСТО в ленте сообщений. Запоминаем, сколько
+    // блоков пресета оказалось выше неё: всё, что после, уйдёт ПОСЛЕ живой истории
+    // и будет прочитано моделью как более свежее.
+    if (block.dynamic === 'history') {
+      historyAt = presetMessages.length;
+      renderedDynamics.add('history');
       continue;
     }
     let text: string;
@@ -722,6 +736,8 @@ export async function buildRequest(
   // НО: раньше сюда же попадали блоки, ВЫКЛЮЧЕННЫЕ галочкой, — движок молча
   // возвращал их обратно, и отключить, скажем, Game Master было невозможно.
   // Осознанное «выключить» теперь уважается: это ваш пресет, а не наш.
+  // 'history' сюда НЕ входит: её отсутствие в пресете означает «как раньше,
+  // в конце», а не «блок потерялся».
   const REQUIRED_DYNAMICS: DynamicSource[] = [
     'world', 'plot', 'lorebook', 'characters', 'manifest', 'state', 'gamemaster', 'memory',
   ];
@@ -889,7 +905,10 @@ export async function buildRequest(
     );
   }
 
-  const messages: LlmMessage[] = [...presetMessages, ...window];
+  const messages: LlmMessage[] =
+    historyAt === null
+      ? [...presetMessages, ...window]
+      : [...presetMessages.slice(0, historyAt), ...window, ...presetMessages.slice(historyAt)];
 
   // Продвинутые кастомные вставки на заданной глубине от конца (author's note style).
   const blocks = (ps.advancedBlocks || []).filter((b) => b.content.trim());
