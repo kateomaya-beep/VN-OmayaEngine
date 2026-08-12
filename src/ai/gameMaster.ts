@@ -58,6 +58,7 @@ export function mergeWorldState(
         location: u.location || '',
         tags: Array.isArray(u.tags) ? u.tags : [],
       };
+      c.updatedAtTurn = turn;
       next.characters.push(c);
     } else {
       const c = next.characters[idx];
@@ -71,6 +72,9 @@ export function mergeWorldState(
       set(c, 'location', u.location);
       if (Array.isArray(u.tags) && u.tags.length) c.tags = u.tags;
       if (u.charId && !c.charId) c.charId = u.charId;
+      // Отмечаем ход обновления только если что-то реально пришло: иначе досье
+      // выглядело бы свежим каждый ход, даже когда ИИ его не трогал.
+      if (u.dossier || u.status || u.mood || u.outfit || u.location || u.roleToHero) c.updatedAtTurn = turn;
     }
   }
 

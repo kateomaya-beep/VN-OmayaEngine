@@ -1163,6 +1163,10 @@ export interface GmCharacter {
   location: string;
   tags: string[]; // вся инфа тегами (для ИИ)
   lastSeenDate?: string; // когда протагонист виделся с ним в последний раз (ДД/ММ/ГГГГ, Batch 8)
+  // На каком ходу досье последний раз обновлялось. Без этого поля статус вроде
+  // «беременна» жил вечно и подавался как факт «сейчас» даже через сто ходов
+  // после родов — ИИ верил досье, а не истории.
+  updatedAtTurn?: number;
 }
 
 export interface GmRelationEdge {

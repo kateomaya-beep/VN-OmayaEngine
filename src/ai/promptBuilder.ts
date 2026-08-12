@@ -335,7 +335,7 @@ function elapsedPhrase(startDate?: string, nowDate?: string): string {
   return bits.join(' ');
 }
 
-function gameMasterBlock(state: RuntimeState): string {
+function gameMasterBlock(state: RuntimeState, turnNow = 0): string {
   const gm = state.gm;
   const parts: string[] = [];
   const clockStr = formatClock(gm.clock);
@@ -359,9 +359,19 @@ function gameMasterBlock(state: RuntimeState): string {
       ].filter(Boolean);
       const tags = c.tags.length ? ` [${c.tags.join(', ')}]` : '';
       const dossier = c.dossier ? ` — ${c.dossier}` : '';
-      return `- ${c.name}${dossier}${bits.length ? ` (${bits.join('; ')})` : ''}${tags}`;
+      // Возраст записи. «status: беременна», записанный сто ходов назад, — это НЕ
+      // положение дел сейчас, но выглядел он именно так, и модель ему верила.
+      const age = c.updatedAtTurn && turnNow ? turnNow - c.updatedAtTurn : null;
+      const stamp = age === null ? '' : age <= 1 ? ' [updated this turn]' : ` [written ${age} turns ago — may be out of date]`;
+      return `- ${c.name}${dossier}${bits.length ? ` (${bits.join('; ')})` : ''}${tags}${stamp}`;
     });
-    parts.push(`Characters (dossiers):\n${lines.join('\n')}`);
+    parts.push(
+      `Characters (dossiers — a SNAPSHOT you maintain, not eternal truth):\n${lines.join('\n')}\n` +
+        `A dossier line is only as fresh as its stamp. If the recent messages or the episode log show something ` +
+        `newer — a pregnancy that ended in a birth, an injury that healed, a job that was quit, someone who moved or ` +
+        `died — THE STORY WINS and the dossier is simply stale. In that case do NOT act on the stale line: describe ` +
+        `the current reality and send the corrected value in worldState.characters this turn.`
+    );
   }
   if (gm.relations.length) {
     parts.push(
@@ -671,7 +681,7 @@ export async function buildRequest(
         state
       )}`,
     memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
-    gamemaster: () => gameMasterBlock(state),
+    gamemaster: () => gameMasterBlock(state, state.turnCount),
   };
 
   // Собираем промпт из редактируемого пресета (Batch 3 §8): по порядку, только
@@ -879,6 +889,34 @@ export async function buildRequest(
   // за несколько сообщений до конца. Модели, сильнее весящие последнее сообщение,
   // отвечали на ремайндер и «забывали» сам ход. Теперь после хода ровно один блок.
   const tail: string[] = [];
+
+  // СВЕЖИЕ ФАКТЫ — ПОСЛЕДНИМИ. Всё «состояние мира» (часы, досье, снапшот) лежит в
+  // системной части, то есть ДО истории. Модели читают системный промпт как высшую
+  // истину, и устаревшая строчка оттуда («status: беременна») перебивала полсотни
+  // свежих сообщений: отсюда «дочка уже давно есть, а она снова беременна».
+  // В Таверне это решают инжектом на глубину; делаем так же — короткая сводка того,
+  // что меняется чаще всего, идёт в самый конец, после всей истории.
+  const nowBits: string[] = [];
+  const clockNow = formatClock(state.gm.clock);
+  if (clockNow) {
+    const el = elapsedPhrase(state.gm.clock.startDate, state.gm.clock.date);
+    nowBits.push(`Date/time/place: ${clockNow}${el ? ` (${el} since the story began)` : ''}`);
+  }
+  if (state.onScreen.length) nowBits.push(`In the scene: ${onScreenState(project, state)}`);
+  // Статусы тех, кто сейчас на сцене, — только свежие: старые пусть остаются
+  // наверху с пометкой возраста, дублировать их здесь незачем.
+  const onIds = new Set(state.onScreen.map((o) => o.characterId));
+  const freshDossiers = state.gm.characters
+    .filter((c) => c.status?.trim() && (!c.updatedAtTurn || state.turnCount - c.updatedAtTurn <= 10))
+    .filter((c) => !c.charId || onIds.has(c.charId))
+    .slice(0, 6)
+    .map((c) => `${c.name}: ${c.status}`);
+  if (freshDossiers.length) nowBits.push(`Current status: ${freshDossiers.join('; ')}`);
+  if (nowBits.length) {
+    tail.push(
+      `[STATE RIGHT NOW — the freshest values the engine has, they override anything older above]\n${nowBits.join('\n')}`
+    );
+  }
 
   // Заметки для ИИ (Author's Note, см. CR v2 §M): универсальные + проектные.
   // Пометка приоритета обязательна: заметка соревнуется с планом (plotOutline,
