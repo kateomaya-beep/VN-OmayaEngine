@@ -692,8 +692,15 @@ export async function buildRequest(
   const systemParts: string[] = [];
   const presetMessages: LlmMessage[] = [];
   const renderedDynamics = new Set<DynamicSource>();
+  // Блоки, которые пользователь ВЫКЛЮЧИЛ осознанно. Их надо отличать от блоков,
+  // которых в пресете нет вовсе (импорт из Таверны): первые уважаем, вторые
+  // добавляем сами, иначе память или манифест выпадали из контекста целиком.
+  const disabledDynamics = new Set<DynamicSource>();
   for (const block of preset.blocks) {
-    if (!block.enabled) continue;
+    if (!block.enabled) {
+      if (block.dynamic) disabledDynamics.add(block.dynamic);
+      continue;
+    }
     let text: string;
     if (block.dynamic) {
       const gen = dynamicContent[block.dynamic];
@@ -708,16 +715,25 @@ export async function buildRequest(
     else presetMessages.push({ role, content: text });
   }
 
-  // ГАРАНТИЯ ДВИЖКОВЫХ БЛОКОВ (фикс «память не инжектится»): если в пресете нет
-  // (или отключён) какой-то из динамических блоков — например, пресет импортирован
-  // из Таверны и содержит только статичный текст, — мир/персонажи/манифест/состояние/
-  // ПАМЯТЬ выпадали из контекста целиком. Теперь недостающие блоки добавляются
-  // движком всегда, в каноническом порядке; пресет управляет их положением и
-  // текстом ВОКРУГ, но не может молча лишить ИИ память или манифест.
+  // ГАРАНТИЯ ДВИЖКОВЫХ БЛОКОВ (фикс «память не инжектится»): если блока НЕТ в
+  // пресете — например, пресет импортирован из Таверны и содержит только статичный
+  // текст, — мир/персонажи/манифест/состояние/ПАМЯТЬ выпадали из контекста целиком.
+  // Такие блоки движок добавляет сам, в каноническом порядке.
+  // НО: раньше сюда же попадали блоки, ВЫКЛЮЧЕННЫЕ галочкой, — движок молча
+  // возвращал их обратно, и отключить, скажем, Game Master было невозможно.
+  // Осознанное «выключить» теперь уважается: это ваш пресет, а не наш.
   const REQUIRED_DYNAMICS: DynamicSource[] = [
     'world', 'plot', 'lorebook', 'characters', 'manifest', 'state', 'gamemaster', 'memory',
   ];
-  const missing = REQUIRED_DYNAMICS.filter((k) => !renderedDynamics.has(k));
+  const turnedOff = REQUIRED_DYNAMICS.filter((k) => disabledDynamics.has(k));
+  if (turnedOff.length) {
+    logEvent(
+      'info',
+      'prompt',
+      `Блоки [${turnedOff.join(', ')}] выключены в пресете — в контекст не идут. Это ваш выбор, движок их не подставляет.`
+    );
+  }
+  const missing = REQUIRED_DYNAMICS.filter((k) => !renderedDynamics.has(k) && !disabledDynamics.has(k));
   if (missing.length) {
     logEvent('info', 'prompt', `В пресете нет динамических блоков [${missing.join(', ')}] — добавлены движком`);
     for (const k of missing) {
