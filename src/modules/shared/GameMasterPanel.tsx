@@ -248,9 +248,51 @@ function CharactersTab({
             {field(L('Теги (через запятую)', 'Tags (comma-separated)'), c.tags.join(', '),
               (v) => setChar(i, { tags: v.split(',').map((t) => t.trim()).filter(Boolean) }))}
           </div>
+          <StatusHistory gm={gm} patchGm={patchGm} char={c} L={L} />
           <RelationshipBars rel={resolveRel(c)} L={L} />
         </div>
       ))}
+    </div>
+  );
+}
+
+// История смен статуса. Движок вёл её давно, но не показывал никому — ни тебе,
+// ни модели. Именно она снимает залипание на устаревшем статусе: видно, что
+// «беременна» отменено более поздней записью, и когда именно.
+function StatusHistory({ gm, patchGm, char, L }: { gm: GM; patchGm: PatchGm; char: GM['characters'][number]; L: Lf }) {
+  const entryIdx = gm.registry?.findIndex(
+    (e) =>
+      (char.charId && (e.id === char.charId || e.sheetId === char.charId)) ||
+      e.canonicalName.trim().toLowerCase() === char.name.trim().toLowerCase()
+  );
+  const entry = entryIdx !== undefined && entryIdx >= 0 ? gm.registry?.[entryIdx] : undefined;
+  const log = entry?.statusLog?.filter((x) => x.status?.trim()) || [];
+  if (!entry || log.length === 0) return null;
+  return (
+    <div className="mt-2">
+      <p className="text-xs text-gray-500 mb-1">
+        {L('История статуса (уходит модели — каждая запись отменяет предыдущие)', 'Status history (goes to the model — each entry cancels the previous ones)')}
+      </p>
+      <div className="flex flex-wrap gap-1">
+        {log.map((x, k) => (
+          <span key={k} className="chip !py-0.5 text-xs">
+            {x.status}
+            {x.date ? ` · ${x.date}` : ''}
+            <button
+              className="ml-1 text-red-300"
+              title={L('Удалить запись', 'Delete entry')}
+              onClick={() =>
+                patchGm((g) => {
+                  const e = g.registry?.[entryIdx as number];
+                  if (e?.statusLog) e.statusLog = e.statusLog.filter((_, j) => j !== k);
+                })
+              }
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -347,14 +389,15 @@ function InventoryTab({ L }: { L: Lf }) {
     <div className="space-y-2">
       <div className="flex justify-between items-center">
         <p className="text-xs text-gray-500">
-          {L('Вещи протагониста. ИИ не даёт использовать то, чего здесь нет; расходники убывают.', "The hero's belongings. The AI won't let them use what's not here; consumables deplete.")}
+          {L('Вещи протагониста. Весь список уходит модели вместе с датой и происхождением — ИИ не даёт использовать то, чего здесь нет; расходники убывают.', "The hero's belongings. The whole list goes to the model with date and origin — the AI won't let them use what's not here; consumables deplete.")}
         </p>
         <button className="btn-ghost !px-3 !py-1 text-xs" onClick={add}>+ {L('Предмет', 'Item')}</button>
       </div>
       {inv.length === 0 && <p className="text-gray-600 text-sm">{L('Пусто.', 'Empty.')}</p>}
       <div className="space-y-1.5">
         {inv.map((it, i) => (
-          <div key={it.id} className="flex items-center gap-2 rounded-lg bg-panel2 px-2 py-1.5">
+          <div key={it.id} className="rounded-lg bg-panel2 px-2 py-1.5 space-y-1.5">
+          <div className="flex items-center gap-2">
             <input
               className="input !py-1 !px-1 text-center w-10"
               value={it.emoji}
@@ -386,6 +429,25 @@ function InventoryTab({ L }: { L: Lf }) {
               {it.category && !INV_CATEGORIES.includes(it.category) && <option value={it.category}>{it.category}</option>}
             </select>
             <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => patch((l) => l.splice(i, 1))}>✕</button>
+          </div>
+          {/* Откуда и с какого числа вещь. Уходит модели вместе с названием:
+              персонажи ссылаются на подарки, а по дате видно, что вещь у героя
+              ещё до таймскипа, а не появилась только что. */}
+          <div className="flex items-center gap-2">
+            <input
+              className="input !py-1 text-xs flex-1"
+              placeholder={L('Откуда: куплено / подарок Дэмиана / найдено', 'Origin: bought / a gift from … / found')}
+              value={it.source || ''}
+              onChange={(e) => patch((l) => (l[i].source = e.target.value.trim() || undefined))}
+            />
+            <input
+              className="input !py-1 text-xs w-28"
+              placeholder="ДД/ММ/ГГГГ"
+              value={it.acquiredDate || ''}
+              onChange={(e) => patch((l) => (l[i].acquiredDate = e.target.value.trim() || undefined))}
+              title={L('С какой даты у героя', 'Owned since')}
+            />
+          </div>
           </div>
         ))}
       </div>

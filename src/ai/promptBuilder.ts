@@ -137,7 +137,8 @@ function whoIsWhoBlock(
 
   // «Сейчас» одной строкой + отметка возраста. Пустое — не печатаем вовсе.
   const nowLine = (id: string | undefined, name: string): string => {
-    const d = dossierOf(id, name);
+    const who = whoIs(id, name);
+    const d = who?.dossier;
     const os = id ? onScreenOf(id) : undefined;
     // ДВА РАЗНЫХ ПО СВЕЖЕСТИ ИСТОЧНИКА, и путать их нельзя. Присутствие на сцене
     // движок знает точно на этот ход. Статус/настроение/место — запись из досье,
@@ -166,6 +167,19 @@ function whoIsWhoBlock(
             : ` [recorded ${age} turns ago — may be stale]`;
       out.push(`Last recorded: ${recorded.join('; ')}${stamp}`);
     }
+    // ИСТОРИЯ СТАТУСА. Одна строка «status: беременна» не говорит, было это
+    // вчера или два года назад и чем кончилось, — и модель на ней залипала.
+    // Цепочка «беременна (01/03) → родила (12/12) → в декрете» показывает, что
+    // прежний статус УЖЕ ОТМЕНЁН более поздним, и по датам видно, когда.
+    const log = (who?.entry?.statusLog || []).filter((x) => x.status?.trim());
+    if (log.length > 1) {
+      const shown = log.slice(-5);
+      out.push(
+        `Status history (oldest → newest; each entry CANCELS the ones before it): ${
+          log.length > shown.length ? '… → ' : ''
+        }${shown.map((x) => `${x.status}${x.date ? ` (${x.date})` : ''}`).join(' → ')}`
+      );
+    }
     return out.join('\n');
   };
 
@@ -186,6 +200,14 @@ function whoIsWhoBlock(
     if (inFocus) {
       lines.push(`Who they are: ${expandMacros(c.card.personality, ctx)}`);
       if (c.card.appearance.trim()) lines.push(`Appearance: ${expandMacros(c.card.appearance, ctx)}`);
+      // Внешность, ЗАПИСАННАЯ по ходу игры (постригся, шрам, поправился), жила
+      // только в Game Master и в генераторе картинок: рассказчик её не видел
+      // вовсе и продолжал описывать человека по анкете. Печатаем, только если
+      // она реально отличается от анкетной — иначе это была бы вторая копия.
+      const dNow = dossierOf(c.id, c.name)?.appearance?.trim();
+      if (dNow && normName(dNow) !== normName(c.card.appearance)) {
+        lines.push(`Appearance as last recorded in play (newer than the sheet above): ${dNow}`);
+      }
       if (c.card.backstory.trim()) lines.push(`Backstory: ${expandMacros(c.card.backstory, ctx)}`);
       lines.push(`Speech: ${expandMacros(c.card.speechStyle, ctx)}`);
       if (c.card.relationshipArc) lines.push(`Arc: ${expandMacros(c.card.relationshipArc, ctx)}`);
@@ -230,6 +252,9 @@ function whoIsWhoBlock(
     const lines = [`### ${e.canonicalName} — id: ${e.id} | ${e.role}${aka.length ? ` | aka: ${aka.join(', ')}` : ''}`];
     const d = dossierOf(e.id, e.canonicalName);
     if (d?.dossier) lines.push(`Who they are: ${d.dossier}`);
+    // Внешность человека без анкеты. Её знал Game Master и знал генератор
+    // картинок — а рассказчик нет, и описывал его с нуля каждый раз.
+    if (d?.appearance?.trim()) lines.push(`Appearance: ${d.appearance.trim()}`);
     if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
     const ph = phoneNote(state, whoIs(e.id, e.canonicalName));
     if (ph) lines.push(ph);
@@ -594,7 +619,13 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   if (inv.length) {
     parts.push(
       `INVENTORY — everything the hero owns, and the ONLY truth about it:\n${inv
-        .map((it) => `  - ${it.emoji} ${it.name}${it.quantity > 1 ? ` ×${it.quantity}` : ''}`)
+        .map((it) => {
+          // Откуда и с какого числа вещь у героя. Персонажи ссылаются на подарки
+          // («то платье, что я тебе подарил»), а по дате видно, что снаряжение
+          // взято ещё до таймскипа, а не появилось сейчас.
+          const origin = [it.source, it.acquiredDate && `с ${it.acquiredDate}`].filter(Boolean).join(', ');
+          return `  - ${it.emoji} ${it.name}${it.quantity > 1 ? ` ×${it.quantity}` : ''}${origin ? ` — ${origin}` : ''}`;
+        })
         .join('\n')}`
     );
   } else {

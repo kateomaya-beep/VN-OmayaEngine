@@ -2,6 +2,11 @@ import type { GameMasterState, WorldStateUpdate, GmCharacter, GmClock } from '..
 import { uid } from '../shared/utils';
 import { findRegistryMatch, normName, nameHit } from './characterRegistry';
 
+// Только дата, без времени и места — для отметок в журнале статусов.
+function formatDateOnly(c: GmClock): string {
+  return c.date || [c.day, c.month, c.year].filter(Boolean).join(' ');
+}
+
 // Человекочитаемая внутриигровая дата/время: "3 March 1024 · 14:30 · Plaza".
 export function formatClock(c: GmClock): string {
   const date = [c.day, c.month, c.year].filter(Boolean).join(' ');
@@ -106,6 +111,22 @@ export function mergeWorldState(
       next.characters.push(c);
     } else {
       const c = next.characters[idx];
+      // ИСТОРИЯ СТАТУСА пишется ЗДЕСЬ ТОЖЕ. Раньше она велась только при
+      // character_update-бите, а статус модель меняет в основном сводкой
+      // worldState — и цепочка «беременна → родила» в журнал не попадала.
+      if (u.status && u.status.trim() && u.status.trim() !== (c.status || '').trim()) {
+        const e = next.registry?.find(
+          (x) => (c.charId && (x.id === c.charId || x.sheetId === c.charId)) || normName(x.canonicalName) === normName(c.name)
+        );
+        if (e) {
+          const log = (e.statusLog ||= []);
+          const last = log[log.length - 1];
+          if (!last || normName(last.status) !== normName(u.status)) {
+            log.push({ status: u.status.trim(), date: formatDateOnly(next.clock) || undefined });
+            if (log.length > 40) e.statusLog = log.slice(-40);
+          }
+        }
+      }
       set(c, 'dossier', u.dossier);
       set(c, 'appearance', u.appearance);
       set(c, 'personality', u.personality);
