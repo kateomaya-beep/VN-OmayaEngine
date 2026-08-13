@@ -92,6 +92,15 @@ function assetManifest(project: Project): string {
 // реестр третье. Отсюда «алло, дочка уже есть, почему она снова беременна».
 // Теперь источник один: на каждого человека — один абзац, где идентичность, карточка
 // и текущее состояние собраны вместе, а у состояния стоит отметка свежести.
+// Через сколько ходов без подтверждения запись досье перестаёт уходить в промпт.
+// ПРИЧИНА: движок каждый ход просит модель прислать worldState и потом возвращает
+// это ей же как факт. Модель один раз написала «беременна» — движок увековечил, и
+// дальше сто ходов подаёт как истину. Отметка возраста лечит симптом; лечение
+// причины — затухание: не подтвердил N ходов, значит это уже не «сейчас».
+// Запись при этом НЕ удаляется: она остаётся в панели Game Master, её видно и можно
+// поправить руками. А если факт всё ещё верен, история его подтвердит.
+const STATUS_DECAY_TURNS = 30;
+
 function whoIsWhoBlock(
   project: Project,
   state: RuntimeState,
@@ -115,6 +124,7 @@ function whoIsWhoBlock(
   const rels = state.relationship || {};
 
   // «Сейчас» одной строкой + отметка возраста. Пустое — не печатаем вовсе.
+  const decayedNames: string[] = [];
   const nowLine = (id: string | undefined, name: string): string => {
     const d = dossierOf(id, name);
     const os = id ? onScreenOf(id) : undefined;
@@ -125,14 +135,20 @@ function whoIsWhoBlock(
     // «беременна» столетней давности выглядело как факт этого хода.
     const out: string[] = [];
     if (os) out.push(`Present in the scene right now (emotion: ${os.emotion}${os.outfit ? `, outfit: ${os.outfit}` : ''})`);
-    const recorded = [
-      d?.status && `status: ${d.status}`,
-      d?.mood && `mood: ${d.mood}`,
-      d?.outfit && !os?.outfit && `outfit: ${d.outfit}`,
-      d?.location && !os && `at: ${d.location}`,
-    ].filter(Boolean);
+    const age = d?.updatedAtTurn && turnNow ? turnNow - d.updatedAtTurn : null;
+    // Протухшую запись просто не показываем: пусть лучше модель не знает статуса,
+    // чем «знает» неправду столетней давности и отыгрывает её.
+    const decayed = age !== null && age > STATUS_DECAY_TURNS;
+    const recorded = decayed
+      ? []
+      : [
+          d?.status && `status: ${d.status}`,
+          d?.mood && `mood: ${d.mood}`,
+          d?.outfit && !os?.outfit && `outfit: ${d.outfit}`,
+          d?.location && !os && `at: ${d.location}`,
+        ].filter(Boolean);
+    if (decayed && (d?.status || d?.location)) decayedNames.push(`${name} (${age} ход.)`);
     if (recorded.length) {
-      const age = d?.updatedAtTurn && turnNow ? turnNow - d.updatedAtTurn : null;
       const stamp =
         age === null
           ? ' [age unknown — verify against the story]'
@@ -209,6 +225,14 @@ function whoIsWhoBlock(
     entries.push(lines.join('\n'));
   }
 
+  if (decayedNames.length) {
+    logEvent(
+      'info',
+      'prompt',
+      `Записи досье не подтверждались больше ${STATUS_DECAY_TURNS} ходов и в промпт не идут: ${decayedNames.join(', ')}. ` +
+        `В панели Game Master они на месте — поправьте вручную, если факт всё ещё верен.`
+    );
+  }
   if (!entries.length) return '(no characters yet — introduce them via character_new)';
 
   return (
@@ -479,14 +503,13 @@ function elapsedPhrase(startDate?: string, nowDate?: string): string {
 function gameMasterBlock(state: RuntimeState, turnNow = 0): string {
   const gm = state.gm;
   const parts: string[] = [];
-  const clockStr = formatClock(gm.clock);
-  if (clockStr) {
-    const elapsed = elapsedPhrase(gm.clock.startDate, gm.clock.date);
+  // Часы сюда больше не дублируются — только протяжённость истории, которую больше
+  // взять неоткуда и которая обязана быть видна всегда.
+  const elapsed = elapsedPhrase(gm.clock.startDate, gm.clock.date);
+  if (elapsed) {
     parts.push(
-      elapsed
-        ? `Now: ${clockStr}\nThe story began on ${gm.clock.startDate} — ${elapsed} of in-story time have passed since then. ` +
-            `Everyone has aged and moved on accordingly: never write or reason as if the story were still at its beginning.`
-        : `Now: ${clockStr}`
+      `The story began on ${gm.clock.startDate} — ${elapsed} of in-story time have passed since then. ` +
+        `Everyone has aged and moved on accordingly: never write or reason as if the story were still at its beginning.`
     );
   }
   // Досье персонажей ПЕРЕЕХАЛИ в единую картотеку (whoIsWhoBlock): держать их ещё
@@ -590,19 +613,15 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   const hasEconomy = financeOn || phoneOn;
   const parts: string[] = [];
 
-  // Время/место.
-  const when = [clock.date, clock.time].filter(Boolean).join(', ');
-  if (when) parts.push(`Date/time: ${when}`);
-  if (clock.location) {
-    // Штамп возраста: запись обновляет сама модель, и без пометки она читалась как
-    // «герой сейчас здесь» даже спустя десятки ходов после переезда.
-    const at = state.gm.clock.locationAtTurn ?? 0;
-    const age = at ? state.turnCount - at : null;
-    const note =
-      age !== null && age > 2
-        ? ` (recorded ${age} turns ago — if the story has moved since, the story wins: emit location_change)`
-        : '';
-    parts.push(`Location: ${clock.location}${note}`);
+  // Время и место НЕ печатаем здесь. Раньше дата и локация повторялись в промпте
+  // трижды — тут, в блоке Game Master и в финальной сводке, — и три копии могли
+  // разойтись между собой. Значения теперь ровно в одном месте: в блоке STATE RIGHT
+  // NOW в самом конце запроса, то есть там, где модель читает их последними.
+  if (clock.date || clock.location) {
+    parts.push(
+      'Current date, time and place are given ONCE, in the STATE RIGHT NOW block at the very end of this request. ' +
+        'That block is the only authoritative copy — do not reconstruct time or place from anything above it.'
+    );
   }
 
   // Проектные статы с ТЕКУЩИМИ значениями и точными id — чтобы модель могла и читать,
@@ -1080,6 +1099,13 @@ export async function buildRequest(
   if (clockNow) {
     const el = elapsedPhrase(state.gm.clock.startDate, state.gm.clock.date);
     nowBits.push(`Date/time/place: ${clockNow}${el ? ` (${el} since the story began)` : ''}`);
+  }
+  const locAt = state.gm.clock.locationAtTurn ?? 0;
+  const locAge = locAt ? state.turnCount - locAt : null;
+  if (locAge !== null && locAge > 2) {
+    nowBits.push(
+      `(the place above was recorded ${locAge} turns ago — if the story has moved since, THE STORY WINS: continue from where it actually is and emit location_change)`
+    );
   }
   if (state.onScreen.length) nowBits.push(`In the scene: ${onScreenState(project, state)}`);
   // Статусы тех, кто сейчас на сцене, — только свежие: старые пусть остаются
