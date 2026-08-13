@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore, type AvatarSubject } from '../playerStore';
 import { describePerson } from '../../../ai/phonePhoto';
+import { resolvePerson } from '../../../ai/characterRegistry';
 import { AssetImage } from '../../../shared/ui';
 import { defaultPhoneConfig, defaultFinanceConfig, contactDisplayName, PHONE_BALANCE_STAT, type PhoneConfig, type PhoneChat, type RecurringEntry } from '../../../shared/types';
 import { resolveSprite } from '../../../shared/outfits';
@@ -244,13 +245,17 @@ function useMessenger() {
     });
   };
   const blobOf = (assetId?: string) => (assetId ? project?.assets.find((a) => a.id === assetId)?.blobKey : undefined);
-  // Аватар контакта: своя картинка → нейтральный спрайт привязанного персонажа.
+  // Аватар контакта: своя картинка → реф внешности из CG-студии → нейтральный
+  // спрайт. Персонажа ищем общим опознанием: контакт, заведённый на запись
+  // реестра, раньше до своей анкеты не доходил и оставался буквой.
   const avatarOf = (id: string): string | undefined => {
     const c = contactOf(id);
     if (c?.avatarAssetId) return blobOf(c.avatarAssetId);
-    const charId = c?.characterId || id;
-    const char = project?.characters.find((x) => x.id === charId);
-    return char ? blobOf(resolveSprite(char, undefined, 'neutral')) : undefined;
+    if (!project || !s.state) return undefined;
+    const who = resolvePerson(project, s.state, { id: c?.id || id, name: c?.name });
+    const refs = project.imageGen?.references || {};
+    for (const pid of who?.ids || [id]) if (refs[pid]) return blobOf(refs[pid]);
+    return who?.char ? blobOf(resolveSprite(who.char, undefined, 'neutral')) : undefined;
   };
   const chatTitle = (chat: PhoneChat): string =>
     chat.kind === 'group' ? chat.title || 'Группа' : nameOf(chat.participantIds[0] || '');
@@ -872,9 +877,13 @@ function ChatListScreen({ onBack, onOpenChat }: { onBack: () => void; onOpenChat
     if (!s.state) return;
     setScan('busy');
     try {
+      // «Кого уже знаем» — все имена и прозвища известных людей, а не только то,
+      // как они подписаны в телефоне: иначе сканер предлагал завести «Дэма»,
+      // хотя «Дэмиан» уже в контактах.
       const known = [
         ...contacts.map((c) => nameOf(c.id)),
         ...(s.project?.characters || []).map((c) => c.name),
+        ...(s.state.gm.registry || []).flatMap((e) => [e.canonicalName, ...e.aliases]),
       ];
       const names = await scanContacts(s.state, known, s.project ?? undefined);
       if (!names.length) {

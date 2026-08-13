@@ -1,9 +1,17 @@
-import type { Project, AiTurn, Beat, RuntimeState, RelationshipStats, Character } from '../shared/types';
+import type {
+  Project,
+  AiTurn,
+  Beat,
+  RuntimeState,
+  RelationshipStats,
+  Character,
+} from '../shared/types';
 import { EMOTIONS, AUDIO_MOODS, RELATIONSHIP_FIELDS, PHONE_BALANCE_STAT } from '../shared/types';
 import { aiTurnSchema } from './schema';
 import { characterOutfits, defaultOutfitTag } from '../shared/outfits';
 import { clamp } from '../shared/utils';
 import { isValidDate, parseTime } from '../shared/gameDate';
+import { resolvePerson } from './characterRegistry';
 
 // Статы отношений адресуются как statId = `rel:<charId>:<field>` (см. CR v2 §C.3).
 const REL_FIELD_SET = new Set<string>(RELATIONSHIP_FIELDS);
@@ -61,15 +69,28 @@ export function extractJson(raw: string): string | null {
 
 const EMOTION_SET = new Set<string>(EMOTIONS);
 
-// Резолв ссылки на персонажа: точный id, иначе имя (без регистра). Модели (особенно
+// Резолв ссылки на персонажа: точный id → имя → ПРОЗВИЩЕ. Модели (особенно
 // Gemini) часто пишут отображаемое ИМЯ вместо id — раньше такие биты молча
-// выбрасывались (наряды «не менялись», реплики теряли спрайт). Чиним, не роняем.
-export function charByRef(project: Project, ref: unknown): Character | undefined {
+// выбрасывались (наряды «не менялись», реплики теряли спрайт).
+//
+// Прозвище было отдельной дырой: ростер сам сообщает модели «aka: Дэм», модель
+// послушно пишет «Дэм» — и реплика любовного интереса деградировала в безымянного
+// NPC, наряд не менялся, а изменение отношений `rel:Дэм:affection` выбрасывалось
+// целиком. Опознание здесь ровно то же, что и во всей игре (characterRegistry),
+// а не своё собственное: иначе разбор ответа опять считал бы человека другим.
+export function charByRef(
+  project: Project,
+  ref: unknown,
+  state?: RuntimeState
+): Character | undefined {
   if (typeof ref !== 'string' || !ref.trim()) return undefined;
   const exact = project.characters.find((c) => c.id === ref);
   if (exact) return exact;
   const n = ref.trim().toLowerCase();
-  return project.characters.find((c) => c.name.trim().toLowerCase() === n);
+  const byName = project.characters.find((c) => c.name.trim().toLowerCase() === n);
+  if (byName) return byName;
+  if (!state) return undefined;
+  return resolvePerson(project, state, { id: ref.trim(), name: ref.trim() })?.char;
 }
 
 // Алиасы полей отношений, которые модели пишут вместо канонических.
@@ -101,7 +122,7 @@ export function stripMoveTag(text: string): string {
 }
 
 // Чинит один beat против манифеста (используется и потоковым, и обычным путём).
-export function repairBeat(project: Project, b: any): Beat {
+export function repairBeat(project: Project, b: any, state?: RuntimeState): Beat {
   const txt = (v: unknown) => stripMoveTag(String(v ?? ''));
   // Динамический фон бита: резолвим по id / имени / тегу, иначе — undefined
   // (движок протянет прежний). Всегда undefined на невалидном — без крашей.
@@ -118,7 +139,7 @@ export function repairBeat(project: Project, b: any): Beat {
   }
   // outfit_change: персонаж по id ИЛИ имени + каноничный (по регистру) наряд, иначе — игнор.
   if (b?.type === 'outfit_change') {
-    const ch = charByRef(project, b.characterId);
+    const ch = charByRef(project, b.characterId, state);
     const raw = typeof b.outfit === 'string' ? b.outfit.trim() : '';
     const canon = ch && raw ? characterOutfits(ch).find((o) => o.toLowerCase() === raw.toLowerCase()) : undefined;
     if (ch && canon) return { type: 'outfit_change', characterId: ch.id, outfit: canon };
@@ -137,13 +158,13 @@ export function repairBeat(project: Project, b: any): Beat {
     return { type: 'money_change', amount, reason: typeof b.reason === 'string' ? b.reason : undefined };
   }
   if (b?.type === 'sms_incoming') {
-    const ch = charByRef(project, b.characterId);
+    const ch = charByRef(project, b.characterId, state);
     const text = txt(b.text);
     if (ch && text.trim()) return { type: 'sms_incoming', characterId: ch.id, text };
     return { type: 'narration', text: '' };
   }
   if (b?.type === 'contact_added') {
-    const ch = charByRef(project, b.characterId);
+    const ch = charByRef(project, b.characterId, state);
     if (ch) return { type: 'contact_added', characterId: ch.id };
     return { type: 'narration', text: '' };
   }
@@ -208,7 +229,7 @@ export function repairBeat(project: Project, b: any): Beat {
   const position = ['left', 'center', 'right'].includes(b.position) ? b.position : 'center';
   // Персонаж по id ИЛИ имени (модели пишут «Дэмиан» вместо char_x — раньше такая
   // реплика деградировала в NPC без спрайта/наряда и рвала непрерывность сцены).
-  let ch = charByRef(project, b.characterId);
+  let ch = charByRef(project, b.characterId, state);
   // ЯВНОЕ ИМЯ ПОБЕЖДАЕТ (фикс: «реплику NPC вещает анкетный персонаж»). Модели часто
   // заполняют ОБА поля — name эпизодника + случайный/залипший characterId анкетного
   // персонажа. Раньше characterId выигрывал, и барменскую фразу произносил любовный
@@ -216,7 +237,7 @@ export function repairBeat(project: Project, b: any): Beat {
   // доверяем имени: это либо другой анкетный персонаж, либо NPC.
   const givenName = typeof b.name === 'string' ? b.name.trim() : '';
   if (givenName && (!ch || ch.name.trim().toLowerCase() !== givenName.toLowerCase())) {
-    const byName = charByRef(project, givenName);
+    const byName = charByRef(project, givenName, state);
     ch = byName; // нашли анкетного по имени — он; не нашли → undefined ⇒ NPC ниже
   }
   if (ch) {
@@ -270,7 +291,11 @@ export function repairScene(
 // (rel:Дэмиан:affection) или phone_balance молча выбрасывался. Теперь чиним:
 // id как есть → имя стата (без регистра) → rel с резолвом персонажа по имени
 // и алиасами полей → phone_balance. Невалидное — по-прежнему отбрасываем.
-export function normalizeStatId(project: Project, raw: unknown): string | null {
+export function normalizeStatId(
+  project: Project,
+  raw: unknown,
+  state?: RuntimeState
+): string | null {
   if (typeof raw !== 'string' || !raw.trim()) return null;
   const s = raw.trim();
   if (project.stats.some((d) => d.id === s)) return s;
@@ -284,7 +309,7 @@ export function normalizeStatId(project: Project, raw: unknown): string | null {
       const ref = rest.slice(0, idx);
       const fieldRaw = rest.slice(idx + 1).trim().toLowerCase();
       const field = REL_FIELD_ALIAS[fieldRaw] || fieldRaw;
-      const ch = charByRef(project, ref);
+      const ch = charByRef(project, ref, state);
       if (ch && REL_FIELD_SET.has(field)) return `rel:${ch.id}:${field}`;
     }
   }
@@ -295,21 +320,22 @@ function repair(
   project: Project,
   parsed: AiTurn,
   currentBg: string | null,
-  currentMood: string | null
+  currentMood: string | null,
+  state?: RuntimeState
 ): AiTurn {
   const scene = repairScene(project, parsed.scene, currentBg, currentMood);
-  const beats: Beat[] = parsed.beats.map((b) => repairBeat(project, b));
+  const beats: Beat[] = parsed.beats.map((b) => repairBeat(project, b, state));
 
   // Нормализуем statId (id/имя/rel-имя/phone_balance); ненайденные отбрасываем.
   const statChanges = parsed.statChanges
     .map((s) => {
-      const id = normalizeStatId(project, s.statId);
+      const id = normalizeStatId(project, s.statId, state);
       return id ? { ...s, statId: id } : null;
     })
     .filter((s): s is AiTurn['statChanges'][number] => !!s);
 
   const choices = parsed.choices.map((c) => {
-    const costId = c.cost ? normalizeStatId(project, c.cost.statId) : null;
+    const costId = c.cost ? normalizeStatId(project, c.cost.statId, state) : null;
     return {
       ...c,
       text: stripMoveTag(c.text),
@@ -324,7 +350,8 @@ export function parseAiResponse(
   raw: string,
   project: Project,
   currentBg: string | null,
-  currentMood: string | null
+  currentMood: string | null,
+  state?: RuntimeState
 ): ParseResult {
   const json = extractJson(raw);
   if (!json) return { ok: false, error: 'В ответе нет JSON-объекта' };
@@ -338,7 +365,7 @@ export function parseAiResponse(
   if (!result.success) {
     return { ok: false, error: 'Ответ не соответствует схеме: ' + result.error.issues[0]?.message };
   }
-  const turn = repair(project, result.data as AiTurn, currentBg, currentMood);
+  const turn = repair(project, result.data as AiTurn, currentBg, currentMood, state);
   return { ok: true, turn };
 }
 

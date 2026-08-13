@@ -6,6 +6,7 @@ import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { expandMacros } from './macros';
 import { formatClock } from './gameMaster';
+import { resolvePerson, nameHit } from './characterRegistry';
 import { logEvent } from '../shared/logStore';
 
 // Мессенджер телефона (Batch 7 §7.2). Отдельный лёгкий вызов ИИ: персонаж
@@ -39,7 +40,13 @@ export function heroNameOf(project: Project, state: RuntimeState): string {
 
 export function findContact(state: RuntimeState, id: string): PhoneContact | undefined {
   const list = state.phone?.contacts || [];
-  return list.find((c) => c.id === id) || list.find((c) => c.characterId === id);
+  // Ищем по всем трём привязкам. registryId раньше не проверялся, и контакт,
+  // заведённый на человека без анкеты, не находился по id его записи в реестре.
+  return (
+    list.find((c) => c.id === id) ||
+    list.find((c) => c.characterId === id) ||
+    list.find((c) => c.registryId === id)
+  );
 }
 
 // Профиль контакта для system-промпта. Персонаж проекта → полная карточка;
@@ -51,21 +58,23 @@ function contactProfile(project: Project, state: RuntimeState, contact: PhoneCon
   // контакта, заведённого сканированием), поэтому это не «либо-либо»: досье,
   // реестр и авторская заметка ДОПОЛНЯЮТ карточку, а не заменяются ею.
   const heroName = heroNameOf(project, state);
-  const char = contact.characterId ? project.characters.find((c) => c.id === contact.characterId) : undefined;
+  // Все записи об этом человеке разом — тем же опознанием, что и везде.
+  const who = resolvePerson(project, state, { id: contact.id, name: contact.name });
+  const char = who?.char;
   const cardFilled = !!char && !!(char.card.personality.trim() || char.card.speechStyle.trim() || char.card.backstory.trim());
   if (char && cardFilled) {
     parts.push(characterProfile(project, state, char.id));
   } else {
     parts.push(`You ARE ${name}. You are texting ${heroName} from your phone — this is a private messenger chat, NOT the main story scene.`);
   }
-  const reg = contact.registryId ? state.gm.registry?.find((r) => r.id === contact.registryId) : undefined;
+  const reg = who?.entry;
   if (reg) {
     parts.push(`Who you are (from the story's character registry): ${reg.canonicalName}${reg.aliases.length ? ` (also called: ${reg.aliases.join(', ')})` : ''}. Current status: ${reg.status || 'unknown'}.`);
   }
-  // Досье Game Master по имени — если оно есть, оно свежее реестра.
-  const dossier = state.gm.characters.find(
-    (c) => (contact.characterId && c.charId === contact.characterId) || c.name.toLowerCase() === name.toLowerCase()
-  );
+  // Досье Game Master — если оно есть, оно свежее реестра. По точному имени
+  // запись, заведённая под прозвищем, не находилась: бот в переписке жил без
+  // собственного досье, хотя в панели Game Master оно было.
+  const dossier = who?.dossier;
   if (dossier) {
     const bits = [dossier.dossier, dossier.roleToHero && `For ${heroName} you are: ${dossier.roleToHero}`, dossier.personality && `Personality: ${dossier.personality}`, dossier.mood && `Current mood: ${dossier.mood}`]
       .filter(Boolean)
@@ -140,9 +149,7 @@ function heroBlock(project: Project, state: RuntimeState, contact?: PhoneContact
     if (hero.card.appearance.trim()) about.push(expandMacros(hero.card.appearance, ctx).slice(0, 300));
     if (hero.card.personality.trim()) about.push(expandMacros(hero.card.personality, ctx).slice(0, 300));
   }
-  const heroDossier = state.gm.characters.find(
-    (c) => (hero && c.charId === hero.id) || c.name.toLowerCase() === heroName.toLowerCase()
-  );
+  const heroDossier = resolvePerson(project, state, { id: hero?.id, name: heroName })?.dossier;
   if (heroDossier?.dossier?.trim()) about.push(heroDossier.dossier.trim().slice(0, 300));
   if (about.length) lines.push(`Who ${heroName} is: ${about.join('. ')}`);
 
@@ -150,19 +157,20 @@ function heroBlock(project: Project, state: RuntimeState, contact?: PhoneContact
   if (contact) {
     const contactName = nameOfContact(project, state, contact);
     const tie: string[] = [];
-    const dossier = state.gm.characters.find(
-      (c) => (contact.characterId && c.charId === contact.characterId) || c.name.toLowerCase() === contactName.toLowerCase()
-    );
+    const who = resolvePerson(project, state, { id: contact.id, name: contact.name });
+    const dossier = who?.dossier;
     if (dossier?.roleToHero?.trim()) tie.push(`for ${heroName} you are: ${dossier.roleToHero.trim()}`);
-    // Сетка связей Game Master — по именам, в обе стороны.
+    // Сетка связей Game Master — по именам, в обе стороны. Имя в ребре может
+    // оказаться прозвищем («Дэм → Кейт»), поэтому сравниваем со ВСЕМИ именами
+    // человека, а не только с тем, как он подписан в телефоне: иначе связь
+    // «кто он герою» просто пропадала.
+    const isContact = (n?: string) =>
+      !!n && (nameHit(n, contactName) || (who?.aliases || []).some((a) => nameHit(a, n)));
+    const isHero = (n?: string) => !!n && nameHit(n, heroName);
     for (const edge of state.gm.relations || []) {
-      const from = edge.from?.trim().toLowerCase();
-      const to = edge.to?.trim().toLowerCase();
-      const cn = contactName.toLowerCase();
-      const hn = heroName.toLowerCase();
       if (!edge.label?.trim()) continue;
-      if (from === cn && to === hn) tie.push(`${contactName} → ${heroName}: ${edge.label.trim()}`);
-      else if (from === hn && to === cn) tie.push(`${heroName} → ${contactName}: ${edge.label.trim()}`);
+      if (isContact(edge.from) && isHero(edge.to)) tie.push(`${contactName} → ${heroName}: ${edge.label.trim()}`);
+      else if (isHero(edge.from) && isContact(edge.to)) tie.push(`${heroName} → ${contactName}: ${edge.label.trim()}`);
     }
     if (contact.note?.trim()) tie.push(contact.note.trim().slice(0, 200));
     if (tie.length) lines.push(`How ${heroName} and you are connected: ${tie.join('; ')}.`);

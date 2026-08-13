@@ -1,5 +1,6 @@
 import type { Project, RuntimeState, GmCharacter } from '../shared/types';
 import { runCompletion } from './providers';
+import { nameHit } from './characterRegistry';
 
 // «Волшебная палочка» Game Master: сканирует контекст истории и автозаполняет данные
 // (персонаж / события / адженда) через основную LLM. Возвращает распарсенный JSON;
@@ -166,13 +167,13 @@ export async function scanContacts(
     '("Мама", "Папа", "Mom", "Dad") — do not skip them. ' +
     'EXCLUDE: strangers, one-off passersby, groups/organisations, and people the hero has no personal tie to. ' +
     'Reply with ONLY a JSON array of names (strings), most relevant first, at most 12.';
-  const known2 = known.map((n) => n.toLowerCase());
+  // Отсев уже известных и дедуп — с точностью до падежа: «Лиза» и «Лизу» это
+  // один человек, и предлагать его дважды не надо.
   const arr = await scanJson(system, contextText(state, project));
   return sArr(arr)
     .map((n) => n.trim())
-    .filter((n) => n && !known2.includes(n.toLowerCase()))
-    // Дедуп без учёта регистра.
-    .filter((n, i, a) => a.findIndex((x) => x.toLowerCase() === n.toLowerCase()) === i)
+    .filter((n) => n && !known.some((k) => nameHit(k, n)))
+    .filter((n, i, a) => a.findIndex((x) => nameHit(x, n)) === i)
     .slice(0, 12);
 }
 

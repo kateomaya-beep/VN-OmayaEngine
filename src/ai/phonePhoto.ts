@@ -4,7 +4,8 @@ import { putAsset } from '../storage/db';
 import { uid } from '../shared/utils';
 import { logEvent } from '../shared/logStore';
 import { nameOfContact } from './phoneChat';
-import { renderImage, resolvePerson } from './imageCast';
+import { renderImage } from './imageCast';
+import { resolvePerson, describePerson as describeOf } from './characterRegistry';
 
 // Фото, которое присылает БОТ (Телефон 2.0). Решение пользователя: генерируем
 // через то же image-API, что и камера/CG-студия — отдельного подключения нет.
@@ -26,7 +27,7 @@ export interface PersonSubject {
 export function describePerson(project: Project, state: RuntimeState, subject: PersonSubject): string {
   const own = subject.description?.trim();
   if (own) return own;
-  return resolvePerson(project, state, { id: subject.personId, name: subject.name })?.description || '';
+  return describeOf(resolvePerson(project, state, { id: subject.personId, name: subject.name }));
 }
 
 // Аватарка для мессенджера. Раньше сюда уходил только текст из поля ввода — и

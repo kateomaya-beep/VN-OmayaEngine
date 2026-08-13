@@ -11,6 +11,7 @@ import { renderImage } from '../../ai/imageCast';
 import { getApiKey } from '../../ai/keys';
 import { resolveSprite } from '../../shared/outfits';
 import { formatClock, recordChatEvent } from '../../ai/gameMaster';
+import { resolvePerson } from '../../ai/characterRegistry';
 import { uploadAsset } from '../../storage/assetOps';
 import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, saveProject, deleteSave, putAsset } from '../../storage/db';
@@ -924,18 +925,30 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const st = get();
     if (!st.project || !st.state) return;
     const project = st.project;
-    // Собираем новые npc-персонажи для имён без карточки; затем — контакты в телефон.
+    const state = st.state;
+    // ФАБРИКА ДУБЛЕЙ, КОТОРОЙ БОЛЬШЕ НЕТ. Раньше имя сверялось только с точным
+    // именем анкеты: сканер возвращает «того, как его зовёт история» — «Дэм»
+    // вместо «Дэмиан», «Мама» вместо «мама Кейт» — и движок заводил ВТОРУЮ
+    // анкету на того же человека плюс контакт на неё. Теперь имя проходит то же
+    // опознание, что и везде: анкета → запись реестра → досье.
+    //
+    // И второе: если человека знает только реестр (анкеты у него нет — мама,
+    // сестра парня, коллега), контакт привязывается К ЗАПИСИ РЕЕСТРА. Пустая
+    // npc-анкета «на всякий случай» — это ещё одна запись о том же человеке,
+    // то есть тот же дубль, просто заведённый нами самими.
     const created: { id: string; name: string }[] = [];
-    const resolveId = (name: string): string => {
-      const existing = project.characters.find((c) => c.name.toLowerCase() === name.toLowerCase());
-      if (existing) return existing.id;
+    const bind = (name: string): { characterId?: string; registryId?: string; contactId: string } => {
+      const known = resolvePerson(project, state, { name });
+      if (known?.contact) return { contactId: known.contact.id, characterId: known.contact.characterId, registryId: known.contact.registryId };
+      if (known?.char) return { contactId: known.char.id, characterId: known.char.id };
+      if (known?.entry) return { contactId: known.entry.id, registryId: known.entry.id };
       const already = created.find((c) => c.name.toLowerCase() === name.toLowerCase());
-      if (already) return already.id;
+      if (already) return { contactId: already.id, characterId: already.id };
       const id = uid('char');
       created.push({ id, name });
-      return id;
+      return { contactId: id, characterId: id };
     };
-    const contactIds = names.map((n) => ({ name: n, id: resolveId(n) }));
+    const contactIds = names.map((n) => ({ name: n, ...bind(n) }));
     if (created.length) {
       void get().patchProject((p) => {
         for (const c of created) {
@@ -957,7 +970,20 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (project.phone?.enabled) {
       get().patchPhone((ph) => {
         for (const c of contactIds) {
-          if (!ph.contacts.some((x) => x.characterId === c.id)) ph.contacts.push({ id: c.id, characterId: c.id });
+          const dup = ph.contacts.some(
+            (x) =>
+              x.id === c.contactId ||
+              (!!c.characterId && x.characterId === c.characterId) ||
+              (!!c.registryId && x.registryId === c.registryId)
+          );
+          if (dup) continue;
+          ph.contacts.push({
+            id: c.contactId,
+            characterId: c.characterId,
+            registryId: c.registryId,
+            // Имя нужно тем, у кого нет анкеты: иначе контакт остаётся безымянным.
+            name: c.characterId ? undefined : c.name,
+          });
         }
       });
     }
@@ -967,7 +993,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const st = get();
     if (!st.project || !st.state) return;
     const project = st.project;
-    const existing = project.characters.find((c) => c.name.toLowerCase() === sheet.name.toLowerCase());
+    // Анкету ищем тем же опознанием: «Дэм» и «Дэмиан» — один человек, и экспорт
+    // сгенерированной анкеты не должен заводить второго.
+    const existing = resolvePerson(project, st.state, { name: sheet.name })?.char;
     const cid = existing?.id ?? uid('char');
     void get().patchProject((p) => {
       const card = {

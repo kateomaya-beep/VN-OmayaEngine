@@ -1,6 +1,6 @@
 import type { GameMasterState, WorldStateUpdate, GmCharacter, GmClock } from '../shared/types';
 import { uid } from '../shared/utils';
-import { findRegistryMatch, normName } from './characterRegistry';
+import { findRegistryMatch, normName, nameHit } from './characterRegistry';
 
 // Человекочитаемая внутриигровая дата/время: "3 March 1024 · 14:30 · Plaza".
 export function formatClock(c: GmClock): string {
@@ -73,14 +73,16 @@ export function mergeWorldState(
     // Отсюда и дубликаты персонажей в Game Master. Теперь досье пользуется тем же
     // сопоставлением, что и реестр: id → алиас в реестре → похожее имя.
     let idx = u.charId ? next.characters.findIndex((c) => c.charId === u.charId) : -1;
-    if (idx === -1) {
-      const viaRegistry = findRegistryMatch(next.registry || [], u.name);
-      if (viaRegistry) {
-        const names = [viaRegistry.entry.canonicalName, ...viaRegistry.entry.aliases].map(normName);
-        idx = next.characters.findIndex(
-          (c) => (c.charId && c.charId === viaRegistry.entry.id) || names.includes(normName(c.name))
-        );
-      }
+    // Анкета, которую реестр знает под этим именем/прозвищем. Нужна и для поиска
+    // существующей записи, и для привязки НОВОЙ: досье, заведённое под прозвищем
+    // без charId, оставалось сиротой — в панели Game Master запись видна, а в
+    // ростере персонаж без досье, потому что связать их было нечем.
+    const viaRegistry = findRegistryMatch(next.registry || [], u.name);
+    if (idx === -1 && viaRegistry) {
+      const names = [viaRegistry.entry.canonicalName, ...viaRegistry.entry.aliases].map(normName);
+      idx = next.characters.findIndex(
+        (c) => (c.charId && c.charId === viaRegistry.entry.id) || names.includes(normName(c.name))
+      );
     }
     if (idx === -1) idx = next.characters.findIndex((c) => normName(c.name) === normName(u.name));
     const set = (cur: GmCharacter, key: keyof GmCharacter, val: unknown) => {
@@ -88,7 +90,7 @@ export function mergeWorldState(
     };
     if (idx === -1) {
       const c: GmCharacter = {
-        charId: u.charId || undefined,
+        charId: u.charId || viaRegistry?.entry.sheetId || undefined,
         name: u.name,
         dossier: u.dossier || '',
         appearance: u.appearance || '',
@@ -113,7 +115,7 @@ export function mergeWorldState(
       set(c, 'status', u.status);
       set(c, 'location', u.location);
       if (Array.isArray(u.tags) && u.tags.length) c.tags = u.tags;
-      if (u.charId && !c.charId) c.charId = u.charId;
+      if (!c.charId) c.charId = u.charId || viaRegistry?.entry.sheetId || c.charId;
       // Отмечаем ход обновления только если что-то реально пришло: иначе досье
       // выглядело бы свежим каждый ход, даже когда ИИ его не трогал.
       if (u.dossier || u.status || u.mood || u.outfit || u.location || u.roleToHero) c.updatedAtTurn = turn;
@@ -123,7 +125,10 @@ export function mergeWorldState(
   // Память локаций — upsert по имени (без регистра): дополняем описание/теги.
   for (const u of update.locations || []) {
     if (!u || !u.name || !u.name.trim()) continue;
-    const idx = next.locations.findIndex((l) => l.name.toLowerCase() === u.name.toLowerCase());
+    // Сравниваем нормализованно: «Кафе «Уют»» и «кафе Уют» — одно место.
+    // Точное совпадение строк заводило вторую запись на ту же локацию, и память
+    // мест распухала дублями с разными описаниями.
+    const idx = next.locations.findIndex((l) => normName(l.name) === normName(u.name));
     if (idx === -1) {
       next.locations.push({
         id: uid('loc'),
@@ -139,13 +144,20 @@ export function mergeWorldState(
     }
   }
 
-  // Сетка отношений между персонажами — upsert по (from,to).
+  // Сетка отношений между персонажами — upsert по (from,to). Имена сверяем с
+  // точностью до падежа: «Дэмиан → Кейт» и «Дэмиану → Кейт» это одно ребро, а не
+  // два. Прозвища ловит реестр — приводим концы ребра к каноничному имени, иначе
+  // «Дэм → Кейт» жило параллельно «Дэмиан → Кейт» и сетка распухала дублями.
+  const canonEnd = (n: string): string => {
+    const m = findRegistryMatch(next.registry || [], n);
+    return m?.exact ? m.entry.canonicalName : n;
+  };
   for (const r of update.relations || []) {
     if (!r || !r.from || !r.to) continue;
-    const idx = next.relations.findIndex(
-      (e) => e.from.toLowerCase() === r.from.toLowerCase() && e.to.toLowerCase() === r.to.toLowerCase()
-    );
-    if (idx === -1) next.relations.push({ from: r.from, to: r.to, label: r.label || '' });
+    const from = canonEnd(r.from);
+    const to = canonEnd(r.to);
+    const idx = next.relations.findIndex((e) => nameHit(e.from, from) && nameHit(e.to, to));
+    if (idx === -1) next.relations.push({ from, to, label: r.label || '' });
     else if (r.label) next.relations[idx].label = r.label;
   }
 

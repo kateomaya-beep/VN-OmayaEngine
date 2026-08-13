@@ -4,7 +4,7 @@ import { pushToast } from '../shared/toast';
 import { logEvent } from '../shared/logStore';
 import { resolveEmoji } from '../shared/emojiDict';
 import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
-import { syncRegistry, findRegistryMatch, newRegistryId, normName } from './characterRegistry';
+import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson } from './characterRegistry';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
@@ -212,11 +212,18 @@ export async function applyTurn(
   // мессенджере появлялся чат героя с самим собой (каждая его реплика на сцене
   // вызывала addContact). Себе не пишут.
   const protagonistId = project.characters.find((c) => c.role === 'protagonist')?.id;
-  const addContact = (cid: string) => {
-    if (!phoneOn || !cid || cid === protagonistId) return;
-    if (!phone.contacts.some((c) => c.characterId === cid || c.id === cid)) {
-      phone.contacts.push({ id: cid, characterId: cid });
-    }
+  // Возвращает id КОНТАКТА этого человека — существующего или только что
+  // заведённого. Раньше совпадение искали только по characterId/id самого
+  // контакта: у человека, заведённого в телефон через запись реестра, движок
+  // этого не видел и заводил ВТОРОЙ контакт на того же. Теперь спрашиваем общее
+  // опознание — оно знает про все привязки сразу.
+  const addContact = (cid: string): string | null => {
+    if (!phoneOn || !cid || cid === protagonistId) return null;
+    const who = resolvePerson(project, state, { id: cid });
+    const known = phone.contacts.find((c) => who?.ids.includes(c.id) || (!!c.characterId && who?.ids.includes(c.characterId)));
+    if (known) return known.id;
+    phone.contacts.push({ id: cid, characterId: cid });
+    return cid;
   };
   // Чат с контактом: находим личный или заводим новый (переписка живёт в чатах).
   // Штамп внутриигрового времени для сообщений телефона: переписка должна лежать
@@ -227,10 +234,13 @@ export async function applyTurn(
     turn: nextTurnNumber,
     at: Date.now(),
   });
-  const directChat = (cid: string) => {
-    let chat = phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === cid);
+  // Чат ключуется id КОНТАКТА — так же, как его заводит интерфейс. Ключ по id
+  // персонажа разводил одного человека на две переписки: одну видел игрок,
+  // другую — движок.
+  const directChat = (contactId: string) => {
+    let chat = phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === contactId);
     if (!chat) {
-      chat = { id: cid, kind: 'direct', participantIds: [cid], messages: [] };
+      chat = { id: contactId, kind: 'direct', participantIds: [contactId], messages: [] };
       phone.chats.push(chat);
     }
     return chat;
@@ -363,13 +373,13 @@ export async function applyTurn(
       continue;
     }
     if (b.type === 'sms_incoming') {
-      if (phoneOn && b.characterId !== protagonistId) {
-        addContact(b.characterId);
-        const chat = directChat(b.characterId);
+      const ctId = addContact(b.characterId);
+      if (phoneOn && ctId) {
+        const chat = directChat(ctId);
         chat.messages.push({
           id: uid('msg'),
           from: 'contact',
-          senderId: b.characterId,
+          senderId: ctId,
           text: b.text,
           ...stamp(),
         });
@@ -385,13 +395,13 @@ export async function applyTurn(
     // и плашкой «загружается»; картинку движок генерирует после хода (см. deliverPendingPhotos),
     // иначе ход игрока ждал бы медленный image-API.
     if (b.type === 'sms_photo') {
-      if (phoneOn && b.characterId !== protagonistId) {
-        addContact(b.characterId);
-        const chat = directChat(b.characterId);
+      const ctId = addContact(b.characterId);
+      if (phoneOn && ctId) {
+        const chat = directChat(ctId);
         chat.messages.push({
           id: uid('msg'),
           from: 'contact',
-          senderId: b.characterId,
+          senderId: ctId,
           text: b.caption?.trim() || '',
           photoPrompt: b.photo,
           pendingPhoto: true,
@@ -666,7 +676,9 @@ export async function runTurn(
     signal,
   });
 
-  let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
+  // Состояние отдаём разбору: модель называет людей так, как их зовёт ростер, —
+  // в том числе прозвищем. Без опознания «Дэм» не связывался с «Дэмианом».
+  let parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood, state);
 
   // One automatic retry on invalid JSON.
   if (!parsed.ok) {
@@ -689,7 +701,7 @@ export async function runTurn(
       reasoningEffort,
       signal,
     });
-    parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood);
+    parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood, state);
   }
 
   if (!parsed.ok || !parsed.turn) {
@@ -731,11 +743,14 @@ async function deliverFallbackSms(
 ): Promise<void> {
   try {
     if (!state.phone) return;
-    // Как и в ролле: контакты, иначе знакомые персонажи проекта.
+    // Кандидаты — КОНТАКТЫ телефона, кем бы они ни были привязаны. Раньше брались
+    // только те, у кого есть анкета персонажа: мама, сестра парня, коллега —
+    // все, кого игрок заводил через запись реестра, — написать первыми не могли
+    // никогда. Своих чатов у них при этом было сколько угодно.
     const heroId = project.characters.find((c) => c.role === 'protagonist')?.id;
     const contactIds = state.phone.contacts
-      .filter((c) => !c.hidden && c.characterId && c.characterId !== heroId)
-      .map((c) => c.characterId as string);
+      .filter((c) => !c.hidden && c.id !== heroId && c.characterId !== heroId)
+      .map((c) => c.id);
     const candidates = contactIds.length
       ? contactIds
       : project.characters
@@ -746,8 +761,10 @@ async function deliverFallbackSms(
     let chat = state.phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === pickId);
     const { texts: msgs, events } = await generateIncomingSms(project, state, pickId, chat?.messages || [], signal);
     if (!msgs.length) return;
-    // Пишущий автоматически становится контактом (если его ещё нет).
-    if (!state.phone.contacts.some((c) => c.characterId === pickId || c.id === pickId)) {
+    // Пишущий автоматически становится контактом (если его ещё нет) — по тому же
+    // опознанию, чтобы не завести второго на того же человека.
+    const whoWrites = resolvePerson(project, state, { id: pickId });
+    if (!state.phone.contacts.some((c) => whoWrites?.ids.includes(c.id) || (!!c.characterId && whoWrites?.ids.includes(c.characterId)))) {
       state.phone.contacts.push({ id: pickId, characterId: pickId });
     }
     if (!chat) {
@@ -769,7 +786,7 @@ async function deliverFallbackSms(
     chat.unread = true;
     // Если во входящем СМС произошло что-то значимое — оно ложится в ту же ленту
     // событий, что и события сцены (переписка — часть той же истории).
-    const senderName = project.characters.find((c) => c.id === pickId)?.name || '';
+    const senderName = whoWrites?.name || project.characters.find((c) => c.id === pickId)?.name || '';
     for (const ev of events) {
       state.gm = recordChatEvent(
         state.gm,

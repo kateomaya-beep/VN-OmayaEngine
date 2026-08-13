@@ -12,7 +12,7 @@ import { formatClock } from './gameMaster';
 import { parseDate, diffDays } from '../shared/gameDate';
 import { expandMacros, type MacroContext } from './macros';
 import { retrieveRelevant } from './vectorEngine';
-import { normName } from './characterRegistry';
+import { normName, resolvePerson, type Person } from './characterRegistry';
 import { estimateTokens } from '../shared/utils';
 
 // Builds the full request as a system string (layered core → style → jailbreak →
@@ -94,11 +94,14 @@ function assetManifest(project: Project): string {
 // и текущее состояние собраны вместе, а у состояния стоит отметка свежести.
 // Присутствие человека в телефоне — часть его записи в картотеке, а не отдельный
 // список. Так «кому можно написать» не расходится с «кто вообще есть».
-function phoneNote(state: RuntimeState, id: string): string {
+// Контакт берём из УЖЕ разрешённого человека — по любому его id. Раньше здесь
+// проверялись только id контакта и characterId, и человек, заведённый в телефон
+// через запись реестра (у кого нет анкеты: мама, сестра парня, коллега), в
+// ростере оказывался «не в телефоне»: рассказчик не знал, что ему можно писать.
+function phoneNote(state: RuntimeState, person: Person | null): string {
   const ph = state.phone;
-  if (!ph) return '';
-  const contact = ph.contacts.find((c) => c.id === id || c.characterId === id);
-  if (!contact) return '';
+  const contact = person?.contact;
+  if (!ph || !contact) return '';
   const groups = ph.chats
     .filter((ch) => ch.kind === 'group' && !ch.archived && ch.participantIds.includes(contact.id))
     .map((ch) => `"${ch.title || 'группа'}"`);
@@ -121,10 +124,14 @@ function whoIsWhoBlock(
   };
   const reg = state.gm.registry || [];
   const activeReg = reg.filter((e) => !reg.some((x) => x.merged?.includes(e.id)));
-  const dossierOf = (id: string | undefined, name: string) =>
-    state.gm.characters.find(
-      (c) => (id && c.charId === id) || c.name.toLowerCase() === name.toLowerCase()
-    );
+  // ОДНО опознание на человека — и досье, и контакт телефона берутся из него.
+  // По точному имени в нижнем регистре запись досье, заведённая под прозвищем
+  // («Дэм» при карточке «Дэмиан»), к персонажу не прилипала: в ростере он
+  // оставался без досье, а сама запись висела сиротой — видна в панели Game
+  // Master и невидима для модели. Резолв не из дешёвых, поэтому строго один раз
+  // на запись: ростер собирается КАЖДЫЙ ход, а индекс личностей — раз на ход.
+  const whoIs = (id: string | undefined, name: string) => resolvePerson(project, state, { id, name });
+  const dossierOf = (id: string | undefined, name: string) => whoIs(id, name)?.dossier;
   const onScreenOf = (id: string) => state.onScreen.find((o) => o.characterId === id);
   const rels = state.relationship || {};
 
@@ -187,7 +194,7 @@ function whoIsWhoBlock(
     }
     const d = dossierOf(c.id, c.name);
     if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
-    const ph = phoneNote(state, c.id);
+    const ph = phoneNote(state, whoIs(c.id, c.name));
     if (ph) lines.push(ph);
     const now = nowLine(c.id, c.name);
     if (now) lines.push(now);
@@ -224,7 +231,7 @@ function whoIsWhoBlock(
     const d = dossierOf(e.id, e.canonicalName);
     if (d?.dossier) lines.push(`Who they are: ${d.dossier}`);
     if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
-    const ph = phoneNote(state, e.id);
+    const ph = phoneNote(state, whoIs(e.id, e.canonicalName));
     if (ph) lines.push(ph);
     const now = nowLine(e.id, e.canonicalName) || (e.status ? `Now: status: ${e.status}` : '');
     if (now) lines.push(now);
