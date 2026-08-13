@@ -1085,6 +1085,7 @@ export interface WorldStateUpdate {
   relations?: GmRelationEdge[];
   locations?: Array<{ name: string; description?: string; tags?: string[] }>; // новые/изменённые локации
   event?: string; // анализ текущей сцены
+  eventLevel?: 'general' | 'important' | 'key'; // важность: key/important не вытесняются
   eventChars?: string[]; // с кем произошло событие
   mood?: string; // общее настроение сцены
   agendaAdd?: string[]; // новые задачи в адженду
@@ -1205,6 +1206,11 @@ export interface GmEvent {
   summary: string; // что произошло
   mood: string; // настроение сцены
   source: 'auto' | 'manual';
+  // Важность (как в Horae). Определяет, вытесняется ли событие из промпта: ключевые
+  // и важные видны ВСЕГДА, обычные — только последние N. Раньше уровня не было, и
+  // лента резалась просто по свежести: крупные вехи (переезд, роды, таймскип)
+  // вытеснялись бытовой мелочёвкой и переставали существовать для модели.
+  level?: 'general' | 'important' | 'key';
 }
 
 export interface GmTask {

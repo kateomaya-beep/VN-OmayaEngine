@@ -92,15 +92,6 @@ function assetManifest(project: Project): string {
 // реестр третье. Отсюда «алло, дочка уже есть, почему она снова беременна».
 // Теперь источник один: на каждого человека — один абзац, где идентичность, карточка
 // и текущее состояние собраны вместе, а у состояния стоит отметка свежести.
-// Через сколько ходов без подтверждения запись досье перестаёт уходить в промпт.
-// ПРИЧИНА: движок каждый ход просит модель прислать worldState и потом возвращает
-// это ей же как факт. Модель один раз написала «беременна» — движок увековечил, и
-// дальше сто ходов подаёт как истину. Отметка возраста лечит симптом; лечение
-// причины — затухание: не подтвердил N ходов, значит это уже не «сейчас».
-// Запись при этом НЕ удаляется: она остаётся в панели Game Master, её видно и можно
-// поправить руками. А если факт всё ещё верен, история его подтвердит.
-const STATUS_DECAY_TURNS = 30;
-
 function whoIsWhoBlock(
   project: Project,
   state: RuntimeState,
@@ -124,7 +115,6 @@ function whoIsWhoBlock(
   const rels = state.relationship || {};
 
   // «Сейчас» одной строкой + отметка возраста. Пустое — не печатаем вовсе.
-  const decayedNames: string[] = [];
   const nowLine = (id: string | undefined, name: string): string => {
     const d = dossierOf(id, name);
     const os = id ? onScreenOf(id) : undefined;
@@ -136,18 +126,16 @@ function whoIsWhoBlock(
     const out: string[] = [];
     if (os) out.push(`Present in the scene right now (emotion: ${os.emotion}${os.outfit ? `, outfit: ${os.outfit}` : ''})`);
     const age = d?.updatedAtTurn && turnNow ? turnNow - d.updatedAtTurn : null;
-    // Протухшую запись просто не показываем: пусть лучше модель не знает статуса,
-    // чем «знает» неправду столетней давности и отыгрывает её.
-    const decayed = age !== null && age > STATUS_DECAY_TURNS;
-    const recorded = decayed
-      ? []
-      : [
-          d?.status && `status: ${d.status}`,
-          d?.mood && `mood: ${d.mood}`,
-          d?.outfit && !os?.outfit && `outfit: ${d.outfit}`,
-          d?.location && !os && `at: ${d.location}`,
-        ].filter(Boolean);
-    if (decayed && (d?.status || d?.location)) decayedNames.push(`${name} (${age} ход.)`);
+    // Ничего не затухает и не выбрасывается. Персонаж, с которым давно не играли,
+    // обязан остаться известным — иначе движок сам создаёт амнезию. Свежесть
+    // обеспечивается не забыванием, а тем, что модель переписывает сводку по тем,
+    // кто в игре, КАЖДЫЙ ход (см. контракт worldState).
+    const recorded = [
+      d?.status && `status: ${d.status}`,
+      d?.mood && `mood: ${d.mood}`,
+      d?.outfit && !os?.outfit && `outfit: ${d.outfit}`,
+      d?.location && !os && `at: ${d.location}`,
+    ].filter(Boolean);
     if (recorded.length) {
       const stamp =
         age === null
@@ -225,14 +213,6 @@ function whoIsWhoBlock(
     entries.push(lines.join('\n'));
   }
 
-  if (decayedNames.length) {
-    logEvent(
-      'info',
-      'prompt',
-      `Записи досье не подтверждались больше ${STATUS_DECAY_TURNS} ходов и в промпт не идут: ${decayedNames.join(', ')}. ` +
-        `В панели Game Master они на месте — поправьте вручную, если факт всё ещё верен.`
-    );
-  }
   if (!entries.length) return '(no characters yet — introduce them via character_new)';
 
   return (
@@ -508,8 +488,11 @@ function gameMasterBlock(state: RuntimeState, turnNow = 0): string {
   const elapsed = elapsedPhrase(gm.clock.startDate, gm.clock.date);
   if (elapsed) {
     parts.push(
-      `The story began on ${gm.clock.startDate} — ${elapsed} of in-story time have passed since then. ` +
-        `Everyone has aged and moved on accordingly: never write or reason as if the story were still at its beginning.`
+      `The story began on ${gm.clock.startDate} — ${elapsed} of in-story time have passed since then.\n` +
+        `APPLY THAT ELAPSED TIME to everyone and everything, every turn: ages advance (someone who was 20 at the start ` +
+        `is now ${elapsed} older), children grow up and can walk and talk, wounds and pregnancies have long resolved, ` +
+        `jobs, homes and relationships have moved on, seasons turned. A character card describes who someone WAS when ` +
+        `it was written — add the elapsed time yourself instead of replaying the beginning.`
     );
   }
   // Досье персонажей ПЕРЕЕХАЛИ в единую картотеку (whoIsWhoBlock): держать их ещё
@@ -564,30 +547,50 @@ function gameMasterBlock(state: RuntimeState, turnNow = 0): string {
     );
   }
   if (gm.events.length) {
+    // Как давно это было — относительным сроком. Без него модель видит только даты
+    // и не чувствует дистанции: «вчера» и «два года назад» выглядят одинаково.
+    const ago = (date?: string): string => {
+      const a = date ? parseDate(date) : null;
+      const b = gm.clock.date ? parseDate(gm.clock.date) : null;
+      if (!a || !b) return '';
+      const d = diffDays(a, b);
+      if (d <= 0) return ' (today)';
+      if (d === 1) return ' (yesterday)';
+      if (d < 30) return ` (${d} days ago)`;
+      if (d < 365) return ` (${Math.floor(d / 30)} months ago)`;
+      return ` (${Math.floor(d / 365)} years ago)`;
+    };
     const line = (e: (typeof gm.events)[number]) =>
-      `- ${e.date ? `[${e.date}] ` : `[t${e.turn}] `}${e.summary}${e.chars.length ? ` (${e.chars.join(', ')})` : ''}`;
-    const recent = gm.events.slice(-12);
-    // ВЕХИ ВРЕМЕНИ. Событие, на котором дата прыгнула больше чем на месяц, — это
-    // таймскип, и он не должен вытесняться свежей мелочёвкой: без него ИИ теряет
-    // счёт времени. Такие события показываем всегда, отдельным списком.
-    const skips: string[] = [];
+      `- ${e.date ? `[${e.date}]` : `[t${e.turn}]`}${ago(e.date)} ${e.summary}${e.chars.length ? ` (${e.chars.join(', ')})` : ''}`;
+
+    // ВАЖНОСТЬ, А НЕ СВЕЖЕСТЬ. Ключевые и важные вехи видны ВСЕГДА, сколько бы
+    // времени ни прошло; бытовые события — только последние N. Раньше лента резалась
+    // просто по свежести, и крупное событие (переезд, роды, таймскип) вытеснялось
+    // мелочёвкой — для модели его переставало существовать.
+    const milestones = gm.events.filter((e) => e.level === 'key' || e.level === 'important');
+    const ordinary = gm.events.filter((e) => e.level !== 'key' && e.level !== 'important').slice(-12);
+    // Скачки времени распознаём и по датам — на случай событий, записанных до
+    // появления уровней важности (старые сейвы).
+    const skips: typeof gm.events = [];
     for (let i = 1; i < gm.events.length; i++) {
       const prev = parseDate(gm.events[i - 1].date);
       const cur = parseDate(gm.events[i].date);
-      if (!prev || !cur) continue;
-      const gap = diffDays(prev, cur);
-      if (gap >= 30 && !recent.includes(gm.events[i])) {
-        const el = elapsedPhrase(gm.events[i - 1].date, gm.events[i].date);
-        skips.push(`${line(gm.events[i])} — TIME SKIP: ${el || `${gap} day(s)`} passed here`);
-      }
+      if (prev && cur && diffDays(prev, cur) >= 30) skips.push(gm.events[i]);
     }
-    if (skips.length) {
+    const always = [...milestones, ...skips].filter((e, i, a) => a.indexOf(e) === i && !ordinary.includes(e));
+    if (always.length) {
       parts.push(
-        `TIME SKIPS so far (major jumps in the timeline — the story is PAST these, never undo them):\n${skips.slice(-6).join('\n')}`
+        `MILESTONES (major turning points — these NEVER scroll out of view; the story is past them, never undo or replay them):\n${always
+          .slice(-20)
+          .map(line)
+          .join('\n')}`
       );
     }
-    parts.push(`Recent events (chronological — these already happened):\n${recent.map(line).join('\n')}`);
+    if (ordinary.length) {
+      parts.push(`Recent events (chronological — these already happened):\n${ordinary.map(line).join('\n')}`);
+    }
   }
+
   return parts.length
     ? parts.join('\n\n')
     : '(no game-master state yet — establish it via worldState this turn)';

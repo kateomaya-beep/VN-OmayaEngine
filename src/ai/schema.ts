@@ -147,6 +147,8 @@ export const worldStateSchema = z
       )
       .nullish(),
     event: z.string().nullish(),
+    // Важность события: key/important никогда не вытесняются из промпта.
+    eventLevel: z.enum(['general', 'important', 'key']).nullish(),
     eventChars: z.array(z.string()).nullish(),
     mood: z.string().nullish(),
     agendaAdd: z.array(z.string()).nullish(),

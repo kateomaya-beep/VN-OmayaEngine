@@ -77,15 +77,25 @@ RESPONSE SCHEMA:
 Literary prose lives INSIDE the beats text fields. Markdown is allowed in text
 (*italics* for actions/description, **bold** for emphasis). Inner thoughts go in a "thought" beat.
 
-worldState is the GAME MASTER memory. It is OPTIONAL and DELTA-ONLY — send it lightly, never re-dump the whole world. Story beats are the priority; worldState is a thin side-channel written in English regardless of the story language:
-- OMIT worldState entirely (or send {}) on turns where nothing structural changed. Do NOT restate data that is already known.
-- clock: include ONLY when in-game time or location actually moved; then send just the changed fields and keep chronology consistent.
-- characters: include a character ONLY when newly introduced OR when a lasting fact changed (outfit, status, location, a new tag). Send just that character with just the changed fields — never re-send a full dossier that is already established.
-- relations: only edges that changed.
-- locations: when the scene visits a NEW place, or an established place gains a lasting detail — send its name + a short description (and tags). Keeps place descriptions consistent across the story. Skip for places already recorded and unchanged.
-- event / eventChars / mood: include ONLY on a genuinely noteworthy beat (this is the persistent event log) — not every turn.
-- agendaAdd / agendaDone: only real new or completed goals.
-Spending output on redundant worldState makes turns slow — always prefer more story, less bookkeeping.`;
+worldState is the GAME MASTER infobox: a compact status block you write at the END of every turn, describing where things stand AFTER what you just narrated.
+
+It has TWO tiers, and mixing them up is what makes stories contradict themselves:
+
+TIER 1 — RESTATE EVERY TURN, even when nothing moved. These are volatile scene facts; the engine shows back whatever you last wrote, so anything you omit silently keeps its OLD value:
+- clock: current in-story date, time and place. EVERY turn. Omitting it because "nothing changed" is how a hero ends up still in a city he left twenty turns ago.
+- characters: EVERY character present or meaningfully involved this turn — one compact entry each, with status, mood, outfit and location as they are RIGHT NOW, after this turn's events. Restating is cheap; a frozen fact costs the whole scene.
+
+TIER 2 — DELTA ONLY, write when it actually changed. The engine retains these; omission never erases anyone:
+- dossier / appearance / personality / roleToHero: only on first appearance (then complete) or on a real change. Re-wording an existing description is NOT a change — never paraphrase a record just to restate it.
+- relations: an edge whose nature actually shifted.
+- locations: a NEW place, or an established one gaining a lasting detail (name + short description + tags).
+- agendaAdd / agendaDone: real new or completed goals.
+- event / eventLevel / eventChars / mood: a genuinely noteworthy beat — the permanent log, not a per-turn diary. eventLevel is "key" (a turning point the whole story hinges on: a birth, a death, a move to another city, a confession, a time skip), "important" (a lasting consequence) or "general" (colour). KEY AND IMPORTANT EVENTS ARE NEVER FORGOTTEN — they stay visible to you forever, while general ones scroll away, so label honestly.
+
+REMOVING OUTDATED FACTS IS PART OF THE JOB. A record that has become false must be rewritten without it — a wound that healed comes out of the appearance, a pregnancy that ended comes out of the status, a job that was quit comes out of the role. Do not leave a stale fact standing just because you have nothing new to add.
+
+Absent characters: simply leave them out. Their records are kept as they are.
+Keep the infobox compact — a handful of short lines. The story text is still the priority; the infobox is the header that keeps it honest.`;
 
 // Дефолтные блоки Omaya-пресета. Каждый — редактируемый; порядок можно менять.
 function makeDefaults(): PromptBlock[] {
@@ -324,6 +334,10 @@ const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
   { key: 'json_contract', signature: '{ "type": "inventory_remove", "name": string, "quantity": number, "reason": string },\n    { "type": "sms_incoming"' },
   // Контракт без sms_photo (Телефон 2.0): боты не могли прислать фото сами.
   { key: 'json_contract', signature: '{ "type": "sms_incoming", "characterId": string, "text": string },\n    { "type": "contact_added"' },
+  // Контракт, ЗАПРЕЩАВШИЙ переписывать сводку («DELTA-ONLY», «never re-send a full
+  // dossier»). Из-за него статус, записанный один раз, окаменевал и спорил с
+  // историей. Заменён на инфобокс в духе Horae: короткая сводка каждый ход.
+  { key: 'json_contract', signature: 'worldState is the GAME MASTER memory. It is OPTIONAL and DELTA-ONLY' },
 ];
 function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
   let changed = false;

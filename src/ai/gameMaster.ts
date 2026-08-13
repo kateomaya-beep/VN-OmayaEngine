@@ -123,6 +123,7 @@ export function mergeWorldState(
       summary: (update.event || '').trim(),
       mood: (update.mood || '').trim(),
       source: 'auto',
+      level: update.eventLevel === 'key' || update.eventLevel === 'important' ? update.eventLevel : 'general',
     });
     if (next.events.length > 300) next.events = next.events.slice(-300);
   }
