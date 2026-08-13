@@ -544,6 +544,9 @@ function normalizePhoneState(raw: any, protagonistId?: string): PhoneState {
         pendingPhoto: false,
         photoFailed: !!m.photoFailed || (!!m.pendingPhoto && !m.attachedAssetId),
         at: typeof m.at === 'number' ? m.at : Date.now(),
+        storyDate: typeof m.storyDate === 'string' ? m.storyDate : undefined,
+        storyTime: typeof m.storyTime === 'string' ? m.storyTime : undefined,
+        turn: typeof m.turn === 'number' ? m.turn : undefined,
       }));
   let chats = a<any>(raw.chats)
     .filter((c) => c && typeof c.id === 'string')

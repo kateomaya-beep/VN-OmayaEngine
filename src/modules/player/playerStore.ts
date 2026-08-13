@@ -35,6 +35,17 @@ import { parseArchivedTranscript } from '../../ai/memoryEngine';
 import { uid } from '../../shared/utils';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// Внутриигровой штамп для сообщения телефона: переписка живёт на той же оси
+// времени, что и сюжет, иначе она выпадает из хронологии истории.
+function storyStamp(st: { state: RuntimeState | null }) {
+  return {
+    storyDate: st.state?.gm.clock.date || undefined,
+    storyTime: st.state?.gm.clock.time || undefined,
+    turn: st.state?.turnCount,
+    at: Date.now(),
+  };
+}
 // Пауза «набора» под длину сообщения (живой ритм переписки), с потолком.
 const typingDelay = (text: string) => Math.min(1600, 350 + text.length * 18);
 
@@ -725,7 +736,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         from: 'protagonist',
         text: trimmed,
         attachedAssetId: assetId,
-        at: Date.now(),
+        ...storyStamp(get()),
       });
       c.unread = false;
     });
@@ -1286,7 +1297,7 @@ async function runChatReplies(
     if (!opts.spontaneous) {
       get().patchPhone((p) => {
         const c = p.chats.find((x) => x.id === chatId);
-        c?.messages.push({ id: uid('msg'), from: 'contact', text: '…(нет связи)', at: Date.now() });
+        c?.messages.push({ id: uid('msg'), from: 'contact', text: '…(нет связи)', ...storyStamp(get()) });
       });
     }
     return;
@@ -1310,7 +1321,7 @@ async function runChatReplies(
         text: r.text,
         photoPrompt: r.photoPrompt,
         pendingPhoto: !!r.photoPrompt,
-        at: Date.now(),
+        ...storyStamp(get()),
       });
       if (opts.spontaneous) c.unread = true;
     });

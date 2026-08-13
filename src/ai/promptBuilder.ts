@@ -92,6 +92,20 @@ function assetManifest(project: Project): string {
 // реестр третье. Отсюда «алло, дочка уже есть, почему она снова беременна».
 // Теперь источник один: на каждого человека — один абзац, где идентичность, карточка
 // и текущее состояние собраны вместе, а у состояния стоит отметка свежести.
+// Присутствие человека в телефоне — часть его записи в картотеке, а не отдельный
+// список. Так «кому можно написать» не расходится с «кто вообще есть».
+function phoneNote(state: RuntimeState, id: string): string {
+  const ph = state.phone;
+  if (!ph) return '';
+  const contact = ph.contacts.find((c) => c.id === id || c.characterId === id);
+  if (!contact) return '';
+  const groups = ph.chats
+    .filter((ch) => ch.kind === 'group' && !ch.archived && ch.participantIds.includes(contact.id))
+    .map((ch) => `"${ch.title || 'группа'}"`);
+  const talk = typeof contact.chattiness === 'number' ? `, chattiness ${contact.chattiness}/100` : '';
+  return `Phone: saved as a contact (id ${contact.id}${talk})${groups.length ? `; in group chats: ${groups.join(', ')}` : ''} — reachable via sms_incoming / sms_photo.`;
+}
+
 function whoIsWhoBlock(
   project: Project,
   state: RuntimeState,
@@ -173,6 +187,8 @@ function whoIsWhoBlock(
     }
     const d = dossierOf(c.id, c.name);
     if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
+    const ph = phoneNote(state, c.id);
+    if (ph) lines.push(ph);
     const now = nowLine(c.id, c.name);
     if (now) lines.push(now);
     if (c.role !== 'protagonist') {
@@ -208,6 +224,8 @@ function whoIsWhoBlock(
     const d = dossierOf(e.id, e.canonicalName);
     if (d?.dossier) lines.push(`Who they are: ${d.dossier}`);
     if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
+    const ph = phoneNote(state, e.id);
+    if (ph) lines.push(ph);
     const now = nowLine(e.id, e.canonicalName) || (e.status ? `Now: status: ${e.status}` : '');
     if (now) lines.push(now);
     entries.push(lines.join('\n'));
@@ -633,12 +651,10 @@ function phoneBlock(project: Project, state: RuntimeState): string {
     const reg = state.gm.registry?.find((r) => r.id === c?.registryId);
     return reg?.canonicalName || contactId;
   };
-  // Контакты и группы: ИИ должен знать, кому вообще можно написать и какие чаты
-  // существуют — иначе sms_incoming/sms_photo уходят «в никуда».
-  const contacts = (state.phone?.contacts || [])
-    .filter((c) => !c.hidden)
-    .map((c) => `${nameOfContact(c.id)} (${c.characterId || c.id})`);
-  if (contacts.length) parts.push(`Saved phone contacts: ${contacts.join(', ')}.`);
+  // Отдельного списка контактов здесь БОЛЬШЕ НЕТ. Он был четвёртым перечнем людей
+  // в одном запросе (после карточек, реестра и досье) — ровно та дубликация, из-за
+  // которой одни и те же персонажи расходились между собой. Кто есть в телефоне,
+  // помечено прямо в картотеке, рядом с самим человеком.
   const groups = (state.phone?.chats || []).filter((c) => c.kind === 'group' && !c.archived);
   if (groups.length) {
     parts.push(
@@ -664,7 +680,10 @@ function phoneBlock(project: Project, state: RuntimeState): string {
           ? heroName
           : nameOfContact(m.senderId || chat.participantIds[0] || '');
       const to = chat.kind === 'group' ? where : m.from === 'protagonist' ? `→ ${nameOfContact(chat.participantIds[0] || '')}` : `→ ${heroName}`;
-      chatLines.push({ at: m.at || 0, line: `  ${who} ${to}: ${body.slice(0, 200)}` });
+      // Метка внутриигрового времени: переписка стоит на одной оси со сценами,
+      // а не отдельным потоком «когда-то».
+      const when = m.storyDate ? `[${m.storyDate}${m.storyTime ? ` ${m.storyTime}` : ''}] ` : '';
+      chatLines.push({ at: m.at || 0, line: `  ${when}${who} ${to}: ${body.slice(0, 200)}` });
     }
   }
   if (chatLines.length) {

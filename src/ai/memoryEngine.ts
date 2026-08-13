@@ -376,7 +376,38 @@ export async function maybeCompress(
         m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content
       }`
   );
-  const transcript = lines.join('\n\n');
+  // ПЕРЕПИСКА ТЕЛЕФОНА — ЧАСТЬ ТОЙ ЖЕ ИСТОРИИ. Раньше она в свёртку не попадала
+  // вовсе: в контекст уходили только последние 14 строк, а всё, что старше,
+  // исчезало навсегда — при том что сцены аккуратно сворачивались в эпизоды. Один
+  // сюжет жил по двум разным правилам хранения. Теперь сообщения, отправленные на
+  // сворачиваемых ходах, идут в тот же транскрипт, вперемешку со сценами.
+  const foldedTurns = new Set<number>();
+  for (const m of stale) {
+    const t = (m as { turn?: number }).turn;
+    if (typeof t === 'number') foldedTurns.add(t);
+  }
+  const firstTurn = Math.max(0, state.turnCount - Math.ceil(stale.length / 2));
+  const phoneLines: string[] = [];
+  for (const chat of state.phone?.chats || []) {
+    const who = (id?: string) => chat.participantIds.find((p) => p === id) || id || 'кто-то';
+    for (const m of chat.messages) {
+      // Берём сообщения того же периода, что и сворачиваемые ходы.
+      if (typeof m.turn === 'number' ? m.turn > firstTurn : true) continue;
+      const body = m.text?.trim() || (m.attachedAssetId || m.photoPrompt ? '[фото]' : '');
+      if (!body) continue;
+      const when = m.storyDate ? `[${m.storyDate}${m.storyTime ? ` ${m.storyTime}` : ''}] ` : '';
+      const label = chat.kind === 'group' ? `в группе «${chat.title || 'без названия'}»` : 'в переписке';
+      phoneLines.push(
+        `ТЕЛЕФОН ${when}${label}: ${m.from === 'protagonist' ? 'герой' : who(m.senderId)}: ${body.slice(0, 200)}`
+      );
+    }
+  }
+  if (phoneLines.length) {
+    logEvent('info', 'memory', `В свёртку включено ${phoneLines.length} сообщений телефона за этот период`);
+  }
+  const transcript = [lines.join('\n\n'), phoneLines.length ? phoneLines.join('\n') : '']
+    .filter(Boolean)
+    .join('\n\n');
 
   const toastId = pushToast('info', tt('Сжимаю память…', 'Summarizing memory…'));
   logEvent('info', 'memory', `Саммаризация: сворачиваю ${stale.length} сообщений`);

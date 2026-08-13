@@ -219,6 +219,14 @@ export async function applyTurn(
     }
   };
   // Чат с контактом: находим личный или заводим новый (переписка живёт в чатах).
+  // Штамп внутриигрового времени для сообщений телефона: переписка должна лежать
+  // на той же оси времени, что и сюжет, а не отдельно.
+  const stamp = () => ({
+    storyDate: state.gm.clock.date || undefined,
+    storyTime: state.gm.clock.time || undefined,
+    turn: nextTurnNumber,
+    at: Date.now(),
+  });
   const directChat = (cid: string) => {
     let chat = phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === cid);
     if (!chat) {
@@ -347,7 +355,7 @@ export async function applyTurn(
           from: 'contact',
           senderId: b.characterId,
           text: b.text,
-          at: Date.now(),
+          ...stamp(),
         });
         chat.unread = true;
         if (project.phone?.popupNotifications) {
@@ -371,7 +379,7 @@ export async function applyTurn(
           text: b.caption?.trim() || '',
           photoPrompt: b.photo,
           pendingPhoto: true,
-          at: Date.now(),
+          ...stamp(),
         });
         chat.unread = true;
         if (project.phone?.popupNotifications) {
@@ -737,7 +745,16 @@ async function deliverFallbackSms(
       state.phone.chats.push(chat);
     }
     for (const text of msgs) {
-      chat.messages.push({ id: uid('msg'), from: 'contact', senderId: pickId, text, at: Date.now() });
+      chat.messages.push({
+        id: uid('msg'),
+        from: 'contact',
+        senderId: pickId,
+        text,
+        storyDate: state.gm.clock.date || undefined,
+        storyTime: state.gm.clock.time || undefined,
+        turn: state.turnCount,
+        at: Date.now(),
+      });
     }
     chat.unread = true;
     if (project.phone?.popupNotifications) {

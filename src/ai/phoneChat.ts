@@ -103,8 +103,20 @@ function worldContext(project: Project, state: RuntimeState): string {
   const clock = formatClock(state.gm.clock);
   if (clock) parts.push(`In-story time: ${clock}.`);
   // Короткая сводка последних событий, чтобы бот «был в курсе».
-  const events = state.gm.events.slice(-3).map((e) => e.summary);
-  if (events.length) parts.push(`Recent events ${heroName} and you both know: ${events.join('; ')}.`);
+  // Бот видел только 3 последних события — то есть жил в другом мире, чем
+  // рассказчик: тот знает журнал эпизодов и снапшот, а бот не знал ничего дальше
+  // вчерашнего дня. Одна история — один набор фактов, просто короче.
+  const milestones = state.gm.events.filter((e) => e.level === 'key' || e.level === 'important').slice(-4);
+  const recent = state.gm.events.filter((e) => e.level !== 'key' && e.level !== 'important').slice(-3);
+  const events = [...milestones, ...recent].map((e) => `${e.date ? `[${e.date}] ` : ''}${e.summary}`);
+  if (events.length) parts.push(`What ${heroName} and you both know has happened: ${events.join('; ')}.`);
+  // Снапшот состояния — коротко: где сейчас сюжет. Без него бот отвечал так, будто
+  // истории вокруг переписки не существует.
+  const snap = state.memory.storyState?.trim();
+  if (snap) {
+    const cur = snap.split(/##\s*CURRENT SITUATION/i)[1];
+    if (cur) parts.push(`Where the story stands right now: ${cur.trim().slice(0, 400)}`);
+  }
   const bal = state.statValues[PHONE_BALANCE_STAT];
   if (typeof bal === 'number') parts.push(`(${heroName}'s wallet balance is ${bal} ${project.phone?.currencyName || '$'} — only relevant if money comes up.)`);
   return parts.join('\n');
