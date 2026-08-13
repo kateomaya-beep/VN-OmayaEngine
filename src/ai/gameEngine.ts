@@ -5,6 +5,7 @@ import { logEvent } from '../shared/logStore';
 import { resolveEmoji } from '../shared/emojiDict';
 import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
 import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson } from './characterRegistry';
+import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
@@ -251,7 +252,9 @@ export async function applyTurn(
   const curDateStr = state.gm.clock.date || '';
   const addItem = (name: string, opts: { emoji?: string; quantity?: number; category?: string; source?: string }) => {
     const qty = opts.quantity && opts.quantity > 0 ? opts.quantity : 1;
-    const exist = inventory.find((it) => it.name.toLowerCase() === name.toLowerCase());
+    // Разные написания одной вещи складываются в один предмет: «платье»,
+    // «Платье» и «платья» раньше жили в инвентаре тремя строками.
+    const exist = findItemForAdd(inventory, name);
     if (exist) {
       exist.quantity += qty;
       return;
@@ -267,11 +270,22 @@ export async function applyTurn(
     });
   };
   const removeItem = (name: string, qty: number) => {
-    const idx = inventory.findIndex((it) => it.name.toLowerCase() === name.toLowerCase());
-    if (idx < 0) return;
-    const it = inventory[idx];
-    if (qty >= it.quantity) inventory.splice(idx, 1);
-    else it.quantity -= qty;
+    const { item, ambiguous } = findItemForRemove(inventory, name);
+    if (!item) {
+      // Раньше промах был НЕМЫМ: модель писала «отдала ключи», в инвентаре
+      // лежали «ключи от машины» — и вещь оставалась у героя навсегда.
+      logEvent(
+        'warn',
+        'inventory',
+        ambiguous
+          ? `«${name}» подходит сразу к нескольким вещам — ничего не убрал, уточните название`
+          : `Нечего убирать: «${name}» в инвентаре нет`
+      );
+      return;
+    }
+    const idx = inventory.indexOf(item);
+    if (qty >= item.quantity) inventory.splice(idx, 1);
+    else item.quantity -= qty;
   };
 
   // Баланс (Batch 8): долг разрешён (без клампа ≥0). Запись в выписку — только при

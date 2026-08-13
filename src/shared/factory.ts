@@ -589,7 +589,6 @@ function normalizePhoneState(raw: any, protagonistId?: string): PhoneState {
     contacts: cleanContacts,
     chats: cleanChats,
     gallery: a<any>(raw.gallery).filter((x) => typeof x === 'string'),
-    inventory: a<any>(raw.inventory).filter((it) => it && typeof it.name === 'string'),
   };
 }
 

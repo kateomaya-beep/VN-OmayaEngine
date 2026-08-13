@@ -476,12 +476,6 @@ export interface PhoneChat {
   // контексте истории он остаётся (выбор «удалить, но чтобы помнили»).
   archived?: boolean;
 }
-export interface PhoneInventoryItem {
-  itemId: string;
-  name: string;
-  category: string;
-}
-
 export interface PhoneState {
   transactions: PhoneTransaction[];
   contacts: PhoneContact[];
@@ -491,7 +485,10 @@ export interface PhoneState {
   // непрочитанным больше нет: групповой чат он выразить не мог, а два
   // параллельных механизма приходилось синхронизировать в каждой точке записи.
   gallery: string[]; // assetId сгенерированных фото
-  inventory: PhoneInventoryItem[];
+  // Инвентаря здесь БОЛЬШЕ НЕТ. Он остался от интернет-магазина и был вторым
+  // списком вещей рядом с настоящим (RuntimeState.inventory) — ровно тот случай,
+  // когда одна и та же правда лежит в двух местах. Старые сейвы переносятся
+  // в нормальный инвентарь при загрузке (см. normalizeRuntimeState).
 }
 
 const DEFAULT_CAMERA_PROMPT =
@@ -528,9 +525,7 @@ export function initialPhoneState(): PhoneState {
     transactions: [],
     contacts: [],
     chats: [],
-
     gallery: [],
-    inventory: [],
   };
 }
 

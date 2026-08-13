@@ -587,13 +587,18 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
     }
   }
 
-  // Инвентарь.
+  // Инвентарь. Список пересказывается ЦЕЛИКОМ каждый ход и точными названиями —
+  // по ним же движок ищет вещь при inventory_remove. Раньше он шёл строкой через
+  // запятую, и модель переписывала название по-своему («платье» вместо «красное
+  // платье»), а движок такую вещь не находил и молча ничего не убирал.
   if (inv.length) {
     parts.push(
-      `Inventory: ${inv.map((it) => `${it.emoji} ${it.name}${it.quantity > 1 ? ` (${it.quantity})` : ''}`).join(', ')}`
+      `INVENTORY — everything the hero owns, and the ONLY truth about it:\n${inv
+        .map((it) => `  - ${it.emoji} ${it.name}${it.quantity > 1 ? ` ×${it.quantity}` : ''}`)
+        .join('\n')}`
     );
   } else {
-    parts.push('Inventory: (empty)');
+    parts.push('INVENTORY: empty — the hero carries nothing.');
   }
 
   // Когда протагонист последний раз виделся с персонажами (Batch 8 §VI) — чтобы ИИ
@@ -621,7 +626,12 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
       'stays frozen at the old date. A few turns later the frozen clock is all that is left in context, and the story ' +
       'silently rewinds to before the skip — characters un-age, events un-happen. Never write a date in any other format.',
     'MONEY MOVES THROUGH THE TRANSACTION BEAT ONLY. Never also put the same amount into statChanges on the balance stat — the engine would apply both and charge the hero twice. One purchase = one beat.',
-    'INVENTORY: emit {"type":"inventory_add","name":...,"emoji":"<one emoji>","quantity":1,"category":...,"source":"куплено|получено|найдено"} when the hero acquires something meaningful, and {"type":"inventory_remove","name":...,"quantity":1} when they consume/lose/give it away. Consumables are really spent.',
+    'INVENTORY (same weight as the story text): the hero owns exactly what the list above says — nothing more. ' +
+      'The moment the story gives them something, emit {"type":"inventory_add","name":"<short plain name>","emoji":"<one emoji>","quantity":1,"category":...,"source":"куплено|получено|найдено"}; ' +
+      'the moment they eat, spend, lose, break or hand something over, emit {"type":"inventory_remove","name":...,"quantity":1}. ' +
+      'A change you only narrated and did not send as a beat DID NOT HAPPEN: the engine keeps its own list, and next turn you will read the old one back. ' +
+      'For inventory_remove copy the name EXACTLY as it stands in the list above — that is how the engine finds the thing. ' +
+      'Never invent an item the hero does not have, and never re-add something they already carry.',
   ];
   if (hasEconomy) {
     rules.push(
