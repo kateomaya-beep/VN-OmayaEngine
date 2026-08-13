@@ -190,6 +190,53 @@ export interface ChatReply {
   photoPrompt?: string;
 }
 
+// То, что случилось В ПЕРЕПИСКЕ и должно остаться в истории. Уезжает в ту же
+// ленту событий Game Master, что и события сцены: переписка — часть той же
+// истории, а не отдельная коробка. Без этого сказанное в чате жило ровно до тех
+// пор, пока сообщения не уехали из окна контекста, и потом исчезало насовсем.
+export interface ChatEvent {
+  summary: string;
+  level: 'general' | 'important' | 'key';
+}
+
+export interface ChatTurn {
+  replies: ChatReply[];
+  events: ChatEvent[];
+}
+
+// Правило записи события — общее для лички, групп и спонтанных входящих.
+function eventRule(narr: string): string {
+  return [
+    `- STORY RECORD: this chat is part of the same story as everything else, so anything that matters here must be written down. If this exchange produced something the story has to remember — news, a plan or a meeting agreed, a confession, a quarrel or a reconciliation, a change in someone's life (a move, an illness, a pregnancy, a job, a breakup, a death) — add ONE extra line at the very END, after all the messages:`,
+    `  [event: one sentence in ${narr}, past tense, told as the story would tell it, saying it happened in the chat | important]`,
+    `  The "| important" part is optional: use "| important" when it changes the situation, "| key" for a turning point, and leave it out entirely for ordinary things.`,
+    `- MOST of the time there is NO such line. Small talk, jokes, flirting, "как дела", plans that were only discussed — not events. Never write more than one event line, and never write the event line INSTEAD of the messages.`,
+  ].join('\n');
+}
+
+// Снимает строки-маркеры [event: …] с ответа модели ДО разбора на пузыри:
+// событие — не сообщение и в переписке показываться не должно.
+export function extractChatEvents(raw: string): { text: string; events: ChatEvent[] } {
+  const events: ChatEvent[] = [];
+  const kept: string[] = [];
+  for (const line of (raw || '').split(/\n/)) {
+    const m = line.match(/^\s*(?:[^:\n]{0,40}:\s*)?\[?\s*event\s*:\s*([^\]]+?)\s*\]?\s*$/i);
+    if (!m) {
+      kept.push(line);
+      continue;
+    }
+    const [summary, lvl] = m[1].split('|').map((x) => x.trim());
+    if (!summary) continue;
+    events.push({
+      summary,
+      level: /^key$/i.test(lvl || '') ? 'key' : /^important$/i.test(lvl || '') ? 'important' : 'general',
+    });
+  }
+  // Больше одного события за обмен сообщениями не бывает: модель попросили об
+  // одном, а если прислала пачку — это перечисление мелочей, берём главное.
+  return { text: kept.join('\n'), events: events.slice(0, 1) };
+}
+
 // Правило про фото — общее для лички и групп. Модель сама решает, уместно ли фото.
 function photoRule(): string {
   return [
@@ -203,15 +250,18 @@ export async function generateChatReplies(
   state: RuntimeState,
   chat: PhoneChat,
   opts?: { spontaneous?: boolean; signal?: AbortSignal }
-): Promise<ChatReply[]> {
+): Promise<ChatTurn> {
   if (chat.kind === 'group') return generateGroupReplies(project, state, chat, opts);
   const peerId = chat.participantIds[0];
   const contact = findContact(state, peerId);
-  if (!contact) return [];
-  const texts = opts?.spontaneous
+  if (!contact) return { replies: [], events: [] };
+  const out = opts?.spontaneous
     ? await generateIncomingSms(project, state, peerId, chat.messages, opts?.signal)
     : await generatePhoneReply(project, state, peerId, chat.messages, opts?.signal);
-  return attachPhotos(texts.map((t) => ({ senderId: peerId, text: t })));
+  return {
+    replies: attachPhotos(out.texts.map((t) => ({ senderId: peerId, text: t }))),
+    events: out.events,
+  };
 }
 
 // Превращает «сырые» пузыри в итоговые, вытаскивая маркеры [photo: …]. Подписью
@@ -241,13 +291,13 @@ async function generateGroupReplies(
   state: RuntimeState,
   chat: PhoneChat,
   opts?: { spontaneous?: boolean; signal?: AbortSignal }
-): Promise<ChatReply[]> {
+): Promise<ChatTurn> {
   const ps = getPresetSettings();
   const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
   const members = chat.participantIds
     .map((id) => findContact(state, id))
     .filter((c): c is PhoneContact => !!c && !c.hidden);
-  if (!members.length) return [];
+  if (!members.length) return { replies: [], events: [] };
   const heroName = heroNameOf(project, state);
   const roster = members
     .map((c) => {
@@ -278,6 +328,7 @@ async function generateGroupReplies(
     `- When someone speaks TO ${heroName}, they address them in the second person ("ты"/"вы"/"you"), like in a real group chat. Third person is only for people who are not in this chat.`,
     photoRule().replace('[photo:', '[photo:'),
     `- For a photo the line is "Name: [photo: english description]" — the sender's name still comes first.`,
+    eventRule(narr),
     `- FORBIDDEN: narration, asterisk actions (*smiles*), tone labels, quotes around a whole message, JSON, writing for ${heroName}.`,
     opts?.spontaneous
       ? `- NOBODY wrote just now. Start a conversation out of the blue: someone brings up news, a joke, a question, a photo — something that fits the story moment. 1-4 messages total.`
@@ -300,7 +351,8 @@ async function generateGroupReplies(
   });
 
   const raw = await completeWithRetry(system, normalizeChatHistory(history), ps.temperature ?? 0.9, opts?.signal);
-  return parseGroupReplies(raw, project, state, members, heroName);
+  const { text, events } = extractChatEvents(raw);
+  return { replies: parseGroupReplies(text, project, state, members, heroName), events };
 }
 
 // Разбор ответа группы: строка «Имя: текст» → пузырь от этого участника.
@@ -359,7 +411,7 @@ export async function generatePhoneReply(
   characterId: string,
   conversation: PhoneMessage[],
   signal?: AbortSignal
-): Promise<string[]> {
+): Promise<{ texts: string[]; events: ChatEvent[] }> {
   const ps = getPresetSettings();
   const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
 
@@ -374,6 +426,7 @@ export async function generatePhoneReply(
     `TEXTING RULES (this is a plain text-message chat, NOT the visual-novel narration engine):`,
     `- Reply as ${charName} would type in a messenger: short, natural, in-character. React to ${heroNameOf(project, state)}'s last message.`,
     photoRule(),
+    eventRule(narr),
     `- MESSAGE BURSTS: reply the way people really text — sometimes ONE message, sometimes several short ones fired in a row (up to 4). Put EACH separate message on ITS OWN LINE (a line break = a new message bubble). Split when it feels natural (a quick thought, then another), keep it to one message when that's natural.`,
     `- Write in ${narr}. Use real texting culture WHEN IT FITS the character: casual tone, common abbreviations, emoji, and (for Russian) smiley parentheses like ), )), ))) or :). Lowercase and dropped punctuation are fine for a casual character. Match the character's personality — a formal or cold character texts differently; don't force slang on them.`,
     `- Output ONLY the literal words ${charName} types. NOTHING else.`,
@@ -404,7 +457,8 @@ export async function generatePhoneReply(
     signal,
     attachments
   );
-  return splitReplies(raw, charName);
+  const { text, events } = extractChatEvents(raw);
+  return { texts: splitReplies(text, charName), events };
 }
 
 // Фото из ПОСЛЕДНЕГО сообщения героя (если это фото) → вложение для vision-модели.
@@ -514,7 +568,7 @@ export async function generateIncomingSms(
   characterId: string,
   conversation: PhoneMessage[],
   signal?: AbortSignal
-): Promise<string[]> {
+): Promise<{ texts: string[]; events: ChatEvent[] }> {
   const ps = getPresetSettings();
   const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
   const contact = findContact(state, characterId);
@@ -530,6 +584,7 @@ export async function generateIncomingSms(
     `- Pick a natural reason to reach out that fits the current story moment and your relationship: checking in, a question, a complaint, teasing, news, a request, missing them.`,
     `- Write in ${narr}, in real texting style: short, casual, in character. 1-2 messages, EACH ON ITS OWN LINE.`,
     photoRule(),
+    eventRule(narr),
     `- Output ONLY the literal words ${charName} types. No tone labels, no asterisk actions, no narration, no name prefix, no JSON.`,
     conversation.length
       ? `- Continue naturally from the existing chat; do not repeat what was already said.`
@@ -547,7 +602,8 @@ export async function generateIncomingSms(
     ps.temperature ?? 0.9,
     signal
   );
-  return splitReplies(raw, charName).slice(0, 2);
+  const { text, events } = extractChatEvents(raw);
+  return { texts: splitReplies(text, charName).slice(0, 2), events };
 }
 
 // Разбивает сырой ответ на отдельные сообщения-«пузыри» (Batch — живые смс).

@@ -9,7 +9,7 @@ import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
-import { mergeWorldState } from './gameMaster';
+import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { maybeCompress } from './memoryEngine';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
@@ -744,7 +744,7 @@ async function deliverFallbackSms(
     if (!candidates.length) return;
     const pickId = candidates[Math.floor(Math.random() * candidates.length)];
     let chat = state.phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === pickId);
-    const msgs = await generateIncomingSms(project, state, pickId, chat?.messages || [], signal);
+    const { texts: msgs, events } = await generateIncomingSms(project, state, pickId, chat?.messages || [], signal);
     if (!msgs.length) return;
     // Пишущий автоматически становится контактом (если его ещё нет).
     if (!state.phone.contacts.some((c) => c.characterId === pickId || c.id === pickId)) {
@@ -767,8 +767,19 @@ async function deliverFallbackSms(
       });
     }
     chat.unread = true;
+    // Если во входящем СМС произошло что-то значимое — оно ложится в ту же ленту
+    // событий, что и события сцены (переписка — часть той же истории).
+    const senderName = project.characters.find((c) => c.id === pickId)?.name || '';
+    for (const ev of events) {
+      state.gm = recordChatEvent(
+        state.gm,
+        ev,
+        [project.characters.find((c) => c.role === 'protagonist')?.name || '', senderName],
+        state.turnCount
+      );
+    }
     if (project.phone?.popupNotifications) {
-      const nm = project.characters.find((c) => c.id === pickId)?.name || 'Сообщение';
+      const nm = senderName || 'Сообщение';
       pushToast('info', `💬 ${nm}: ${msgs[0].slice(0, 60)}`);
     }
   } catch {

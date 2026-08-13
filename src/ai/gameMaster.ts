@@ -8,6 +8,27 @@ export function formatClock(c: GmClock): string {
   return [date, c.time, c.location].filter(Boolean).join(' · ');
 }
 
+// Событие, случившееся В ПЕРЕПИСКЕ телефона, — в ту же ленту, что и события
+// сцены. Отдельной ленты для телефона нет и быть не должно: это одна история,
+// и то, что персонаж сказал в чате, обязано помниться так же, как сказанное
+// вслух. Раньше сказанное в переписке жило ровно до того момента, когда
+// сообщения уезжали из окна контекста, и дальше не существовало ни для
+// рассказчика, ни для самих ботов.
+export function recordChatEvent(
+  gm: GameMasterState,
+  event: { summary: string; level?: 'general' | 'important' | 'key' },
+  chars: string[],
+  turn: number
+): GameMasterState {
+  const summary = event.summary.trim();
+  if (!summary) return gm;
+  return mergeWorldState(
+    gm,
+    { event: summary, eventChars: chars.filter(Boolean), eventLevel: event.level },
+    turn
+  );
+}
+
 // Мержит дельту состояния мира от ИИ (WorldStateUpdate) в GameMasterState.
 // Вызывается каждый ход — так Game Master остаётся динамическим (Horae-подобно).
 export function mergeWorldState(

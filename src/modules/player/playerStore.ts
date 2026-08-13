@@ -4,13 +4,13 @@ import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRela
 import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
-import { generateChatReplies, type ChatReply } from '../../ai/phoneChat';
+import { generateChatReplies, findContact, nameOfContact, heroNameOf, type ChatTurn } from '../../ai/phoneChat';
 import { generateContactPhoto, generateAvatarImage, generateGroupAvatarImage } from '../../ai/phonePhoto';
 import { generateImage } from '../../ai/imageProvider';
 import { renderImage } from '../../ai/imageCast';
 import { getApiKey } from '../../ai/keys';
 import { resolveSprite } from '../../shared/outfits';
-import { formatClock } from '../../ai/gameMaster';
+import { formatClock, recordChatEvent } from '../../ai/gameMaster';
 import { uploadAsset } from '../../storage/assetOps';
 import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, saveProject, deleteSave, putAsset } from '../../storage/db';
@@ -1206,9 +1206,9 @@ async function runChatReplies(
   const cur = get();
   const chat = cur.state?.phone?.chats.find((c) => c.id === chatId);
   if (!cur.project || !cur.state || !chat) return;
-  let replies: ChatReply[] = [];
+  let turn: ChatTurn = { replies: [], events: [] };
   try {
-    replies = await generateChatReplies(cur.project, cur.state, chat, { spontaneous: opts.spontaneous });
+    turn = await generateChatReplies(cur.project, cur.state, chat, { spontaneous: opts.spontaneous });
   } catch (e) {
     logEvent('error', 'phone', e instanceof Error ? e.message : String(e));
     if (!opts.spontaneous) {
@@ -1219,6 +1219,7 @@ async function runChatReplies(
     }
     return;
   }
+  const replies = turn.replies;
   if (!replies.length) {
     // Модель вернула пустоту даже после повтора — не мусорим в переписке
     // пузырём-заглушкой, честно сообщаем и даём переотправить.
@@ -1243,6 +1244,27 @@ async function runChatReplies(
       if (opts.spontaneous) c.unread = true;
     });
   }
+  // Случилось ли в переписке что-то, что история обязана запомнить. Пишем в ТУ ЖЕ
+  // ленту событий Game Master, что и события сцены: телефон — не отдельный мирок,
+  // и сказанное в чате должно помниться после того, как сообщения уедут из окна
+  // контекста. Оттуда оно возвращается и в промпт рассказчика, и самим ботам.
+  if (turn.events.length) {
+    const after = get();
+    if (after.state && after.project) {
+      const chars = [
+        heroNameOf(after.project, after.state),
+        ...chat.participantIds
+          .map((id) => findContact(after.state!, id))
+          .filter((c): c is PhoneContact => !!c)
+          .map((c) => nameOfContact(after.project!, after.state!, c)),
+      ];
+      let gm = after.state.gm;
+      for (const ev of turn.events) gm = recordChatEvent(gm, ev, chars, after.state.turnCount);
+      set({ state: { ...after.state, gm } });
+      void get().autosave();
+    }
+  }
+
   // Фото — уже после того, как переписка показана целиком.
   if (replies.some((r) => r.photoPrompt)) await get().resolvePendingPhotos();
 }
