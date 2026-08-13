@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { usePlayerStore } from '../playerStore';
 import { composeImagePrompt } from '../../../ai/imagePrompt';
-import { generateImage, composeFinalPrompt } from '../../../ai/imageProvider';
+import { renderImage } from '../../../ai/imageCast';
 import { putAsset } from '../../../storage/db';
 import { uid, autoTagsFromName } from '../../../shared/utils';
-import { defaultImageGenConfig, type AssetMeta } from '../../../shared/types';
+import { type AssetMeta } from '../../../shared/types';
 
 // Панель быстрых действий: генерация фонов/CG по ходу игры (см. доработка §7).
 // Сгенерированный ассет попадает в манифест проекта (generated:true) → ИИ
@@ -26,9 +26,13 @@ export function QuickActions({ open, onClose }: { open: boolean; onClose: () => 
       const prompt = await composeImagePrompt(project, state, kind);
       setLastPrompt(prompt);
       setBusy('Рисую изображение…');
-      const cfg = project.imageGen ?? defaultImageGenConfig();
-      const blob = await generateImage(cfg, {
-        prompt: composeFinalPrompt(cfg, prompt),
+      // Общая точка: стиль проекта, запреты и — для CG — описания с рефами тех,
+      // кого воркер назвал в промпте. Фон людей не содержит, поэтому там нечего
+      // сканировать.
+      const { blob } = await renderImage(project, state, {
+        prompt,
+        scanText: kind === 'cg' ? prompt : undefined,
+        withOutfit: true,
         // Фон всегда горизонтальный — он растягивается на весь экран сцены.
         // У CG кадр берётся из настроек CG-студии.
         aspectRatio: kind === 'background' ? '16:9' : undefined,

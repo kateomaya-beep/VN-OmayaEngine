@@ -21,9 +21,12 @@ export async function composeImagePrompt(
       ? 'a background environment (no characters, wide establishing shot)'
       : 'a dramatic CG illustration of the current key moment (may include characters)';
 
+  // Стиль воркер НЕ придумывает: он один на всю игру и приезжает из настроек
+  // картинок отдельной строкой (composeFinalPrompt). Раньше здесь был вшит
+  // «polished anime», и он спорил со стилем проекта прямо внутри одного промпта.
   const system = `You write concise prompts for a text-to-image model. Output ONLY the prompt text,
 one line, in English, no quotes, no explanations. Describe ${what} for a visual novel scene.
-Include location, time of day, lighting, mood and art style (polished anime/visual-novel illustration).`;
+Include location, time of day, lighting and mood. Do NOT name an art style — the style is appended separately.`;
 
   const user = `Мир: ${project.lore.worldDescription.slice(0, 400)}
 Текущий фон: ${bgName}

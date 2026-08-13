@@ -3,13 +3,8 @@ import { Modal, AssetImage } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
 import { usePlayerStore } from '../playerStore';
 import { composeCgPrompt } from '../../../ai/imagePrompt';
-import {
-  generateImage,
-  blobToRef,
-  supportsReferences,
-  composeFinalPrompt,
-  type ImageRef,
-} from '../../../ai/imageProvider';
+import { supportsReferences } from '../../../ai/imageProvider';
+import { renderImage, resolvePerson, type Person } from '../../../ai/imageCast';
 import { useStylePresets } from '../../../ai/imageStyles';
 import { ImageConnectionField } from '../../shared/ImageConnectionField';
 import { getAssetBlob, putAsset, deleteAsset } from '../../../storage/db';
@@ -160,47 +155,34 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
       // (он прочитал момент и назвал участников); если её нет — все, кто на сцене.
       // Именно это отсекает NPC, который «на сцене», но в кат-сцене не участвует:
       // раньше ему всё равно уходил референс, и он лез в каждый кадр.
-      const norm = (x: string) => x.trim().toLowerCase();
-      const nameOf = (c: (typeof project.characters)[number]) =>
-        c.role === 'protagonist' ? state.protagonistName || c.name : c.name;
-      let inFrame = state.onScreen.map((o) => o.characterId);
-      if (castOverride) inFrame = inFrame.filter((id) => castOverride.includes(id));
-      else if (cast) {
-        const wanted = cast.map(norm);
-        inFrame = inFrame.filter((id) => {
-          const c = project.characters.find((x) => x.id === id);
-          return !!c && wanted.some((w) => w.includes(norm(nameOf(c))) || norm(nameOf(c)).includes(w));
-        });
+      //
+      // Имена из CAST разрешаем через общий механизм личности: раньше они
+      // сверялись только с персонажами проекта, и человек из реестра Game Master
+      // (у кого анкеты нет) не получал ни описания внешности, ни рефа.
+      let inFrame: Person[];
+      if (castOverride) {
+        inFrame = castOverride
+          .map((id) => resolvePerson(project, state, { id }))
+          .filter((x): x is Person => !!x);
+      } else if (cast) {
+        inFrame = cast
+          .map((name) => resolvePerson(project, state, { name }))
+          .filter((x): x is Person => !!x);
+      } else {
+        inFrame = state.onScreen
+          .map((o) => resolvePerson(project, state, { id: o.characterId }))
+          .filter((x): x is Person => !!x);
       }
-      setLastCast(
-        inFrame
-          .map((id) => project.characters.find((c) => c.id === id))
-          .filter(Boolean)
-          .map((c) => nameOf(c!))
-      );
+      const uniq: Person[] = [];
+      for (const person of inFrame) if (!uniq.some((x) => x.id === person.id)) uniq.push(person);
+      setLastCast(uniq.map((x) => x.name));
 
-      // Референсы присутствующих персонажей: сначала внешность, следом одежда —
-      // порядок важен, промпт ссылается на картинки по номерам.
-      const refs: ImageRef[] = [];
-      if (supportsReferences(ig) && ig.sendReferences) {
-        const seen = new Set<string>();
-        for (const os of state.onScreen) {
-          if (seen.has(os.characterId) || !inFrame.includes(os.characterId)) continue;
-          seen.add(os.characterId);
-          const who = project.characters.find((c) => c.id === os.characterId)?.name || os.characterId;
-          for (const kind of ['appearance', 'outfit'] as const) {
-            const aid = kind === 'outfit' ? outfitRefAsset(os.characterId) : effRefAsset(os.characterId);
-            const blobKey = project.assets.find((a) => a.id === aid)?.blobKey;
-            if (!blobKey) continue;
-            const b = await getAssetBlob(blobKey);
-            if (b) refs.push(await blobToRef(b, { who, kind }));
-          }
-        }
-      }
-      const finalPrompt = composeFinalPrompt(ig, p, { refs });
-      const blob = await generateImage(ig, {
-        prompt: finalPrompt,
-        references: refs,
+      // Стиль, описания людей в кадре и их референсы — общей сборкой (та же,
+      // что у селфи, фото от ботов и быстрых действий).
+      const { blob } = await renderImage(project, state, {
+        prompt: p,
+        cast: uniq,
+        withOutfit: true,
         // «Авто» — кадр выбрал воркер (строка ASPECT в конце промпта).
         aspectRatio: ig.aspectRatio === 'auto' ? workerAspect || '16:9' : undefined,
         signal: controller.signal,

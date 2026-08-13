@@ -6,19 +6,14 @@ import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { generateChatReplies, type ChatReply } from '../../ai/phoneChat';
 import { generateContactPhoto, generateAvatarImage, generateGroupAvatarImage } from '../../ai/phonePhoto';
-import {
-  generateImage,
-  blobToRef,
-  supportsReferences,
-  composeFinalPrompt,
-  type ImageRef,
-} from '../../ai/imageProvider';
+import { generateImage } from '../../ai/imageProvider';
+import { renderImage } from '../../ai/imageCast';
 import { getApiKey } from '../../ai/keys';
 import { resolveSprite } from '../../shared/outfits';
 import { formatClock } from '../../ai/gameMaster';
 import { uploadAsset } from '../../storage/assetOps';
 import { expandMacros } from '../../ai/macros';
-import { getProject, putSave, saveProject, deleteSave, getAssetBlob, putAsset } from '../../storage/db';
+import { getProject, putSave, saveProject, deleteSave, putAsset } from '../../storage/db';
 import {
   listPlaythroughs,
   activePlaythrough,
@@ -753,7 +748,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     try {
       const asset =
         subject.kind === 'group'
-          ? await generateGroupAvatarImage(st.project, subject.name, subject.description)
+          ? await generateGroupAvatarImage(st.project, st.state, subject.name, subject.description)
           : await generateAvatarImage(st.project, st.state, {
               name: subject.name,
               personId: subject.personId,
@@ -829,7 +824,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
     set({ cameraBusy: true, error: null });
     try {
-      const ig = project.imageGen ?? defaultImageGenConfig();
       const heroName = state.protagonistName || protagonist?.name || 'the hero';
       const tmpl = rear
         ? project.phone?.rearCameraPromptTemplate || 'photo taken on a phone by {protagonist_name}: {user_prompt}'
@@ -839,29 +833,16 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         .replace(/\{user_prompt\}/g, userPrompt.trim() || (rear ? 'what is in front of the hero right now' : 'casual selfie'))
         .replace(/\{location\}/g, state.gm.clock.location || 'wherever the hero is now')
         .replace(/\{time\}/g, formatClock(state.gm.clock) || 'now');
-      // Референсы протагониста: внешность (свой реф или спрайт) + одежда, если
-      // задана в CG-студии. Порядок как там же — промпт ссылается по номерам.
-      // Основной камере рефы не нужны: героя в кадре нет.
-      const refs: ImageRef[] = [];
-      if (!rear && protagonist && supportsReferences(ig) && ig.sendReferences) {
-        const who = heroName;
-        const slots: { id?: string; kind: 'appearance' | 'outfit' }[] = [
-          { id: ig.references[protagonist.id] || spriteAssetId, kind: 'appearance' },
-          { id: ig.outfitReferences?.[protagonist.id], kind: 'outfit' },
-        ];
-        for (const slot of slots) {
-          const blobKey = slot.id ? project.assets.find((a) => a.id === slot.id)?.blobKey : undefined;
-          if (!blobKey) continue;
-          const b = await getAssetBlob(blobKey);
-          if (b) refs.push(await blobToRef(b, { who, kind: slot.kind }));
-        }
-      }
-      // Стиль, запреты и правило про референсы — общей сборкой (как в CG-студии).
-      const finalPrompt = composeFinalPrompt(ig, basePrompt, { refs });
-      // Кадр как у телефона: селфи вертикальное, основная камера — горизонтальная.
-      const blob = await generateImage(ig, {
-        prompt: finalPrompt,
-        references: refs,
+      // Кто в кадре. Фронталка — сам герой; плюс все, кого игрок назвал в
+      // запросе («селфи с Дэмианом»). Раньше по имени рядом с героем рисовался
+      // случайный человек: движок просто не связывал имя с персонажем.
+      // Основной камере герой не нужен — она снимает мир, а не его.
+      const { blob } = await renderImage(project, state, {
+        prompt: basePrompt,
+        cast: rear ? [] : [{ id: protagonist?.id, name: heroName }],
+        scanText: userPrompt,
+        withOutfit: true,
+        // Кадр как у телефона: селфи вертикальное, основная камера — горизонтальная.
         aspectRatio: rear ? '4:3' : '3:4',
       });
       const blobKey = uid('blob');
@@ -1092,7 +1073,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (!getApiKey('image')) return 'Не задан ключ image-API (🎬 CG-студия → подключение).';
     try {
       const ig = st.project.imageGen ?? defaultImageGenConfig();
-      // Минимальная генерация — проверяем, что ключ/URL/модель отвечают.
+      // Единственная картинка в игре мимо renderImage — и намеренно: это проверка
+      // связи, а не кадр истории. Стиль и рефы здесь только мешали бы диагностике.
       const blob = await generateImage(ig, {
         prompt: 'a tiny simple test image of a single red apple on a plain white background',
       });
