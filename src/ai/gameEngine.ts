@@ -4,7 +4,7 @@ import { pushToast } from '../shared/toast';
 import { logEvent } from '../shared/logStore';
 import { resolveEmoji } from '../shared/emojiDict';
 import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
-import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson } from './characterRegistry';
+import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson, nameHit } from './characterRegistry';
 import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion } from './providers';
@@ -562,7 +562,14 @@ export async function applyTurn(
   // lastSeenDate (Batch 8 §VI): персонажи в кадре «увидены» текущей внутриигровой датой.
   if (newDate) {
     for (const os of onScreen) {
-      let gc = gm.characters.find((c) => c.charId === os.characterId);
+      // Запись досье ищем общим опознанием. По голому charId она не находилась,
+      // если была заведена под прозвищем, — и этот цикл заводил ВТОРУЮ, пустую.
+      // Тихая фабрика дублей: срабатывала каждый ход, когда персонаж на сцене.
+      const who = resolvePerson(project, state, { id: os.characterId });
+      let gc =
+        gm.characters.find((c) => c.charId === os.characterId) ||
+        gm.characters.find((c) => (c.charId && who?.ids.includes(c.charId)) || (!!who && nameHit(c.name, who.name)));
+      if (gc && !gc.charId) gc.charId = os.characterId;
       if (!gc) {
         const proj = project.characters.find((c) => c.id === os.characterId);
         if (proj) {

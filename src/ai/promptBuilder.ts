@@ -604,10 +604,20 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   // Когда протагонист последний раз виделся с персонажами (Batch 8 §VI) — чтобы ИИ
   // отражал разлуку («давно не виделись»). Только для тех, у кого дата известна.
   if (hasDate) {
-    const seen = state.gm.characters
-      .filter((c) => c.lastSeenDate)
-      .map((c) => `${c.name}: ${c.lastSeenDate}`);
-    if (seen.length) parts.push(`Last seen (today is ${clock.date}): ${seen.join('; ')}`);
+    // Дата берётся из ОБОИХ мест, где движок её отмечает: досье и запись реестра.
+    // Читалось только досье — а у человека без досье (реестр знает, анкеты нет)
+    // отметка писалась в реестр и не доходила до модели вообще. Одна и та же
+    // правда лежала в двух местах, и половина её была мёртвой.
+    const seen = new Map<string, string>();
+    for (const c of state.gm.characters) if (c.lastSeenDate) seen.set(c.name, c.lastSeenDate);
+    for (const e of state.gm.registry || []) {
+      if (!e.lastSeenDate) continue;
+      const who = resolvePerson(project, state, { id: e.id });
+      const nm = who?.name || e.canonicalName;
+      if (!seen.has(nm)) seen.set(nm, e.lastSeenDate);
+    }
+    const lines = [...seen].map(([nm, d]) => `${nm}: ${d}`);
+    if (lines.length) parts.push(`Last seen (today is ${clock.date}): ${lines.join('; ')}`);
   }
 
   // Правила.
