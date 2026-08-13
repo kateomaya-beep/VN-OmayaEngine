@@ -87,6 +87,7 @@ TIER 1 — RESTATE EVERY TURN, even when nothing moved. These are volatile scene
 
 TIER 2 — DELTA ONLY, write when it actually changed. The engine retains these; omission never erases anyone:
 - dossier / appearance / personality / roleToHero: only on first appearance (then complete) or on a real change. Re-wording an existing description is NOT a change — never paraphrase a record just to restate it.
+- tags: the lasting facts about a person that the story must not lose, one short phrase each. WHAT THEY KNOW comes first — a secret the hero told them, something they found out, a lie they were fed ("знает, что Кейт не её дочь", "думает, что герой уехал"). Then promises, debts, grudges, shared history. Nobody remembers a scene forever: whatever is not written here disappears the moment that scene scrolls out of your context, and the character will act as if it never happened. Add a tag the same turn the fact is created, and delete one the moment it stops being true.
 - relations: an edge whose nature actually shifted.
 - locations: a NEW place, or an established one gaining a lasting detail (name + short description + tags).
 - agendaAdd / agendaDone: real new or completed goals.
@@ -338,6 +339,9 @@ const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
   // dossier»). Из-за него статус, записанный один раз, окаменевал и спорил с
   // историей. Заменён на инфобокс в духе Horae: короткая сводка каждый ход.
   { key: 'json_contract', signature: 'worldState is the GAME MASTER memory. It is OPTIONAL and DELTA-ONLY' },
+  // Контракт без правила про теги персонажа: записать «этот человек знает мою
+  // тайну» было НЕКУДА, и тайна жила ровно до конца той сцены в контексте.
+  { key: 'json_contract', signature: 'never paraphrase a record just to restate it.\n- relations:' },
 ];
 function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
   let changed = false;

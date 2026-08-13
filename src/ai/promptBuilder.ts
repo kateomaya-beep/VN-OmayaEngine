@@ -216,6 +216,11 @@ function whoIsWhoBlock(
     }
     const d = dossierOf(c.id, c.name);
     if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
+    // ТЕГИ — то, что помнит о человеке сама игра: что он знает, что обещал, чем
+    // обязан. Модель их писала, движок хранил, панель показывала — а ростер НЕТ,
+    // и обратно они не возвращались никогда. Тайна, которую герой кому-то
+    // доверил, жила ровно до тех пор, пока та сцена не уезжала из контекста.
+    if (d?.tags?.length) lines.push(`Known about them (lasting facts): ${d.tags.join('; ')}`);
     const ph = phoneNote(state, whoIs(c.id, c.name));
     if (ph) lines.push(ph);
     const now = nowLine(c.id, c.name);
@@ -256,6 +261,7 @@ function whoIsWhoBlock(
     // картинок — а рассказчик нет, и описывал его с нуля каждый раз.
     if (d?.appearance?.trim()) lines.push(`Appearance: ${d.appearance.trim()}`);
     if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
+    if (d?.tags?.length) lines.push(`Known about them (lasting facts): ${d.tags.join('; ')}`);
     const ph = phoneNote(state, whoIs(e.id, e.canonicalName));
     if (ph) lines.push(ph);
     const now = nowLine(e.id, e.canonicalName) || (e.status ? `Now: status: ${e.status}` : '');
