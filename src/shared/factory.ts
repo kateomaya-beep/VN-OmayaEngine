@@ -498,8 +498,7 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
   };
 }
 
-// Нормализация рантайм-состояния телефона из сейва (старые сейвы без phone → fresh;
-// переименование shopCache→deliveryCache; добавление activeOrders — миграция).
+// Нормализация рантайм-состояния телефона из сейва (старые сейвы без phone → fresh).
 function normalizePhoneState(raw: any, protagonistId?: string): PhoneState {
   const fresh = initialPhoneState();
   if (!raw || typeof raw !== 'object') return fresh;
@@ -591,9 +590,6 @@ function normalizePhoneState(raw: any, protagonistId?: string): PhoneState {
     chats: cleanChats,
     gallery: a<any>(raw.gallery).filter((x) => typeof x === 'string'),
     inventory: a<any>(raw.inventory).filter((it) => it && typeof it.name === 'string'),
-    // Переименование: старое поле shopCache → deliveryCache.
-    deliveryCache: a<any>(raw.deliveryCache ?? raw.shopCache).filter((it) => it && typeof it.name === 'string'),
-    activeOrders: a<any>(raw.activeOrders).filter((o) => o && typeof o.itemId === 'string'),
   };
 }
 

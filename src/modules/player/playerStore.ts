@@ -1,12 +1,11 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneShopItem, PhoneContact, PhoneChat, AssetMeta, InventoryItem, CharacterRole, RelationshipStats } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneContact, PhoneChat, AssetMeta, InventoryItem, CharacterRole, RelationshipStats } from '../../shared/types';
 import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRelationship } from '../../shared/types';
 import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
 import { generateChatReplies, type ChatReply } from '../../ai/phoneChat';
 import { generateContactPhoto, generateAvatarImage, generateGroupAvatarImage } from '../../ai/phonePhoto';
-import { generateDeliveryItems } from '../../ai/deliveryGen';
 import {
   generateImage,
   blobToRef,
@@ -164,10 +163,6 @@ interface PlayerStore {
   generateAvatar: (subject: AvatarSubject) => Promise<string | null>;
   // Догенерация фото, которые боты «прислали» в этот ход (sms_photo-бит).
   resolvePendingPhotos: () => Promise<void>;
-  // Доставка (ревизия блока 6 §3): догенерация ассортимента + оформление заказа.
-  deliveryLoadingCat: string | null; // categoryName, для которой сейчас генерится каталог
-  generateDelivery: (categoryName: string) => Promise<void>;
-  orderDelivery: (item: PhoneShopItem) => void;
   // Камера (Batch 7 §5): генерация селфи протагониста через image-API + отправка фото.
   cameraBusy: boolean;
   // mode: 'front' — селфи героя (с рефами), 'rear' — снимок того, что вокруг.
@@ -261,7 +256,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   currentCheckpointId: undefined,
   autosnapRing: [],
   phoneTypingFrom: null,
-  deliveryLoadingCat: null,
   cameraBusy: false,
   avatarBusy: false,
 
@@ -813,65 +807,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         }
       });
     }
-  },
-
-  async generateDelivery(categoryName) {
-    const st = get();
-    if (!st.project || !st.state || st.deliveryLoadingCat) return;
-    set({ deliveryLoadingCat: categoryName });
-    try {
-      const existing = [
-        ...(st.project.phone?.baseCatalog || []),
-        ...(st.state.phone?.deliveryCache || []),
-      ]
-        .filter((it) => it.category === categoryName)
-        .map((it) => it.name);
-      const items = await generateDeliveryItems(st.project, st.state, categoryName, existing);
-      if (items.length) {
-        get().patchPhone((p) => {
-          p.deliveryCache = [...p.deliveryCache, ...items];
-        });
-      }
-    } catch (e) {
-      logEvent('error', 'delivery', e instanceof Error ? e.message : String(e));
-      set({ error: 'Не удалось загрузить ассортимент. Проверьте подключение ИИ.' });
-    } finally {
-      set({ deliveryLoadingCat: null });
-    }
-  },
-
-  orderDelivery(item) {
-    const st = get();
-    if (!st.state || !st.project) return;
-    const price = Math.max(0, Math.round(item.price));
-    const bal = st.state.statValues[PHONE_BALANCE_STAT] ?? 0;
-    if (bal < price) {
-      set({ error: 'Недостаточно средств для заказа.' });
-      return;
-    }
-    const vendor = 'Доставка';
-    // Списание баланса + транзакция-выписка + активный заказ (влияет на сюжет) +
-    // позиция в инвентаре. Всё в одной мутации состояния.
-    const nextState: RuntimeState = JSON.parse(JSON.stringify(st.state));
-    nextState.statValues[PHONE_BALANCE_STAT] = bal - price;
-    const phone = nextState.phone ?? initialPhoneState();
-    phone.transactions.push({
-      amount: -price,
-      reason: `${vendor} — ${item.name}`,
-      vendor,
-      item: item.name,
-      at: Date.now(),
-    });
-    phone.activeOrders.push({
-      itemId: item.id,
-      name: item.name,
-      category: item.category,
-      placedAtTurn: nextState.turnCount,
-    });
-    phone.inventory.push({ itemId: item.id, name: item.name, category: item.category });
-    nextState.phone = phone;
-    set({ state: nextState });
-    void get().autosave();
   },
 
   async takeSelfie(userPrompt, mode = 'front') {

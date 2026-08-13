@@ -627,8 +627,8 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   return `== CURRENT WORLD STATE ==\n${parts.join('\n')}`;
 }
 
-// Телефон-коммуникации (Batch 7): контакты, входящие СМС, заказы доставки. Деньги/
-// прайс-гайд теперь в WORLD STATE. Возвращаем '' если телефон выключен.
+// Телефон-коммуникации: контакты и входящие СМС. Деньги/прайс-гайд теперь
+// в WORLD STATE. Возвращаем '' если телефон выключен.
 function phoneBlock(project: Project, state: RuntimeState): string {
   const cfg = project.phone;
   if (!cfg?.enabled) return '';
@@ -693,14 +693,6 @@ function phoneBlock(project: Project, state: RuntimeState): string {
       'RECENT TEXT MESSAGES (these already happened on the phone — both sides remember them; ' +
         'treat them as canon, refer back to them naturally, and do NOT replay them as new):\n' +
         tail.map((x) => x.line).join('\n')
-    );
-  }
-  const orders = state.phone?.activeOrders || [];
-  if (orders.length) {
-    parts.push(
-      `PENDING DELIVERIES (ordered via a delivery app — have them arrive in the story naturally, then move on): ${orders
-        .map((o) => `${o.name} (${o.category})`)
-        .join(', ')}.`
     );
   }
   return `== PHONE ==\n${parts.filter(Boolean).join('\n')}`;

@@ -396,33 +396,6 @@ export function normalizeInventory(v: unknown): InventoryItem[] {
     }));
 }
 
-export interface PhoneShopItem {
-  id: string;
-  name: string;
-  category: string;
-  price: number;
-  description?: string;
-  generated?: boolean; // добавлен ИИ (кэш)
-  outfitTag?: string; // одежда → тег наряда (если есть спрайт)
-  spriteAssetId?: string;
-}
-
-// Категория доставки (ревизия блока 6): custom=true — добавлена юзером.
-export interface PhoneDeliveryCategory {
-  id: string;
-  name: string;
-  custom: boolean;
-}
-
-// Активный заказ доставки — влияет на сюжет (ИИ получает его в контексте).
-export interface PhoneOrder {
-  itemId: string;
-  name: string;
-  category: string;
-  placedAtTurn: number;
-  delivered?: boolean;
-}
-
 export interface PhoneConfig {
   enabled: boolean;
   showFloatingIcon: boolean;
@@ -434,8 +407,6 @@ export interface PhoneConfig {
   popupNotifications: boolean;
   currencyName: string; // «$», «кредиты» и т.п.
   priceGuide: string; // ориентиры цен сеттинга (уходят в контекст ИИ)
-  deliveryCategories: PhoneDeliveryCategory[]; // только доставка (еда/одежда/дом + свои)
-  baseCatalog: PhoneShopItem[]; // авторский базовый шаблон позиций доставки
 }
 
 export interface PhoneTransaction {
@@ -521,8 +492,6 @@ export interface PhoneState {
   // параллельных механизма приходилось синхронизировать в каждой точке записи.
   gallery: string[]; // assetId сгенерированных фото
   inventory: PhoneInventoryItem[];
-  deliveryCache: PhoneShopItem[]; // сгенерированные ИИ позиции доставки (кэш)
-  activeOrders: PhoneOrder[]; // размещённые заказы (ждут появления в сюжете)
 }
 
 const DEFAULT_CAMERA_PROMPT =
@@ -541,15 +510,6 @@ const LEGACY_CAMERA_PROMPT =
 export const DEFAULT_PRICE_GUIDE =
   'кофе ~5, обед в кафе ~15, продукты на неделю ~80, такси по городу ~20, одежда (вещь) ~50, аренда жилья в месяц ~1200, зарплата в месяц ~3000';
 
-// Базовые категории доставки. id стабилен, name/custom редактируемы.
-export function defaultDeliveryCategories(): PhoneDeliveryCategory[] {
-  return [
-    { id: 'food', name: 'Еда и продукты', custom: false },
-    { id: 'clothing', name: 'Одежда', custom: false },
-    { id: 'home', name: 'Товары для дома', custom: false },
-  ];
-}
-
 export function defaultPhoneConfig(): PhoneConfig {
   return {
     enabled: false,
@@ -560,8 +520,6 @@ export function defaultPhoneConfig(): PhoneConfig {
     popupNotifications: true,
     currencyName: '$',
     priceGuide: DEFAULT_PRICE_GUIDE,
-    deliveryCategories: defaultDeliveryCategories(),
-    baseCatalog: [],
   };
 }
 
@@ -573,8 +531,6 @@ export function initialPhoneState(): PhoneState {
 
     gallery: [],
     inventory: [],
-    deliveryCache: [],
-    activeOrders: [],
   };
 }
 
@@ -595,19 +551,6 @@ export function contactDisplayName(
   return contact.id;
 }
 
-function normShopItem(it: any): PhoneShopItem {
-  return {
-    id: typeof it.id === 'string' ? it.id : `item_${Math.random().toString(36).slice(2, 8)}`,
-    name: it.name,
-    category: typeof it.category === 'string' ? it.category : 'Разное',
-    price: typeof it.price === 'number' ? it.price : 0,
-    description: typeof it.description === 'string' ? it.description : undefined,
-    generated: typeof it.generated === 'boolean' ? it.generated : undefined,
-    outfitTag: typeof it.outfitTag === 'string' ? it.outfitTag : undefined,
-    spriteAssetId: typeof it.spriteAssetId === 'string' ? it.spriteAssetId : undefined,
-  };
-}
-
 export function normalizePhoneConfig(v: unknown): PhoneConfig {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   const d = defaultPhoneConfig();
@@ -615,26 +558,6 @@ export function normalizePhoneConfig(v: unknown): PhoneConfig {
     x?: unknown;
     y?: unknown;
   };
-  const catItems = Array.isArray(o.baseCatalog) ? (o.baseCatalog as any[]) : [];
-  // Категории доставки: новый формат {id,name,custom}; миграция со старого
-  // shopCategories: string[] → пользовательские категории.
-  let deliveryCategories: PhoneDeliveryCategory[];
-  if (Array.isArray(o.deliveryCategories)) {
-    deliveryCategories = (o.deliveryCategories as any[])
-      .filter((c) => c && typeof c.name === 'string' && c.name.trim())
-      .map((c) => ({
-        id: typeof c.id === 'string' ? c.id : `cat_${Math.random().toString(36).slice(2, 8)}`,
-        name: c.name,
-        custom: typeof c.custom === 'boolean' ? c.custom : true,
-      }));
-  } else if (Array.isArray(o.shopCategories)) {
-    const names = (o.shopCategories as any[]).filter((x) => typeof x === 'string' && x.trim());
-    deliveryCategories = names.length
-      ? names.map((n: string) => ({ id: `cat_${Math.random().toString(36).slice(2, 8)}`, name: n, custom: true }))
-      : d.deliveryCategories;
-  } else {
-    deliveryCategories = d.deliveryCategories;
-  }
   return {
     enabled: typeof o.enabled === 'boolean' ? o.enabled : false,
     showFloatingIcon: typeof o.showFloatingIcon === 'boolean' ? o.showFloatingIcon : true,
@@ -656,8 +579,6 @@ export function normalizePhoneConfig(v: unknown): PhoneConfig {
     popupNotifications: typeof o.popupNotifications === 'boolean' ? o.popupNotifications : true,
     currencyName: typeof o.currencyName === 'string' && o.currencyName.trim() ? o.currencyName : '$',
     priceGuide: typeof o.priceGuide === 'string' && o.priceGuide.trim() ? o.priceGuide : d.priceGuide,
-    deliveryCategories,
-    baseCatalog: catItems.filter((it) => it && typeof it.name === 'string').map(normShopItem),
   };
 }
 

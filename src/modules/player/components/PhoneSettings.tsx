@@ -1,14 +1,10 @@
 import { useState } from 'react';
 import { AssetImage } from '../../../shared/ui';
 import { usePlayerStore } from '../playerStore';
-import { defaultPhoneConfig, type PhoneConfig, type PhoneDeliveryCategory, type Project } from '../../../shared/types';
+import { defaultPhoneConfig, type PhoneConfig, type Project } from '../../../shared/types';
 
-function catId(): string {
-  return `cat_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// Настройки телефона (Batch 7): вкл/выкл, иконка, обои, валюта, камера, уведомления,
-// категории доставки. Живут в панели «Расширения» (Batch 8-fix). Работают на props,
+// Настройки телефона (Batch 7): вкл/выкл, иконка, обои, валюта, камера, уведомления.
+// Живут в панели «Расширения» (Batch 8-fix). Работают на props,
 // чтобы редактироваться и в конструкторе, и в игре.
 export function PhoneSettingsContent({
   project,
@@ -17,7 +13,6 @@ export function PhoneSettingsContent({
   project: Project;
   onPatch: (m: (p: Project) => void) => void;
 }) {
-  const [newCat, setNewCat] = useState('');
   // Результат теста image-API: null — не запускали; 'testing'; 'ok'; {error}.
   const [imgTest, setImgTest] = useState<null | 'testing' | 'ok' | { error: string }>(null);
 
@@ -145,57 +140,6 @@ export function PhoneSettingsContent({
             </div>
             <p className="text-[11px] text-gray-500 mt-1">
               Тест генерирует одну маленькую картинку через настроенное image-API (расходует токены/кредиты). Настройка ключа — в 🎬 CG-студии.
-            </p>
-          </div>
-
-          <div>
-            <label className="label">Категории доставки</label>
-            <div className="flex gap-1.5 flex-wrap mb-2">
-              {cfg.deliveryCategories.map((c) => (
-                <span key={c.id} className="chip">
-                  {c.name}
-                  <button
-                    className="ml-1 text-red-300"
-                    onClick={() =>
-                      patch({ deliveryCategories: cfg.deliveryCategories.filter((x) => x.id !== c.id) })
-                    }
-                  >
-                    ✕
-                  </button>
-                </span>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <input
-                className="input flex-1"
-                placeholder="Новая категория"
-                value={newCat}
-                onChange={(e) => setNewCat(e.target.value)}
-                onKeyDown={(e) => {
-                  const name = newCat.trim();
-                  if (e.key === 'Enter' && name && !cfg.deliveryCategories.some((x) => x.name === name)) {
-                    const next: PhoneDeliveryCategory = { id: catId(), name, custom: true };
-                    patch({ deliveryCategories: [...cfg.deliveryCategories, next] });
-                    setNewCat('');
-                  }
-                }}
-              />
-              <button
-                className="btn-ghost shrink-0"
-                onClick={() => {
-                  const name = newCat.trim();
-                  if (name && !cfg.deliveryCategories.some((x) => x.name === name)) {
-                    const next: PhoneDeliveryCategory = { id: catId(), name, custom: true };
-                    patch({ deliveryCategories: [...cfg.deliveryCategories, next] });
-                    setNewCat('');
-                  }
-                }}
-              >
-                + Категория
-              </button>
-            </div>
-            <p className="text-[11px] text-gray-500 mt-1">
-              Приложение «Доставка» показывает эти категории. Кафе, такси и покупки вживую идут через повествование (ИИ создаёт транзакции сам).
             </p>
           </div>
 

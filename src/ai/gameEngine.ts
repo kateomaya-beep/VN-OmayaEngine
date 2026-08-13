@@ -437,12 +437,6 @@ export async function applyTurn(
   const onScreen = [...onScreenMap.values()].slice(-3);
   const finalBackgroundId = runBg ?? state.currentBackgroundId;
 
-  // Заказы доставки «прибывают» за пару ходов: ИИ видит их в контексте как ожидаемые,
-  // затем движок их снимает (считаем доставленными). Инвентарь добавлен при заказе.
-  if (phoneOn && phone.activeOrders.length) {
-    phone.activeOrders = phone.activeOrders.filter((o) => nextTurnNumber - o.placedAtTurn < 2);
-  }
-
   // Музыка: финальное настроение хода -> конкретный трек (мид-турн смены играет плеер).
   const nextMood = runMood ?? state.currentMusicMood;
   const nextTrack =
