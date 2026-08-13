@@ -27,10 +27,6 @@ const MAX_TRANSCRIPT_CHARS = 40000;
 // вернёт не всё. Размер ограничен тем же потолком свёртки.
 const RAW_ARCHIVE_CHARS = MAX_TRANSCRIPT_CHARS;
 
-export function historyTokens(history: LlmMessage[]): number {
-  return history.reduce((sum, m) => sum + estimateTokens(m.content), 0);
-}
-
 // Запасная доля бюджета под живую историю — на первый ход, пока запрос ещё ни разу
 // не собирался и реальный размер системной части неизвестен.
 const LIVE_HISTORY_SHARE = 0.45;

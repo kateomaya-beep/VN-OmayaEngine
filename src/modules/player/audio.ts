@@ -66,10 +66,6 @@ export function toggleMute(): void {
   persistAndNotify();
 }
 
-export function isMuted(): boolean {
-  return volumes.muted;
-}
-
 export async function playMusic(blobKey: string | null, fadeMs = 800): Promise<void> {
   if (blobKey === currentKey) return;
   const prev = currentHowl;

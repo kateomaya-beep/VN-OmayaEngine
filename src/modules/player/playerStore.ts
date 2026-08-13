@@ -602,12 +602,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const st = get();
     const chat = st.state?.phone?.chats.find((c) => c.id === chatId);
     if (!chat) return;
-    const peers = chat.participantIds;
-    if (!chat.unread && !peers.some((id) => st.state!.phone!.unreadFrom.includes(id))) return;
+    if (!chat.unread) return;
     get().patchPhone((p) => {
       const c = p.chats.find((x) => x.id === chatId);
       if (c) c.unread = false;
-      p.unreadFrom = p.unreadFrom.filter((id) => !peers.includes(id));
     });
   },
 
@@ -652,7 +650,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   deleteContact(id, opts) {
     get().patchPhone((p) => {
       p.contacts = p.contacts.filter((c) => c.id !== id);
-      p.unreadFrom = p.unreadFrom.filter((x) => x !== id);
       for (const chat of p.chats) {
         chat.participantIds = chat.participantIds.filter((x) => x !== id);
       }
@@ -731,7 +728,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         at: Date.now(),
       });
       c.unread = false;
-      p.unreadFrom = p.unreadFrom.filter((id) => !c.participantIds.includes(id));
     });
     set({ phoneTypingFrom: chatId });
     try {
@@ -1134,9 +1130,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         for (const m of c.messages) if (m.senderId === dupId) m.senderId = survivorId;
       }
       next.phone.contacts = next.phone.contacts.filter((c) => c.characterId !== dupId && c.id !== dupId);
-      next.phone.unreadFrom = next.phone.unreadFrom
-        .map((id) => (id === dupId ? survivorId : id))
-        .filter((id, i, a) => a.indexOf(id) === i);
     }
 
     set({ state: next });

@@ -509,10 +509,9 @@ export interface PhoneState {
   contacts: PhoneContact[];
   // Чаты (Телефон 2.0). Личные и групповые в одном списке.
   chats: PhoneChat[];
-  /** @deprecated Старое хранилище переписки (characterId -> сообщения). Читается
-   * только для миграции в chats; движок и UI работают с chats. */
-  conversations: Record<string, PhoneMessage[]>;
-  unreadFrom: string[]; // characterIds с непрочитанным
+  // Непрочитанное — флаг на самом чате. Отдельного списка контактов с
+  // непрочитанным больше нет: групповой чат он выразить не мог, а два
+  // параллельных механизма приходилось синхронизировать в каждой точке записи.
   gallery: string[]; // assetId сгенерированных фото
   inventory: PhoneInventoryItem[];
   deliveryCache: PhoneShopItem[]; // сгенерированные ИИ позиции доставки (кэш)
@@ -564,8 +563,7 @@ export function initialPhoneState(): PhoneState {
     transactions: [],
     contacts: [],
     chats: [],
-    conversations: {},
-    unreadFrom: [],
+
     gallery: [],
     inventory: [],
     deliveryCache: [],

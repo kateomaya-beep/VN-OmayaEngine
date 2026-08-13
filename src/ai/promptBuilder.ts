@@ -12,7 +12,7 @@ import { formatClock } from './gameMaster';
 import { parseDate, diffDays } from '../shared/gameDate';
 import { expandMacros, type MacroContext } from './macros';
 import { retrieveRelevant } from './vectorEngine';
-import { buildRegistryView, registryContextBlock, normName } from './characterRegistry';
+import { normName } from './characterRegistry';
 import { estimateTokens } from '../shared/utils';
 
 // Builds the full request as a system string (layered core → style → jailbreak →
@@ -230,73 +230,6 @@ function whoIsWhoBlock(
   );
 }
 
-function characterBlocks(
-  project: Project,
-  onScreenIds: string[],
-  ctx: MacroContext
-): string {
-  const roleLabel: Record<string, string> = {
-    protagonist: "PLAYER'S HERO",
-    love_interest: 'love interest',
-    important_character: 'important character',
-    npc: 'minor',
-  };
-  const rels = ctx.state?.relationship || {};
-  const relLine = (c: (typeof project.characters)[number]) => {
-    if (c.role === 'protagonist') return '';
-    const r = rels[c.id] || c.relationship;
-    return `\nRelationship toward the hero (ids for statChanges): ❤️ rel:${c.id}:affection=${r.affection}, 🔥 rel:${c.id}:passion_stat=${r.passion_stat}, 🍀 rel:${c.id}:friendship=${r.friendship}, 🎖 rel:${c.id}:respect=${r.respect} (range -100..100)`;
-  };
-  const desc = (c: (typeof project.characters)[number]) => {
-    const emotions = Object.keys(c.sprites);
-    const emo = emotions.length ? emotions.join(', ') : '(no sprites — render as name + text)';
-    // Наряды (Batch 5.3): показываем строку только если у персонажа есть выбор
-    // (>1 наряда). Каждый наряд — с его триггером-описанием (когда его надевать),
-    // чтобы модель уверенно мапила сцену на тег (напр. «в белье» → underwear).
-    const outfitLine = hasExtraOutfits(c)
-      ? `\nAvailable outfits — set "outfit" to the tag whose situation matches the scene (default when nothing special: "${defaultOutfitTag(
-          c
-        )}"):\n${characterOutfits(c)
-          .map((tag) => {
-            if (tag === defaultOutfitTag(c)) return `  - ${tag} (default everyday look)`;
-            const desc = c.outfits?.find((o) => o.outfit === tag)?.description?.trim();
-            return `  - ${tag}${desc ? ` — use when: ${desc}` : ''}`;
-          })
-          .join('\n')}`
-      : '';
-    // Внешность/предыстория — опциональные поля (могут быть пустыми, если всё в описании).
-    const appLine = c.card.appearance.trim() ? `\nAppearance: ${expandMacros(c.card.appearance, ctx)}` : '';
-    const backLine = c.card.backstory.trim() ? `\nBackstory: ${expandMacros(c.card.backstory, ctx)}` : '';
-    return `### ${c.name} (id: ${c.id}, role: ${roleLabel[c.role] || c.role})
-Description: ${expandMacros(c.card.personality, ctx)}${appLine}${backLine}
-Speech style: ${expandMacros(c.card.speechStyle, ctx)}${
-      c.card.relationshipArc ? `\nRelationship arc: ${expandMacros(c.card.relationshipArc, ctx)}` : ''
-    }${relLine(c)}
-Available emotions: ${emo}${outfitLine}`;
-  };
-
-  const present = project.characters.filter((c) => onScreenIds.includes(c.id));
-  const protagonist = project.characters.find(
-    (c) => c.role === 'protagonist' && !present.includes(c)
-  );
-  const fullList = protagonist ? [protagonist, ...present] : present;
-  const others = project.characters.filter(
-    (c) => !fullList.includes(c)
-  );
-
-  let out = '';
-  if (fullList.length) out += `Characters in focus (full cards):\n${fullList.map(desc).join('\n\n')}\n`;
-  if (others.length) {
-    out += `\nOther characters (brief):\n${others
-      .map((c) => `- ${c.name} (id: ${c.id}, ${c.role}): ${c.card.personality.slice(0, 80)}`)
-      .join('\n')}`;
-  }
-  if (!fullList.length && !others.length) {
-    out = '(no predefined characters — introduce NPCs via name)';
-  }
-  return out;
-}
-
 // Текущие спрайты на сцене с эмоцией и нарядом — чтобы модель вела непрерывность
 // (держала эмоцию/наряд между ходами и меняла осознанно, а не заново угадывала).
 function onScreenState(project: Project, state: RuntimeState): string {
@@ -493,34 +426,6 @@ function gameMasterBlock(state: RuntimeState, turnNow = 0): string {
         `is now ${elapsed} older), children grow up and can walk and talk, wounds and pregnancies have long resolved, ` +
         `jobs, homes and relationships have moved on, seasons turned. A character card describes who someone WAS when ` +
         `it was written — add the elapsed time yourself instead of replaying the beginning.`
-    );
-  }
-  // Досье персонажей ПЕРЕЕХАЛИ в единую картотеку (whoIsWhoBlock): держать их ещё
-  // и здесь значило бы снова описывать одного человека дважды — ровно та поломка,
-  // ради которой картотеку и свели воедино.
-  if (false) {
-    const lines = gm.characters.map((c) => {
-      const bits = [
-        c.roleToHero && `to hero: ${c.roleToHero}`,
-        c.status && `status: ${c.status}`,
-        c.mood && `mood: ${c.mood}`,
-        c.outfit && `outfit: ${c.outfit}`,
-        c.location && `at: ${c.location}`,
-      ].filter(Boolean);
-      const tags = c.tags.length ? ` [${c.tags.join(', ')}]` : '';
-      const dossier = c.dossier ? ` — ${c.dossier}` : '';
-      // Возраст записи. «status: беременна», записанный сто ходов назад, — это НЕ
-      // положение дел сейчас, но выглядел он именно так, и модель ему верила.
-      const age = c.updatedAtTurn && turnNow ? turnNow - c.updatedAtTurn : null;
-      const stamp = age === null ? '' : age <= 1 ? ' [updated this turn]' : ` [written ${age} turns ago — may be out of date]`;
-      return `- ${c.name}${dossier}${bits.length ? ` (${bits.join('; ')})` : ''}${tags}${stamp}`;
-    });
-    parts.push(
-      `Characters (dossiers — a SNAPSHOT you maintain, not eternal truth):\n${lines.join('\n')}\n` +
-        `A dossier line is only as fresh as its stamp. If the recent messages or the episode log show something ` +
-        `newer — a pregnancy that ended in a birth, an injury that healed, a job that was quit, someone who moved or ` +
-        `died — THE STORY WINS and the dossier is simply stale. In that case do NOT act on the stale line: describe ` +
-        `the current reality and send the corrected value in worldState.characters this turn.`
     );
   }
   if (gm.relations.length) {
@@ -943,21 +848,6 @@ export async function buildRequest(
     `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts, character dialogue and choice texts — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate JSON keys, character ids, emotion keys, outfit tags, music moods or background ids — those stay exactly as given.`
   );
   // Реестр персонажей (patch character-registry) — идентичность по id + правило.
-  // Реестр как ОТДЕЛЬНЫЙ список тоже убран: id, псевдонимы и правила идентичности
-  // теперь живут прямо в картотеке, рядом с самим персонажем.
-  const regView = buildRegistryView(project, state.gm);
-  const regBlock = '';
-  void regView;
-  if (regBlock) {
-    systemParts.push(
-      `${regBlock}\n\nCHARACTER IDENTITY — CRITICAL:\n` +
-        `- The Character Registry above is the single source of truth for who exists.\n` +
-        `- Before introducing or describing anyone, check the registry. If the person already exists under ANY name or alias, reuse their existing id — do NOT invent a second character for the same person (names drift: "Дэмиан"/"Дэм"/"Блэк"/"парень из бара" are one person).\n` +
-        `- Emit {"type":"character_new","canonicalName":...,"aliases":[...],"role":...} ONLY for a genuinely new person absent from the registry. If they are already known under a new nickname, emit {"type":"character_alias_add","id":"<existing id>","alias":"<nickname>"} instead.\n` +
-        `- When a known character's situation changes, emit {"type":"character_update","id":"<id>","status":"..."} — never create a second entry for the same person.`
-    );
-  }
-
   // Единый WORLD STATE (Batch 8) — дата/деньги/долг/инвентарь + правила.
   const worldCtx = worldStateBlock(project, state);
   if (worldCtx) systemParts.push(worldCtx);

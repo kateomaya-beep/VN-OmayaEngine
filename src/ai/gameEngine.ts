@@ -350,7 +350,6 @@ export async function applyTurn(
           at: Date.now(),
         });
         chat.unread = true;
-        if (!phone.unreadFrom.includes(b.characterId)) phone.unreadFrom.push(b.characterId);
         if (project.phone?.popupNotifications) {
           const nm = project.characters.find((c) => c.id === b.characterId)?.name || 'Сообщение';
           pushToast('info', `💬 ${nm}: ${b.text.slice(0, 60)}`);
@@ -375,7 +374,6 @@ export async function applyTurn(
           at: Date.now(),
         });
         chat.unread = true;
-        if (!phone.unreadFrom.includes(b.characterId)) phone.unreadFrom.push(b.characterId);
         if (project.phone?.popupNotifications) {
           const nm = project.characters.find((c) => c.id === b.characterId)?.name || 'Сообщение';
           pushToast('info', `📷 ${nm} прислал(а) фото`);
@@ -742,7 +740,6 @@ async function deliverFallbackSms(
       chat.messages.push({ id: uid('msg'), from: 'contact', senderId: pickId, text, at: Date.now() });
     }
     chat.unread = true;
-    if (!state.phone.unreadFrom.includes(pickId)) state.phone.unreadFrom.push(pickId);
     if (project.phone?.popupNotifications) {
       const nm = project.characters.find((c) => c.id === pickId)?.name || 'Сообщение';
       pushToast('info', `💬 ${nm}: ${msgs[0].slice(0, 60)}`);

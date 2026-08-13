@@ -94,10 +94,8 @@ export function PhoneFloatingIcon({ onOpen }: { onOpen: () => void }) {
   // Порог движения: тап с микро-дрожанием (частый на тач/мыши) НЕ считается
   // перетаскиванием — иначе onUp уходил в ветку drag и телефон не открывался.
   const drag = useRef<{ moved: boolean; sx: number; sy: number } | null>(null);
-  // Непрочитанное: и личные ветки (unreadFrom), и групповые чаты (chat.unread).
-  const unread = (s.state?.phone?.chats || []).filter(
-    (c) => !c.archived && (c.unread || c.participantIds.some((id) => s.state?.phone?.unreadFrom.includes(id)))
-  ).length;
+  // Непрочитанное считается по чатам: чат — единица переписки и для лички, и для групп.
+  const unread = (s.state?.phone?.chats || []).filter((c) => !c.archived && c.unread).length;
   const DRAG_THRESHOLD = 6; // px
 
   if (!cfg.enabled || !cfg.showFloatingIcon) return null;
@@ -1046,7 +1044,7 @@ function ChatListScreen({ onBack, onOpenChat }: { onBack: () => void; onOpenChat
         ) : (
           chats.map((chat) => {
             const last = chat.messages[chat.messages.length - 1];
-            const unread = chat.unread || chat.participantIds.some((id) => phone?.unreadFrom.includes(id));
+            const unread = !!chat.unread;
             const title = chatTitle(chat);
             const prefix =
               chat.kind === 'group' && last

@@ -554,7 +554,7 @@ function normalizePhoneState(raw: any, protagonistId?: string): PhoneState {
       avatarAssetId: typeof c.avatarAssetId === 'string' ? c.avatarAssetId : undefined,
       participantIds: a<any>(c.participantIds).filter((x) => typeof x === 'string'),
       messages: normMsgs(c.messages, a<any>(c.participantIds)[0]),
-      unread: !!c.unread,
+      unread: !!c.unread || a<any>(raw.unreadFrom).some((id) => a<any>(c.participantIds).includes(id)),
       groupActivity: typeof c.groupActivity === 'number' ? Math.max(0, Math.min(100, c.groupActivity)) : undefined,
       topic: typeof c.topic === 'string' ? c.topic : undefined,
       archived: !!c.archived,
@@ -586,8 +586,6 @@ function normalizePhoneState(raw: any, protagonistId?: string): PhoneState {
     transactions: a<any>(raw.transactions).filter((t) => t && typeof t.amount === 'number'),
     contacts: cleanContacts,
     chats: cleanChats,
-    conversations: conv,
-    unreadFrom: unread.filter((id) => !selfIds.has(id)),
     gallery: a<any>(raw.gallery).filter((x) => typeof x === 'string'),
     inventory: a<any>(raw.inventory).filter((it) => it && typeof it.name === 'string'),
     // Переименование: старое поле shopCache → deliveryCache.

@@ -68,17 +68,6 @@ export async function activePlaythrough(projectId: string): Promise<PlaythroughI
   return all[0] || null;
 }
 
-export async function hasAnyProgress(projectId: string): Promise<boolean> {
-  return (await listSaves(projectId)).length > 0;
-}
-
-// Удалить целиком прохождение: его автосейв-курсор и все чекпоинты.
-export async function deletePlaythrough(projectId: string, info: PlaythroughInfo): Promise<void> {
-  const slots = [...info.checkpoints.map((c) => c.slot), ...info.autosnaps.map((a) => a.slot)];
-  if (info.autosave) slots.push(info.autosave.slot);
-  for (const slot of slots) await deleteSave(projectId, slot);
-}
-
 // Удалить все прохождения проекта (для «Начать заново → удалить старый прогресс»).
 export async function deleteAllPlaythroughs(projectId: string): Promise<void> {
   for (const s of await listSaves(projectId)) await deleteSave(projectId, s.slot);

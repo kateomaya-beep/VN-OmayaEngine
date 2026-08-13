@@ -20,10 +20,3 @@ export async function getAssetUrl(blobKey: string | undefined | null): Promise<s
   return p;
 }
 
-export function revokeAssetUrl(blobKey: string): void {
-  const url = cache.get(blobKey);
-  if (url) {
-    URL.revokeObjectURL(url);
-    cache.delete(blobKey);
-  }
-}

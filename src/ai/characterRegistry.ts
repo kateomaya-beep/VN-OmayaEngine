@@ -118,16 +118,6 @@ export function buildRegistryView(project: Project, gm: GameMasterState): Charac
 }
 
 // Компактный реестр для контекста ИИ.
-export function registryContextBlock(registry: CharacterRegistryEntry[]): string {
-  const active = registry.filter((e) => !registry.some((x) => x.merged?.includes(e.id)));
-  if (!active.length) return '';
-  const lines = active.map((e) => {
-    const aka = e.aliases.filter((a) => normName(a) !== normName(e.canonicalName));
-    return `${e.id} | ${e.canonicalName}${aka.length ? ` | aka: ${aka.join(', ')}` : ''}${e.status ? ` | статус: ${e.status}` : ''}`;
-  });
-  return `=== CHARACTER REGISTRY (who exists — reference by id, never by bare name) ===\n${lines.join('\n')}`;
-}
-
 export function newRegistryId(): string {
   return uid('char');
 }

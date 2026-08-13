@@ -260,15 +260,6 @@ export async function listSaves(projectId: string): Promise<SaveSlot[]> {
     .sort((a, b) => a.slot - b.slot);
 }
 
-export async function getSave(projectId: string, slot: number): Promise<SaveSlot | undefined> {
-  const db = await getDB();
-  const raw = await db.get('saves', `${projectId}:${slot}`);
-  if (!raw) return undefined;
-  const project = await getProject(projectId);
-  if (!project) return raw;
-  return { ...raw, state: normalizeRuntimeState(raw.state, project) };
-}
-
 export async function deleteSave(projectId: string, slot: number): Promise<void> {
   const db = await getDB();
   await db.delete('saves', `${projectId}:${slot}`);
