@@ -613,6 +613,7 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
       'Writing the jump only in prose is NOT enough: the engine keeps its own clock, and if you skip this beat the clock ' +
       'stays frozen at the old date. A few turns later the frozen clock is all that is left in context, and the story ' +
       'silently rewinds to before the skip — characters un-age, events un-happen. Never write a date in any other format.',
+    'MONEY MOVES THROUGH THE TRANSACTION BEAT ONLY. Never also put the same amount into statChanges on the balance stat — the engine would apply both and charge the hero twice. One purchase = one beat.',
     'INVENTORY: emit {"type":"inventory_add","name":...,"emoji":"<one emoji>","quantity":1,"category":...,"source":"куплено|получено|найдено"} when the hero acquires something meaningful, and {"type":"inventory_remove","name":...,"quantity":1} when they consume/lose/give it away. Consumables are really spent.',
   ];
   if (hasEconomy) {

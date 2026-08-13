@@ -1,5 +1,6 @@
 import type { GameMasterState, WorldStateUpdate, GmCharacter, GmClock } from '../shared/types';
 import { uid } from '../shared/utils';
+import { findRegistryMatch, normName } from './characterRegistry';
 
 // Человекочитаемая внутриигровая дата/время: "3 March 1024 · 14:30 · Plaza".
 export function formatClock(c: GmClock): string {
@@ -24,6 +25,12 @@ export function mergeWorldState(
     events: [...gm.events],
     agenda: gm.agenda.map((t) => ({ ...t })),
     locations: (gm.locations || []).map((l) => ({ ...l, tags: [...l.tags] })),
+    // Реестр персонажей копируется вместе с остальным. Раньше он тут молча
+    // терялся: объект собирался по полям, и registry в перечень не попал. Дальше
+    // по ходу его пересобирал syncRegistry, поэтому потеря была незаметна снаружи —
+    // но ВНУТРИ этой функции реестра не существовало, и опознать человека по
+    // алиасу было нечем. Отсюда и вторая запись в досье на то же лицо.
+    registry: (gm.registry || []).map((e) => ({ ...e, aliases: [...e.aliases] })),
   };
 
   // Часы/дата/локация.
@@ -38,9 +45,23 @@ export function mergeWorldState(
   // Досье персонажей — upsert по charId, иначе по имени (без регистра).
   for (const u of update.characters || []) {
     if (!u || !u.name) continue;
-    const idx = next.characters.findIndex((c) =>
-      u.charId ? c.charId === u.charId : c.name.toLowerCase() === u.name.toLowerCase()
-    );
+    // ОПОЗНАНИЕ ЧЕЛОВЕКА — ОДНО ПРАВИЛО НА ВСЮ ИГРУ. Раньше досье искалось строго
+    // по точному совпадению имени в нижнем регистре, тогда как реестр персонажей
+    // умеет алиасы и близкие написания. Модель называет человека «Дэм» вместо
+    // «Дэмиан» — реестр видит того же, а список досье заводит ВТОРУЮ запись.
+    // Отсюда и дубликаты персонажей в Game Master. Теперь досье пользуется тем же
+    // сопоставлением, что и реестр: id → алиас в реестре → похожее имя.
+    let idx = u.charId ? next.characters.findIndex((c) => c.charId === u.charId) : -1;
+    if (idx === -1) {
+      const viaRegistry = findRegistryMatch(next.registry || [], u.name);
+      if (viaRegistry) {
+        const names = [viaRegistry.entry.canonicalName, ...viaRegistry.entry.aliases].map(normName);
+        idx = next.characters.findIndex(
+          (c) => (c.charId && c.charId === viaRegistry.entry.id) || names.includes(normName(c.name))
+        );
+      }
+    }
+    if (idx === -1) idx = next.characters.findIndex((c) => normName(c.name) === normName(u.name));
     const set = (cur: GmCharacter, key: keyof GmCharacter, val: unknown) => {
       if (typeof val === 'string' && val.trim()) (cur as any)[key] = val;
     };

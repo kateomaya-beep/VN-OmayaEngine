@@ -286,7 +286,23 @@ export async function applyTurn(
   };
 
   // Дельты баланса из statChanges (transaction/money_change-биты — в цикле ниже).
-  for (const ch of balanceDeltas) recordMoney(ch.delta, { reason: ch.reason || '' });
+  // ДЕНЬГИ ДВИЖУТСЯ ПО ОДНОМУ КАНАЛУ. Их можно было изменить двумя способами сразу:
+  // битом transaction/money_change и записью statChanges на стат баланса. Для модели
+  // это естественно («купил кофе за 5» → и бит, и изменение стата), а для игрока
+  // означало ДВОЙНОЕ списание за одну покупку. Бит богаче (продавец, товар, время) и
+  // описан в контракте — он и главный. Если в ходе есть хоть один денежный бит,
+  // дублирующие statChanges по балансу игнорируем.
+  const hasMoneyBeat = turn.beats.some((b) => b.type === 'transaction' || b.type === 'money_change');
+  if (hasMoneyBeat && balanceDeltas.length) {
+    logEvent(
+      'info',
+      'turn',
+      `Ход менял баланс и битом, и statChanges — вторая запись отброшена, чтобы не списать дважды ` +
+        `(${balanceDeltas.map((d) => d.delta).join(', ')})`
+    );
+  } else {
+    for (const ch of balanceDeltas) recordMoney(ch.delta, { reason: ch.reason || '' });
+  }
 
   // Продвижение времени (Batch 8 §II): собираем целевую дату/время из time_advance-битов.
   let pendingDate: string | undefined;
