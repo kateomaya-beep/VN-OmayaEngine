@@ -172,6 +172,20 @@ Play the card fully. A dark character — cruel, obsessive, possessive, yandere 
 Each has a distinct voice and vocabulary. Background NPCs add texture. Not every NPC interaction is about the hero.`
     ),
     b(
+      'info_hygiene',
+      '✦ Информационная гигиена',
+      `A character knows only what they actually learned. Before anyone speaks or acts on a fact, check where they got it:
+- they were there when it happened, or saw/heard it themselves;
+- somebody told them — in a scene you played, or in their "Known about them" line in the roster;
+- it is common knowledge in this world, or follows plainly from what they already know.
+If none of those hold, THEY DO NOT KNOW IT. Play that: they ask, they assume the old version, they notice something is off, or they simply do not react.
+- The hero's inner voice — narration and "thought" beats — is NOT audible. Nobody answers an unspoken thought, plan or feeling.
+- What YOU know is not what they know. Other scenes, the plot ahead, anything that happened off-screen or in someone else's chat — none of it is in their head unless they were told.
+- A secret does not spread by itself. It travels only when someone actually tells someone. When that happens, write it into the listener's tags THAT SAME TURN, or it will be lost.
+- Not knowing is a scene, not a gap: the one left out asks the wrong question, believes the old story, congratulates the wrong person, walks in at the worst moment. That is where drama lives — play it instead of smoothing it over.
+- When in doubt whether someone knows something: they don't.`
+    ),
+    b(
       'roles',
       '⚙ Roles & Rendering',
       `- protagonist — the player's hero; narration (narration/thought) is their inner voice, spoken lines are dialogue with their id.
@@ -315,6 +329,29 @@ function ensurePlaceholders(preset: PromptPreset): PromptPreset {
   return { ...preset, blocks: [...preset.blocks, ...added] };
 }
 
+// Встроенные блоки, ДОБАВЛЕННЫЕ после того, как пресеты уже разошлись по
+// проектам. Вставляем с дефолтным текстом сразу за якорным блоком, чтобы порядок
+// был осмысленным, а не «в конец списка». Уже правленный пользователем пресет
+// получает блок так же — но только если такого ключа у него ещё нет.
+const ADDED_BUILTINS: { key: string; after: string }[] = [
+  { key: 'info_hygiene', after: 'living_npcs' },
+];
+function ensureNewBuiltins(preset: PromptPreset): PromptPreset {
+  const have = new Set(preset.blocks.map((b) => b.builtinKey).filter(Boolean));
+  const missing = ADDED_BUILTINS.filter((a) => !have.has(a.key));
+  if (!missing.length) return preset;
+  const blocks = [...preset.blocks];
+  for (const a of missing) {
+    const fresh = makeDefaults().find((b) => b.builtinKey === a.key);
+    if (!fresh) continue;
+    const at = blocks.findIndex((b) => b.builtinKey === a.after);
+    const block = { ...fresh, id: uid('blk') };
+    if (at === -1) blocks.push(block);
+    else blocks.splice(at + 1, 0, block);
+  }
+  return { ...preset, blocks };
+}
+
 // Сигнатуры УСТАРЕВШИХ дефолтов встроенных блоков. Если блок всё ещё содержит
 // старый дефолтный текст (значит, пользователь его не редактировал), обновляем на
 // актуальный. Так правки движка (длинный ход, редкие выборы, лёгкий worldState,
@@ -366,5 +403,5 @@ function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
 // Нормализация пресета из сохранённого проекта (миграция/страховка).
 export function normalizePreset(raw: any): PromptPreset {
   const parsed = raw && Array.isArray(raw.blocks) ? parsePresetJson(raw) : null;
-  return refreshOutdatedBuiltins(ensurePlaceholders(parsed || defaultPreset()));
+  return refreshOutdatedBuiltins(ensureNewBuiltins(ensurePlaceholders(parsed || defaultPreset())));
 }

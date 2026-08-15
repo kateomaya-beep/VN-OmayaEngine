@@ -285,6 +285,7 @@ export const DEFAULT_TURN_LENGTH = { min: 500, max: 900 };
 // компактный — длинный план = медленно, теряется весь смысл.
 export const DEFAULT_THINKING_PLAN = `- Focus: what shifts this turn (1 line)
 - Present & what each wants (1 line)
+- Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")
 - Any stat/relationship change? (1 line, or "none")
 - Offer a choice? (only at a real fork, else "no")`;
 
