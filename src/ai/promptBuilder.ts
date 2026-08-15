@@ -106,7 +106,10 @@ function phoneNote(state: RuntimeState, person: Person | null): string {
     .filter((ch) => ch.kind === 'group' && !ch.archived && ch.participantIds.includes(contact.id))
     .map((ch) => `"${ch.title || 'группа'}"`);
   const talk = typeof contact.chattiness === 'number' ? `, chattiness ${contact.chattiness}/100` : '';
-  return `Phone: saved as a contact (id ${contact.id}${talk})${groups.length ? `; in group chats: ${groups.join(', ')}` : ''} — reachable via sms_incoming / sms_photo.`;
+  // Хвост «reachable via sms_incoming / sms_photo» раньше повторялся на КАЖДОМ
+  // человеке — на большой картотеке это десятки токенов ни за что. Правило
+  // сказано один раз в конце раздела.
+  return `Phone: contact id ${contact.id}${talk}${groups.length ? `; groups: ${groups.join(', ')}` : ''}`;
 }
 
 function whoIsWhoBlock(
@@ -136,7 +139,7 @@ function whoIsWhoBlock(
   const rels = state.relationship || {};
 
   // «Сейчас» одной строкой + отметка возраста. Пустое — не печатаем вовсе.
-  const nowLine = (id: string | undefined, name: string): string => {
+  const nowLine = (id: string | undefined, name: string, deep = false): string => {
     const who = whoIs(id, name);
     const d = who?.dossier;
     const os = id ? onScreenOf(id) : undefined;
@@ -173,12 +176,23 @@ function whoIsWhoBlock(
     // прежний статус УЖЕ ОТМЕНЁН более поздним, и по датам видно, когда.
     const log = (who?.entry?.statusLog || []).filter((x) => x.status?.trim());
     if (log.length > 1) {
-      const shown = log.slice(-5);
-      out.push(
-        `Status history (oldest → newest; each entry CANCELS the ones before it): ${
-          log.length > shown.length ? '… → ' : ''
-        }${shown.map((x) => `${x.status}${x.date ? ` (${x.date})` : ''}`).join(' → ')}`
-      );
+      const fmt = (x: { status: string; date?: string }) => `${x.status}${x.date ? ` (${x.date})` : ''}`;
+      if (deep) {
+        // Человек в кадре — вся цепочка целиком: она читается как биография.
+        const shown = log.slice(-4);
+        out.push(
+          `Status history (oldest → newest; each entry CANCELS the ones before it): ${
+            log.length > shown.length ? '… → ' : ''
+          }${shown.map(fmt).join(' → ')}`
+        );
+      } else {
+        // Остальным — ТОЛЬКО отменённое. Текущий статус уже напечатан строкой
+        // выше, и повторять его в хвосте цепочки значило платить за него дважды.
+        // Смысл цепочки не в биографии, а в том, чтобы старая запись не
+        // выглядела действующей.
+        const past = log.slice(0, -1).slice(-2);
+        if (past.length) out.push(`No longer true (superseded): ${past.map(fmt).join(', ')}`);
+      }
     }
     return out.join('\n');
   };
@@ -223,7 +237,7 @@ function whoIsWhoBlock(
     if (d?.tags?.length) lines.push(`Known about them (lasting facts): ${d.tags.join('; ')}`);
     const ph = phoneNote(state, whoIs(c.id, c.name));
     if (ph) lines.push(ph);
-    const now = nowLine(c.id, c.name);
+    const now = nowLine(c.id, c.name, inFocus);
     if (now) lines.push(now);
     if (c.role !== 'protagonist') {
       const r = rels[c.id] || c.relationship;
@@ -280,6 +294,7 @@ function whoIsWhoBlock(
     `messages or the episode log show something newer — a pregnancy that ended in a birth, a wound that healed, a move, ` +
     `a death — THE STORY WINS. Do not act on a stale line; describe the current reality and send the corrected value in ` +
     `worldState.characters this turn.\n` +
+    `- Anyone with a "Phone:" line can be texted: reach them with sms_incoming / sms_photo using their id.\n` +
     `- Genuinely new person → {"type":"character_new",...}. Known person under a new nickname → ` +
     `{"type":"character_alias_add","id":"<existing id>","alias":"..."}. Situation changed → ` +
     `{"type":"character_update","id":"<id>","status":"..."}. Never create a second entry for the same person.`
