@@ -202,6 +202,69 @@ export async function copyCharacterToProject(
   return { ok: true };
 }
 
+/**
+ * Перенос ТОЛЬКО СПРАЙТОВ на уже существующего персонажа в другом проекте.
+ * Личность не едет: имя, карточка, роль и отношения получателя остаются его
+ * собственными — меняются картинки, наряды и личная подгонка спрайта.
+ * Нужен, когда персонаж в новом проекте другой человек, а рисовки те же.
+ */
+export async function copySpritesToCharacter(
+  source: Project,
+  characterId: string,
+  targetProjectId: string,
+  targetCharacterId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const from = source.characters.find((c) => c.id === characterId);
+  if (!from) return { ok: false, error: 'Персонаж-источник не найден' };
+  const target = await getProject(targetProjectId);
+  if (!target) return { ok: false, error: 'Проект-получатель не найден' };
+  const to = target.characters.find((c) => c.id === targetCharacterId);
+  if (!to) return { ok: false, error: 'Персонаж-получатель не найден' };
+
+  const assetCache = new Map<string, string>();
+  const copyAsset = async (oldAssetId: string): Promise<string | undefined> => {
+    if (assetCache.has(oldAssetId)) return assetCache.get(oldAssetId);
+    const meta = source.assets.find((a) => a.id === oldAssetId);
+    if (!meta) return undefined;
+    const blob = await getAssetBlob(meta.blobKey);
+    if (!blob) return undefined;
+    const newBlobKey = uid('blob');
+    await putAsset(newBlobKey, blob);
+    const newMeta: AssetMeta = { ...meta, id: uid('asset'), blobKey: newBlobKey };
+    target.assets.push(newMeta);
+    assetCache.set(oldAssetId, newMeta.id);
+    return newMeta.id;
+  };
+  const remap = async (m: Record<string, string>) => {
+    const out: Record<string, string> = {};
+    for (const k of Object.keys(m)) {
+      const next = await copyAsset(m[k]);
+      if (next) out[k] = next; // битую ссылку не тащим
+    }
+    return out;
+  };
+
+  const sprites = await remap((from.sprites || {}) as Record<string, string>);
+  if (!Object.keys(sprites).length && !(from.outfits || []).length) {
+    return { ok: false, error: 'У персонажа-источника нет спрайтов' };
+  }
+  const outfits: NonNullable<Character['outfits']> = [];
+  for (const o of from.outfits || []) {
+    outfits.push({ ...o, sprites: (await remap(o.sprites as Record<string, string>)) as Character['sprites'] });
+  }
+
+  // Прежние спрайты получателя отвязываем, но ассеты НЕ удаляем: они могут быть
+  // нужны где-то ещё (галерея, другой наряд), а чистка ассетов — отдельная операция.
+  to.sprites = sprites as Character['sprites'];
+  to.outfits = outfits.length ? outfits : undefined;
+  to.defaultOutfit = from.defaultOutfit;
+  // Личную подгонку тащим вместе с картинками: она подгоняет именно ЭТИ рисовки.
+  to.spriteDisplay = from.spriteDisplay ? { ...from.spriteDisplay } : undefined;
+
+  await saveProject(target);
+  return { ok: true };
+}
+
 export async function deleteProject(id: string): Promise<void> {
   const db = await getDB();
   const project = await db.get('projects', id);

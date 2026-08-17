@@ -20,6 +20,7 @@ import type {
   ApiConnection,
   GameMasterState,
   PhoneState,
+  SpriteDisplay,
 } from './types';
 import {
   EMOTIONS,
@@ -36,6 +37,7 @@ import {
   normalizeInventory,
   normalizeRandomSms,
   PHONE_BALANCE_STAT,
+  isDefaultSpriteDisplay,
 } from './types';
 import { uid, clamp } from './utils';
 
@@ -142,6 +144,17 @@ export function normalizeProject(raw: any): Project {
     return list.length ? list : undefined;
   };
 
+  // Личная подгонка спрайта. «Как у всех» не храним — undefined вместо единиц.
+  const normSpriteDisplay = (v: any): SpriteDisplay | undefined => {
+    if (!v || typeof v !== 'object') return undefined;
+    const d: SpriteDisplay = {
+      scale: clamp(num(v.scale, 1), 0.3, 3),
+      offsetX: clamp(num(v.offsetX, 0), -100, 100),
+      offsetY: clamp(num(v.offsetY, 0), -100, 100),
+    };
+    return isDefaultSpriteDisplay(d) ? undefined : d;
+  };
+
   const clampRel = (v: unknown) => clamp(num(v, 0), -100, 100);
   const normRelationship = (v: any): RelationshipStats => ({
     affection: clampRel(v?.affection),
@@ -184,6 +197,7 @@ export function normalizeProject(raw: any): Project {
       defaultOutfit: typeof c?.defaultOutfit === 'string' && c.defaultOutfit.trim()
         ? c.defaultOutfit.trim()
         : undefined,
+      spriteDisplay: normSpriteDisplay(c?.spriteDisplay),
       relationship: normRelationship(c?.relationship),
       relationshipHidden: bool(c?.relationshipHidden, false) || undefined,
       linkedStatId: typeof c?.linkedStatId === 'string' ? c.linkedStatId : undefined,

@@ -1,7 +1,16 @@
-import { Modal } from '../../../shared/ui';
+import { useState } from 'react';
+import { Modal, AssetImage } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
 import { themeVars } from '../playerTheme';
-import { DEFAULT_PLAYER_THEME, type PlayerTheme } from '../../../shared/types';
+import {
+  DEFAULT_PLAYER_THEME,
+  spriteDisplayOf,
+  isDefaultSpriteDisplay,
+  type PlayerTheme,
+  type Project,
+  type SpriteDisplay,
+} from '../../../shared/types';
+import { resolveSprite } from '../../../shared/outfits';
 
 // Мини-мастерская оформления плеера: акцент, поверхности (окна/панели, кнопки выбора,
 // премиум-выборы) с цветом и плотностью, шрифт (ссылкой), размер текста. Пер-проектная
@@ -163,11 +172,16 @@ export function WorkshopPanel({
   onClose,
   theme,
   onChange,
+  project,
+  onPatchCharacter,
 }: {
   open: boolean;
   onClose: () => void;
   theme: PlayerTheme;
   onChange: (patch: Partial<PlayerTheme>) => void;
+  /** Нужен для личной подгонки спрайтов: список персонажей и их картинки. */
+  project?: Project | null;
+  onPatchCharacter?: (characterId: string, display: SpriteDisplay) => void;
 }) {
   const { lang } = useLang();
   const L = (ru: string, en: string) => (lang === 'en' ? en : ru);
@@ -396,6 +410,10 @@ export function WorkshopPanel({
           </div>
         </div>
 
+        {project && onPatchCharacter && (
+          <PerCharacterSprites project={project} onPatch={onPatchCharacter} L={L} />
+        )}
+
         {/* Живой предпросмотр (реплика + обычный и премиум выборы) */}
         <div className="label mt-5">{L('Предпросмотр', 'Preview')}</div>
         <div className="rounded-xl overflow-hidden border border-white/10">
@@ -441,5 +459,125 @@ export function WorkshopPanel({
         </div>
       </div>
     </Modal>
+  );
+}
+
+
+// ЛИЧНАЯ подгонка спрайтов. Общие ползунки выше двигают всех разом, но рисовки
+// приходят в разном масштабе и с разным полем вокруг фигуры: подогнал одного —
+// разъехались остальные. Здесь только те, у кого спрайт есть: настраивать
+// нечего у персонажа без картинок.
+function PerCharacterSprites({
+  project,
+  onPatch,
+  L,
+}: {
+  project: Project;
+  onPatch: (characterId: string, display: SpriteDisplay) => void;
+  L: (ru: string, en: string) => string;
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const withSprites = project.characters
+    .map((c) => ({ c, assetId: resolveSprite(c, undefined, 'neutral') }))
+    .filter((x) => !!x.assetId);
+  if (!withSprites.length) return null;
+
+  return (
+    <div className="mt-5">
+      <label className="label">{L('Отдельные персонажи', 'Individual characters')}</label>
+      <p className="text-[11px] text-gray-500 mb-2">
+        {L(
+          'Подгонка поверх общей: итог = общая настройка × личная. «Как у всех» — значит личная не задана.',
+          'Applied on top of the shared settings: result = shared × individual. "Same as everyone" means unset.'
+        )}
+      </p>
+      <div className="space-y-1.5">
+        {withSprites.map(({ c, assetId }) => {
+          const d = spriteDisplayOf(c);
+          const isDefault = isDefaultSpriteDisplay(d);
+          const openHere = openId === c.id;
+          const blobKey = project.assets.find((a) => a.id === assetId)?.blobKey;
+          const set = (patch: Partial<SpriteDisplay>) => onPatch(c.id, { ...d, ...patch });
+          return (
+            <div key={c.id} className="rounded-lg border border-white/10 bg-panel2 overflow-hidden">
+              <button
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left hover:bg-white/5"
+                onClick={() => setOpenId(openHere ? null : c.id)}
+              >
+                <span className="w-8 h-8 rounded-md overflow-hidden bg-black/30 shrink-0 flex items-center justify-center">
+                  {blobKey ? <AssetImage blobKey={blobKey} className="w-full h-full object-cover" /> : '🙂'}
+                </span>
+                <span className="flex-1 truncate text-sm">{c.name}</span>
+                <span className="text-[11px] text-gray-500">
+                  {isDefault
+                    ? L('как у всех', 'same as everyone')
+                    : `${Math.round(d.scale * 100)}%${d.offsetX ? `, x${d.offsetX > 0 ? '+' : ''}${d.offsetX}` : ''}${
+                        d.offsetY ? `, y${d.offsetY > 0 ? '+' : ''}${d.offsetY}` : ''
+                      }`}
+                </span>
+                <span className="text-xs text-gray-500">{openHere ? '▾' : '▸'}</span>
+              </button>
+              {openHere && (
+                <div className="px-2.5 pb-2.5 space-y-2">
+                  <Slider
+                    label={`${L('Размер', 'Size')}: ${Math.round(d.scale * 100)}%`}
+                    min={0.3} max={2} step={0.02} value={d.scale}
+                    onChange={(v) => set({ scale: v })}
+                  />
+                  <Slider
+                    label={`${L('По горизонтали', 'Horizontal')}: ${d.offsetX > 0 ? '+' : ''}${d.offsetX}%`}
+                    min={-50} max={50} step={1} value={d.offsetX}
+                    onChange={(v) => set({ offsetX: v })}
+                  />
+                  <Slider
+                    label={`${L('По вертикали (выше +)', 'Vertical (up +)')}: ${d.offsetY > 0 ? '+' : ''}${d.offsetY}%`}
+                    min={-50} max={50} step={1} value={d.offsetY}
+                    onChange={(v) => set({ offsetY: v })}
+                  />
+                  <button
+                    className="btn-ghost !px-3 !py-1 text-xs"
+                    disabled={isDefault}
+                    onClick={() => onPatch(c.id, { scale: 1, offsetX: 0, offsetY: 0 })}
+                  >
+                    {L('Сбросить к общим', 'Reset to shared')}
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Slider({
+  label,
+  min,
+  max,
+  step,
+  value,
+  onChange,
+}: {
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div>
+      <div className="text-xs text-gray-400 mb-1">{label}</div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-[var(--pl-accent,#b18cff)]"
+      />
+    </div>
   );
 }

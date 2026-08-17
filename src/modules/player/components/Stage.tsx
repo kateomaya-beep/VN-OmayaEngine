@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAssetUrl } from '../../../shared/ui';
 import { getAssetUrl } from '../../../storage/assetUrls';
 import type { Project } from '../../../shared/types';
+import { spriteDisplayOf } from '../../../shared/types';
 import { resolveSprite } from '../../../shared/outfits';
 
 export interface ActiveSprite {
@@ -94,6 +95,14 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
   const targetBlobKey = target.assetId
     ? project.assets.find((a) => a.id === target.assetId)?.blobKey || null
     : null;
+  // Личная подгонка спрайта этого персонажа. Общая настройка оформления остаётся
+  // за CSS-переменными (её видит и предпросмотр мастерской), личная умножается и
+  // складывается поверх — рисовки приходят в разном масштабе, и одной общей
+  // настройкой их не выровнять: подогнал одного, разъехались остальные.
+  const disp = spriteDisplayOf(active ? project.characters.find((c) => c.id === active.characterId) : undefined);
+  const spriteTransform =
+    `translate(calc(var(--pl-sprite-x, 0%) + ${disp.offsetX}%), calc(var(--pl-sprite-y, 0%) + ${-disp.offsetY}%))` +
+    ` scale(calc(var(--pl-sprite-scale, 1) * ${disp.scale}))`;
 
   const [layers, setLayers] = useState<{ id: number; url: string; on: boolean }[]>([]);
   const idRef = useRef(0);
@@ -170,10 +179,9 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
             alt=""
             className="object-contain object-bottom h-[118%] -mb-[60%] max-w-[130%] sm:h-[88%] sm:mb-[2%] sm:max-w-[46%]"
             style={{
-              // Пер-проектная подгонка спрайта (мастерская оформления): масштаб от
-              // нижнего центра + смещение по X/Y.
-              transform:
-                'translate(var(--pl-sprite-x, 0), var(--pl-sprite-y, 0)) scale(var(--pl-sprite-scale, 1))',
+              // Общая подгонка (мастерская оформления) × личная подгонка персонажа.
+              // Масштаб — от нижнего центра, чтобы фигура не всплывала над полом.
+              transform: spriteTransform,
               transformOrigin: 'bottom center',
             }}
           />

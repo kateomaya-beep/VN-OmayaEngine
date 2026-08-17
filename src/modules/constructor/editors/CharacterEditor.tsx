@@ -18,7 +18,7 @@ import type {
   RelationshipField,
 } from '../../../shared/types';
 import { uploadAsset } from '../../../storage/assetOps';
-import { listProjects, copyCharacterToProject } from '../../../storage/db';
+import { listProjects, copyCharacterToProject, copySpritesToCharacter } from '../../../storage/db';
 import { pushToast } from '../../../shared/toast';
 import {
   characterOutfits,
@@ -327,8 +327,13 @@ export function CharacterEditor() {
   );
 }
 
-// Перенос персонажа в другой проект: спрайты копируются как новые ассеты, исходный
-// персонаж остаётся на месте (это копия, а не перемещение).
+// Перенос в другой проект. Два режима:
+//   • целиком — персонаж со своей личностью, картой и спрайтами становится НОВЫМ
+//     персонажем в проекте-получателе;
+//   • только спрайты — картинки ложатся на УЖЕ СУЩЕСТВУЮЩЕГО там персонажа, его
+//     имя, карточка и отношения остаются своими. Нужно, когда в новой истории это
+//     другой человек, а рисовки те же.
+// В обоих случаях исходный персонаж остаётся на месте: это копия, не перемещение.
 function TransferCharacterDialog({
   project,
   characterId,
@@ -339,24 +344,27 @@ function TransferCharacterDialog({
   onClose: () => void;
 }) {
   const [targets, setTargets] = useState<Project[] | null>(null);
+  const [mode, setMode] = useState<'whole' | 'sprites'>('whole');
+  const [pickedProject, setPickedProject] = useState<Project | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const character = project.characters.find((c) => c.id === characterId);
+  const hasSprites =
+    !!character && (Object.keys(character.sprites || {}).length > 0 || (character.outfits || []).length > 0);
 
   useEffect(() => {
     void listProjects().then((all) => setTargets(all.filter((p) => p.id !== project.id)));
   }, [project.id]);
 
-  const send = async (targetId: string, targetTitle: string) => {
-    setBusy(targetId);
+  const sendWhole = async (target: Project) => {
+    const title = target.meta.title || 'Без названия';
+    setBusy(target.id);
     try {
-      const res = await copyCharacterToProject(project, characterId, targetId);
+      const res = await copyCharacterToProject(project, characterId, target.id);
       if (res.ok) {
-        setDone(targetTitle);
-        pushToast('success', `«${character?.name}» скопирован в «${targetTitle}»`);
-      } else {
-        pushToast('error', res.error || 'Не удалось перенести персонажа');
-      }
+        setDone(title);
+        pushToast('success', `«${character?.name}» скопирован в «${title}»`);
+      } else pushToast('error', res.error || 'Не удалось перенести персонажа');
     } catch (e) {
       pushToast('error', 'Не удалось перенести: ' + (e as Error).message);
     } finally {
@@ -364,11 +372,88 @@ function TransferCharacterDialog({
     }
   };
 
+  const sendSprites = async (target: Project, toChar: Character) => {
+    const title = target.meta.title || 'Без названия';
+    setBusy(toChar.id);
+    try {
+      const res = await copySpritesToCharacter(project, characterId, target.id, toChar.id);
+      if (res.ok) {
+        setDone(`${title} → ${toChar.name}`);
+        pushToast('success', `Спрайты легли на «${toChar.name}» в «${title}»`);
+      } else pushToast('error', res.error || 'Не удалось перенести спрайты');
+    } catch (e) {
+      pushToast('error', 'Не удалось перенести: ' + (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Второй шаг режима «только спрайты»: выбор персонажа-получателя.
+  if (mode === 'sprites' && pickedProject) {
+    return (
+      <Modal
+        open
+        onClose={onClose}
+        title={`⇄ Спрайты «${character?.name || '—'}» → кому в «${pickedProject.meta.title || 'Без названия'}»`}
+      >
+        <button className="btn-ghost !px-3 !py-1 text-xs mb-3" onClick={() => setPickedProject(null)}>
+          ← К списку проектов
+        </button>
+        <p className="text-xs text-gray-500 mb-3">
+          Спрайты, наряды и личная подгонка размера лягут на выбранного персонажа. Его имя, карточка и
+          отношения останутся своими. Прежние спрайты этого персонажа отвяжутся (сами картинки в проекте
+          сохранятся).
+        </p>
+        {pickedProject.characters.length === 0 && (
+          <p className="text-sm text-gray-500">В этом проекте пока нет персонажей.</p>
+        )}
+        <div className="space-y-1.5 max-h-[50vh] overflow-y-auto scrollbar-thin">
+          {pickedProject.characters.map((c) => {
+            const own = Object.keys(c.sprites || {}).length;
+            return (
+              <button
+                key={c.id}
+                className="w-full flex items-center gap-3 rounded-lg border border-white/10 bg-panel2 px-3 py-2.5 text-left hover:bg-white/5 disabled:opacity-50"
+                disabled={!!busy}
+                onClick={() => sendSprites(pickedProject, c)}
+              >
+                <span className="flex-1 truncate text-sm">{c.name}</span>
+                <span className="text-xs text-gray-500">
+                  {own ? `${own} спрайт(ов) — заменятся` : 'без спрайтов'}
+                </span>
+                <span className="text-xs">{busy === c.id ? '⏳' : '→'}</span>
+              </button>
+            );
+          })}
+        </div>
+        {done && <p className="text-xs text-green-400 mt-3">✓ Готово: {done}</p>}
+      </Modal>
+    );
+  }
+
   return (
     <Modal open onClose={onClose} title={`⇄ Перенести «${character?.name || '—'}» в другой проект`}>
+      <div className="flex gap-1 p-1 rounded-xl bg-white/5 border border-white/10 mb-3">
+        <button
+          className={`flex-1 py-1.5 rounded-lg text-xs ${mode === 'whole' ? 'bg-accent2 text-white' : 'text-gray-400'}`}
+          onClick={() => setMode('whole')}
+        >
+          Персонажа целиком
+        </button>
+        <button
+          className={`flex-1 py-1.5 rounded-lg text-xs ${mode === 'sprites' ? 'bg-accent2 text-white' : 'text-gray-400'} disabled:opacity-40`}
+          disabled={!hasSprites}
+          title={hasSprites ? undefined : 'У этого персонажа нет спрайтов'}
+          onClick={() => setMode('sprites')}
+        >
+          Только спрайты
+        </button>
+      </div>
       <p className="text-xs text-gray-500 mb-3">
-        Персонаж копируется вместе со спрайтами и нарядами. В исходном проекте он остаётся.
-        Открытый проект-получатель обновится после перезагрузки его страницы.
+        {mode === 'whole'
+          ? 'Копия персонажа со всей личностью, карточкой, спрайтами и нарядами станет НОВЫМ персонажем в выбранном проекте.'
+          : 'Личность не переносится: выберите проект, а затем персонажа в нём, на которого лягут эти картинки.'}
+        {' '}В исходном проекте всё остаётся. Открытый проект-получатель обновится после перезагрузки его страницы.
       </p>
       {targets === null && <p className="text-sm text-gray-500">Загружаю список проектов…</p>}
       {targets && targets.length === 0 && (
@@ -380,7 +465,7 @@ function TransferCharacterDialog({
             key={p.id}
             className="w-full flex items-center gap-3 rounded-lg border border-white/10 bg-panel2 px-3 py-2.5 text-left hover:bg-white/5 disabled:opacity-50"
             disabled={!!busy}
-            onClick={() => send(p.id, p.meta.title || 'Без названия')}
+            onClick={() => (mode === 'whole' ? sendWhole(p) : setPickedProject(p))}
           >
             <span className="flex-1 truncate text-sm">{p.meta.title || 'Без названия'}</span>
             <span className="text-xs text-gray-500">{p.characters.length} перс.</span>

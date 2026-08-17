@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePlayerStore } from './playerStore';
+import { isDefaultSpriteDisplay } from '../../shared/types';
 import { LaunchScreen } from './components/LaunchScreen';
 import { stopAllMusic } from './audio';
 import { Stage, type ActiveSprite } from './components/Stage';
@@ -234,6 +235,16 @@ export function PlayerPage() {
         onChange={(patch) =>
           s.patchProject((p) => {
             p.playerTheme = { ...(p.playerTheme ?? theme), ...patch };
+          })
+        }
+        project={s.project}
+        onPatchCharacter={(characterId, display) =>
+          s.patchProject((p) => {
+            const c = p.characters.find((x) => x.id === characterId);
+            if (!c) return;
+            // «Как у всех» не храним — иначе в каждом проекте копились бы
+            // пустые записи, ничего не меняющие.
+            c.spriteDisplay = isDefaultSpriteDisplay(display) ? undefined : display;
           })
         }
       />

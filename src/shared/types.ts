@@ -143,6 +143,11 @@ export interface Character {
   // Тег дефолтного наряда (набор которого лежит в this.sprites). undefined ⇒ 'base'.
   // Обязателен как fallback: невалидный/отсутствующий наряд откатывается на него.
   defaultOutfit?: string;
+  // ЛИЧНАЯ подгонка спрайта на сцене: рисовки приходят в разном масштабе и с
+  // разным полем вокруг фигуры, и общей настройки оформления на всех не хватает —
+  // подогнал одного, разъехались остальные. Множится с общей: итог = общее ×
+  // личное. Пусто ⇒ персонаж рисуется ровно по общим настройкам.
+  spriteDisplay?: SpriteDisplay;
   relationship: RelationshipStats; // стартовые значения (правятся в конструкторе)
   relationshipHidden?: boolean; // скрыть в инфобоксе
   /** @deprecated Связь стат↔персонаж переехала на StatDefinition.linkedCharacterId
@@ -151,6 +156,32 @@ export interface Character {
   linkedStatId?: string;
   importedFrom?: 'tavern_v2' | 'tavern_v3' | 'manual' | 'promoted_npc' | 'scanned_contact' | 'gm_sheet';
   sourceSystemPrompt?: string; // из карточки, НЕ применять авто
+}
+
+// Личная подгонка спрайта персонажа. scale — множитель к общему (1 = как у всех),
+// offsetX/offsetY — добавка к общему смещению в процентах (Y: вверх положительный).
+export interface SpriteDisplay {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+export const DEFAULT_SPRITE_DISPLAY: SpriteDisplay = { scale: 1, offsetX: 0, offsetY: 0 };
+
+/** Личная подгонка спрайта или дефолт. Одна точка чтения — и в игре, и в редакторе. */
+export function spriteDisplayOf(c: { spriteDisplay?: SpriteDisplay } | undefined): SpriteDisplay {
+  const d = c?.spriteDisplay;
+  if (!d) return DEFAULT_SPRITE_DISPLAY;
+  return {
+    scale: Number.isFinite(d.scale) ? d.scale : 1,
+    offsetX: Number.isFinite(d.offsetX) ? d.offsetX : 0,
+    offsetY: Number.isFinite(d.offsetY) ? d.offsetY : 0,
+  };
+}
+
+/** Настройка «как у всех» — такую не храним, чтобы не плодить пустые записи. */
+export function isDefaultSpriteDisplay(d: SpriteDisplay): boolean {
+  return d.scale === 1 && d.offsetX === 0 && d.offsetY === 0;
 }
 
 export interface StatDefinition {
