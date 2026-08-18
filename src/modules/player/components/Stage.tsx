@@ -95,16 +95,24 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
   const targetBlobKey = target.assetId
     ? project.assets.find((a) => a.id === target.assetId)?.blobKey || null
     : null;
-  // Личная подгонка спрайта этого персонажа. Общая настройка оформления остаётся
-  // за CSS-переменными (её видит и предпросмотр мастерской), личная умножается и
+  // Личная подгонка спрайта. Общая настройка оформления остаётся за
+  // CSS-переменными (её видит и предпросмотр мастерской), личная умножается и
   // складывается поверх — рисовки приходят в разном масштабе, и одной общей
   // настройкой их не выровнять: подогнал одного, разъехались остальные.
-  const disp = spriteDisplayOf(active ? project.characters.find((c) => c.id === active.characterId) : undefined);
-  const spriteTransform =
-    `translate(calc(var(--pl-sprite-x, 0%) + ${disp.offsetX}%), calc(var(--pl-sprite-y, 0%) + ${-disp.offsetY}%))` +
-    ` scale(calc(var(--pl-sprite-scale, 1) * ${disp.scale}))`;
+  //
+  // Считается ПО ВЛАДЕЛЬЦУ СЛОЯ, а не по тому, кто активен сейчас. Иначе слой,
+  // который гаснет, на первом же кадре перескакивал на настройки следующего
+  // персонажа (а при уходе со сцены — на дефолтные) и картинка дёргалась в
+  // начале плавного исчезновения. Слой обязан помнить, КОГО он показывает.
+  const transformFor = (charId?: string): string => {
+    const d = spriteDisplayOf(charId ? project.characters.find((c) => c.id === charId) : undefined);
+    return (
+      `translate(calc(var(--pl-sprite-x, 0%) + ${d.offsetX}%), calc(var(--pl-sprite-y, 0%) + ${-d.offsetY}%))` +
+      ` scale(calc(var(--pl-sprite-scale, 1) * ${d.scale}))`
+    );
+  };
 
-  const [layers, setLayers] = useState<{ id: number; url: string; on: boolean }[]>([]);
+  const [layers, setLayers] = useState<{ id: number; url: string; on: boolean; charId?: string }[]>([]);
   const idRef = useRef(0);
   const lastKeyRef = useRef('__init__');
 
@@ -141,7 +149,7 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
         // без просвета фона), затем короткой паузой включаем: браузер успевает
         // отрисовать opacity:0, и CSS-переход реально проигрывается (двойной rAF
         // React иногда схлопывал в один кадр → «скачок» вместо фейда).
-        setLayers((prev) => [...prev, { id, url, on: false }].slice(-2));
+        setLayers((prev) => [...prev, { id, url, on: false, charId: active?.characterId }].slice(-2));
         later(
           () => !cancelled && setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, on: true } : l))),
           40
@@ -179,9 +187,12 @@ function ActiveSpriteLayer({ project, active }: { project: Project; active: Acti
             alt=""
             className="object-contain object-bottom h-[118%] -mb-[60%] max-w-[130%] sm:h-[88%] sm:mb-[2%] sm:max-w-[46%]"
             style={{
-              // Общая подгонка (мастерская оформления) × личная подгонка персонажа.
+              // Общая подгонка (мастерская оформления) × личная подгонка ВЛАДЕЛЬЦА
+              // ЭТОГО слоя. Читается на каждом кадре, поэтому ползунки в мастерской
+              // двигают спрайт вживую, а гаснущий слой при этом остаётся на своём
+              // месте — он спрашивает про своего персонажа, а не про текущего.
               // Масштаб — от нижнего центра, чтобы фигура не всплывала над полом.
-              transform: spriteTransform,
+              transform: transformFor(l.charId),
               transformOrigin: 'bottom center',
             }}
           />
