@@ -14,6 +14,7 @@ import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { maybeCompress } from './memoryEngine';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
+import { presentPersonIds } from './presence';
 import { generateIncomingSms } from './phoneChat';
 import { uid } from '../shared/utils';
 
@@ -453,6 +454,7 @@ export async function applyTurn(
         emotion: b.emotion,
         outfit: b.outfit,
         position: b.position,
+        atTurn: nextTurnNumber,
       });
     }
     contentBeats.push(b);
@@ -772,12 +774,18 @@ async function deliverFallbackSms(
     const contactIds = state.phone.contacts
       .filter((c) => !c.hidden && c.id !== heroId && c.characterId !== heroId)
       .map((c) => c.id);
-    const candidates = contactIds.length
+    const pool = contactIds.length
       ? contactIds
       : project.characters
           .filter((c) => c.role === 'love_interest' || c.role === 'important_character')
           .map((c) => c.id);
-    if (!candidates.length) return;
+    // Тот, кто сейчас в сцене, писать не может — он рядом и говорит вслух.
+    const present = presentPersonIds(project, state);
+    const candidates = pool.filter((id) => !present.has(id));
+    if (!candidates.length) {
+      logEvent('info', 'sms', 'Догенерация СМС отменена: писать некому — все в сцене.');
+      return;
+    }
     const pickId = candidates[Math.floor(Math.random() * candidates.length)];
     let chat = state.phone.chats.find((c) => c.kind === 'direct' && c.participantIds[0] === pickId);
     const { texts: msgs, events } = await generateIncomingSms(project, state, pickId, chat?.messages || [], signal);

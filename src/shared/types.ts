@@ -1248,6 +1248,11 @@ export interface OnScreenSprite {
   emotion: string;
   outfit?: string; // текущий наряд персонажа на сцене (undefined ⇒ дефолтный)
   position: 'left' | 'center' | 'right';
+  // Ход, на котором персонаж последний раз подавал голос. Список onScreen сам себя
+  // не чистит (никто со сцены не «уходит», просто вытесняется третьим говорящим),
+  // поэтому без отметки времени нельзя отличить «стоит рядом» от «попрощались три
+  // хода назад». См. presence.ts.
+  atTurn?: number;
 }
 
 export interface RuntimeState {

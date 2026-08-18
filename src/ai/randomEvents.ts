@@ -1,5 +1,6 @@
 import type { Project, RuntimeState, RandomEventType } from '../shared/types';
 import { logEvent } from '../shared/logStore';
+import { presentPersonIds, presentNames } from './presence';
 
 // Случайные события (Batch 6 §3): движок с заданной вероятностью подмешивает в ход
 // СКРЫТУЮ директиву-событие (игрок её не видит). ИИ вплетает событие в обычный ответ.
@@ -86,14 +87,25 @@ export function rollRandomSms(project: Project, state: RuntimeState): RandomSmsR
 
   // Кандидаты: контакты телефона, а если их ещё нет — знакомые персонажи проекта
   // (ЛИ/важные). Иначе фича молчала до первой реплики, добавляющей контакт, и юзер
-  // видел «триггер включён, а сообщений нет».
-  const contactIds = (state.phone?.contacts || []).filter((c) => !c.hidden).map((c) => c.characterId);
-  const candidates = contactIds.length
+  // видел «триггер включён, а сообщений нет». Берём СОБСТВЕННЫЙ id контакта: у
+  // контактов без анкеты (мама, коллега — заведённые через реестр) characterId
+  // пустой, и в директиву уходило «имя (undefined)».
+  const contactIds = (state.phone?.contacts || []).filter((c) => !c.hidden).map((c) => c.id);
+  const pool = contactIds.length
     ? contactIds
     : project.characters
         .filter((c) => c.role === 'love_interest' || c.role === 'important_character')
         .map((c) => c.id);
-  if (!candidates.length) return skip('нет контактов и подходящих персонажей — некому писать');
+  if (!pool.length) return skip('нет контактов и подходящих персонажей — некому писать');
+
+  // Кто стоит рядом — тот не пишет, а говорит. Самый заметный симптом был именно
+  // здесь: движок выбирал кого угодно из контактов, включая собеседника в кадре.
+  const present = presentPersonIds(project, state);
+  const candidates = pool.filter((id) => !present.has(id));
+  if (!candidates.length) {
+    const who = presentNames(project, state).join(', ');
+    return skip(who ? `все, кто мог написать, сейчас в сцене (${who})` : 'некому писать');
+  }
 
   const since = state.turnsSinceLastSms ?? 999;
   const cd = Math.max(0, cfg.cooldownTurns);
@@ -108,7 +120,10 @@ export function rollRandomSms(project: Project, state: RuntimeState): RandomSmsR
   if (Math.random() * 100 >= cfg.chancePercent) return skip(`не выпал шанс (${cfg.chancePercent}%)`);
 
   const ids = candidates.map((id) => {
-    const nm = project.characters.find((x) => x.id === id)?.name || id;
+    const nm =
+      (state.phone?.contacts || []).find((c) => c.id === id)?.name ||
+      project.characters.find((x) => x.id === id)?.name ||
+      id;
     return `${nm} (${id})`;
   });
 
@@ -116,6 +131,7 @@ export function rollRandomSms(project: Project, state: RuntimeState): RandomSmsR
 Someone the hero knows texts them out of the blue. You MUST include a control beat
 {"type":"sms_incoming","characterId":"<id>","text":"<short in-character message>"} in this turn's beats.
 Use the EXACT characterId from this list: ${ids.join(', ')}. Pick whoever fits the current moment.
+Everyone on that list is somewhere ELSE right now — that is the whole point of a text message.
 The hero may notice the phone buzz in the narration, but the message text itself MUST go through the sms_incoming beat.
 Do NOT mention that it was a random event.`;
 

@@ -303,6 +303,9 @@ function whoIsWhoBlock(
 
 // Текущие спрайты на сцене с эмоцией и нарядом — чтобы модель вела непрерывность
 // (держала эмоцию/наряд между ходами и меняла осознанно, а не заново угадывала).
+// Запись со сцены не убирается никогда (её вытесняет только четвёртый говорящий),
+// поэтому давность реплики проговариваем вслух: иначе строчка утверждала, что
+// человек рядом, хотя герой попрощался с ним десять ходов назад.
 function onScreenState(project: Project, state: RuntimeState): string {
   if (!state.onScreen.length) return 'nobody';
   return state.onScreen
@@ -311,7 +314,9 @@ function onScreenState(project: Project, state: RuntimeState): string {
       const name = c?.name || s.characterId;
       const bits = [`emotion: ${s.emotion}`];
       if (s.outfit) bits.push(`outfit: ${s.outfit}`);
-      return `${name} (${s.characterId}; ${bits.join(', ')})`;
+      const age = s.atTurn === undefined ? 0 : state.turnCount - s.atTurn;
+      const stale = age > 1 ? `; last spoke ${age} turns ago — may have left, the story decides` : '';
+      return `${name} (${s.characterId}; ${bits.join(', ')}${stale})`;
     })
     .join('; ');
 }
@@ -713,7 +718,7 @@ function phoneBlock(project: Project, state: RuntimeState): string {
   if (!cfg?.enabled) return '';
   const parts = [
     'The hero carries a smartphone. Phone control beats (no display text):',
-    '  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero off-screen (appears in Messages).',
+    '  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero (appears in Messages). ONLY someone who is somewhere else: a person standing in the scene talks, they do not text. The rare exception is a deliberate silent message under the table, and then the narration must show them reaching for their phone.',
     '  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone\'s number (characters who appear are auto-added; use only for someone met off-screen).',
     '  - {"type":"sms_photo","characterId":"<id>","caption":"<what they write with it>","photo":"<what the photo shows, from THEIR side: a selfie, their room, the street they are on>"} — a character sends the hero a PHOTO. The engine draws it. Use it when someone would naturally snap something (showing off, proof, a view, a joke); the caption is optional.',
   ];
