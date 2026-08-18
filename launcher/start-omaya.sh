@@ -22,16 +22,38 @@ echo "  Каталог: $ROOT"
 #    «запустил лаунчер» = «получил свежую версию». При наличии своих изменений
 #    НЕ трогаем, просто предупреждаем.
 if [ "$NO_PULL" != "1" ] && command -v git >/dev/null 2>&1 && [ -d .git ]; then
-  if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+  # package-lock.json переписывает САМ npm install: на Android ставятся другие
+  # платформенные пакеты, чем на машине разработчика. Правкой пользователя это
+  # не является — это мусор установки. Раньше он намертво блокировал обновление:
+  # дерево никогда не чистое ⇒ pull пропускается КАЖДЫЙ раз, и лаунчер тихо
+  # оставался на старой версии, пока git pull вручную не упирался в конфликт.
+  if [ -n "$(git status --porcelain -- package-lock.json 2>/dev/null)" ]; then
+    echo "▸ package-lock.json переписан установкой — откатываю (файл генерируемый)."
+    git checkout -- package-lock.json 2>/dev/null || true
+  fi
+  DIRTY="$(git status --porcelain 2>/dev/null)"
+  if [ -z "$DIRTY" ]; then
     echo "▸ Обновляю код (git pull)…"
     git pull --ff-only 2>/dev/null || echo "  (не удалось обновить — продолжаю на текущей версии)"
   else
-    echo "  ⚠ Есть локальные изменения — пропускаю git pull."
+    # Показываем ЧТО именно мешает и как это снять: раньше строка «есть локальные
+    # изменения» ничего не объясняла, и понять причину без git-опыта было нельзя.
+    echo "  ⚠ Пропускаю git pull — в репозитории есть изменённые файлы:"
+    echo "$DIRTY" | sed 's/^/     /'
+    echo "     Если это не ваши правки, откатите всё:  git checkout -- ."
   fi
 fi
 
-# 2) Зависимости.
+# 2) Зависимости. Ставим не только когда их нет, но и когда package.json стал
+#    новее последней установки: после обновления кода с новой зависимостью сборка
+#    иначе падает с невнятной ошибкой про отсутствующий модуль.
+NEED_INSTALL=0
 if [ ! -d node_modules ]; then
+  NEED_INSTALL=1
+elif [ -f node_modules/.package-lock.json ] && [ package.json -nt node_modules/.package-lock.json ]; then
+  NEED_INSTALL=1
+fi
+if [ "$NEED_INSTALL" = "1" ]; then
   echo "▸ Ставлю зависимости (npm install)…"
   npm install
 fi
