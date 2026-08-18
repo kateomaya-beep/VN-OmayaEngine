@@ -593,6 +593,9 @@ export function normalizePhoneConfig(v: unknown): PhoneConfig {
       y: typeof pos.y === 'number' ? Math.max(0, Math.min(100, pos.y)) : d.iconPosition.y,
     },
     wallpaperAssetId: typeof o.wallpaperAssetId === 'string' ? o.wallpaperAssetId : undefined,
+    // Аватарку героя нормализатор раньше не переносил — а он прогоняется при КАЖДОЙ
+    // загрузке проекта, так что поставленная аватарка жила ровно до перезагрузки.
+    heroAvatarAssetId: typeof o.heroAvatarAssetId === 'string' ? o.heroAvatarAssetId : undefined,
     cameraPromptTemplate:
       typeof o.cameraPromptTemplate === 'string' && o.cameraPromptTemplate.trim()
         ? o.cameraPromptTemplate.trim() === LEGACY_CAMERA_PROMPT

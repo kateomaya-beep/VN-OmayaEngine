@@ -39,6 +39,11 @@ export function LibraryPage() {
   const [shareTarget, setShareTarget] = useState<Project | null>(null);
   const [withProgress, setWithProgress] = useState(true);
   const [saveCount, setSaveCount] = useState<number | null>(null);
+  // Копия проекта: своё окно (отдельно от экспорта) — имя, брать ли прогресс.
+  const [copyTarget, setCopyTarget] = useState<Project | null>(null);
+  const [copyTitle, setCopyTitle] = useState('');
+  const [copyProgress, setCopyProgress] = useState(true);
+  const [copySaveCount, setCopySaveCount] = useState<number | null>(null);
 
   // При открытии окна экспорта узнаём, есть ли сохранения (сколько), чтобы подписать
   // варианты и по умолчанию предложить «с прогрессом», если прохождение есть.
@@ -57,6 +62,24 @@ export function LibraryPage() {
       alive = false;
     };
   }, [shareTarget]);
+
+  // Открыли окно копии — подставляем имя и смотрим, есть ли что копировать из прогресса.
+  useEffect(() => {
+    if (!copyTarget) {
+      setCopySaveCount(null);
+      return;
+    }
+    setCopyTitle(`${copyTarget.meta.title || 'Проект'} — вторая история`);
+    let alive = true;
+    countSaves(copyTarget.id).then((n) => {
+      if (!alive) return;
+      setCopySaveCount(n);
+      setCopyProgress(n > 0);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [copyTarget]);
 
   async function onImport(file: File) {
     setBusy('Импорт...');
@@ -96,13 +119,40 @@ export function LibraryPage() {
     await refresh();
   }
 
-  async function onDuplicate(p: Project) {
+  async function onDuplicate(p: Project, title: string, includeProgress: boolean) {
     setBusy(L('Копирование…', 'Copying…'));
     try {
-      const copy = await duplicateProject(p);
+      const res = await duplicateProject(p, title.trim() || undefined, { includeProgress });
+      setCopyTarget(null);
       setShareTarget(null);
       await refresh();
-      logEvent('info', 'app', `Проект скопирован: «${copy.meta.title}»`);
+      logEvent(
+        'info',
+        'app',
+        `Проект скопирован: «${res.project.meta.title}»` +
+          (includeProgress ? `, перенесено сохранений: ${res.savesCopied}` : ', без прогресса') +
+          (res.assetsMissing ? `, без файла осталось ассетов: ${res.assetsMissing}` : '')
+      );
+      const missing = res.assetsMissing
+        ? L(
+            `\n\nВнимание: ${res.assetsMissing} ассет(ов) не нашлись в хранилище — в оригинале они тоже пустые.`,
+            `\n\nNote: ${res.assetsMissing} asset(s) were missing from storage — they are empty in the original too.`
+          )
+        : '';
+      alert(
+        L(
+          `Готово. «${res.project.meta.title}» — отдельный проект. ` +
+            (includeProgress
+              ? `Прогресс перенесён (сохранений: ${res.savesCopied}). `
+              : 'Прогресс не переносился — копия начнётся с начала. ') +
+            'Правки в копии на оригинал не влияют, и наоборот.',
+          `Done. "${res.project.meta.title}" is a separate project. ` +
+            (includeProgress
+              ? `Progress copied (saves: ${res.savesCopied}). `
+              : 'Progress was not copied — the copy starts from the beginning. ') +
+            'Edits in the copy do not affect the original, and vice versa.'
+        ) + missing
+      );
     } finally {
       setBusy(null);
     }
@@ -198,6 +248,11 @@ export function LibraryPage() {
                 <div className="flex items-center justify-center gap-3.5 pb-5 pt-1">
                   <CardIconBtn title={t('library.editor')} onClick={() => nav(`/project/${p.id}`)} icon="edit" />
                   <CardIconBtn title={t('library.export')} onClick={() => setShareTarget(p)} icon="export" />
+                  <CardIconBtn
+                    title={L('Копия проекта — отдельная история', 'Copy project — a separate story')}
+                    onClick={() => setCopyTarget(p)}
+                    icon="copy"
+                  />
                   <CardIconBtn title={t('library.play')} onClick={() => nav(`/play/${p.id}`)} icon="play" primary />
                   <CardIconBtn
                     title={L('Ассеты и целостность', 'Assets & integrity')}
@@ -309,7 +364,15 @@ export function LibraryPage() {
               распространять. Ответственность за содержимое — на вас.
             </div>
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <button className="btn-ghost" onClick={() => onDuplicate(shareTarget)} title={L('Независимая копия на этом устройстве', 'An independent copy on this device')}>
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  const p = shareTarget;
+                  setShareTarget(null);
+                  setCopyTarget(p);
+                }}
+                title={L('Независимая копия на этом устройстве', 'An independent copy on this device')}
+              >
                 ⧉ {L('Сделать копию', 'Make a copy')}
               </button>
               <div className="flex gap-2">
@@ -320,6 +383,114 @@ export function LibraryPage() {
                   {L('Скачать .zip', 'Download .zip')}
                 </button>
               </div>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* Копия проекта — независимая вторая история на тех же данных */}
+      <Modal
+        open={!!copyTarget}
+        onClose={() => setCopyTarget(null)}
+        title={L('Копия проекта', 'Copy project')}
+      >
+        {copyTarget && (
+          <>
+            <p className="text-xs text-gray-400 mb-3">
+              {L(
+                'Получится отдельный проект: те же персонажи, ассеты и настройки, но своя жизнь. ' +
+                  'Что меняете в копии — в оригинале не меняется, и наоборот.',
+                'You get a separate project: same characters, assets and settings, but its own life. ' +
+                  'What you change in the copy does not change the original, and vice versa.'
+              )}
+            </p>
+
+            <label className="block text-xs text-gray-400 mb-1">{L('Название копии', 'Copy name')}</label>
+            <input
+              className="input mb-4"
+              value={copyTitle}
+              autoFocus
+              onChange={(e) => setCopyTitle(e.target.value)}
+              placeholder={`${copyTarget.meta.title} (копия)`}
+            />
+
+            <div className="space-y-2 mb-4">
+              <label
+                className={`flex gap-3 items-start rounded-lg border p-3 cursor-pointer ${
+                  copyProgress ? 'border-accent2 bg-accent2/10' : 'border-white/10 bg-panel2'
+                }`}
+              >
+                <input
+                  type="radio"
+                  className="mt-1"
+                  checked={copyProgress}
+                  onChange={() => setCopyProgress(true)}
+                />
+                <div>
+                  <div className="text-sm font-medium">
+                    ⑂ {L('Продолжить с того же места', 'Continue from the same point')}
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    {L(
+                      'Переносится и прохождение: история, статусы, отношения, память, Game Master, ' +
+                        'телефон, инвентарь. Дальше две истории расходятся.',
+                      'The playthrough comes along: story, statuses, relationships, memory, Game Master, ' +
+                        'phone, inventory. From there the two stories diverge.'
+                    )}
+                    {copySaveCount !== null && (
+                      <>
+                        {' '}
+                        {copySaveCount === 0
+                          ? L('Сохранений пока нет — копия всё равно начнётся с начала.', 'No saves yet — the copy will start from the beginning anyway.')
+                          : L(`Сохранений: ${copySaveCount}.`, `Saves: ${copySaveCount}.`)}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </label>
+              <label
+                className={`flex gap-3 items-start rounded-lg border p-3 cursor-pointer ${
+                  !copyProgress ? 'border-accent2 bg-accent2/10' : 'border-white/10 bg-panel2'
+                }`}
+              >
+                <input
+                  type="radio"
+                  className="mt-1"
+                  checked={!copyProgress}
+                  onChange={() => setCopyProgress(false)}
+                />
+                <div>
+                  <div className="text-sm font-medium">✨ {L('Начать заново', 'Start over')}</div>
+                  <div className="text-xs text-gray-400">
+                    {L(
+                      'Только проект: мир, персонажи, ассеты, настройки. Прохождение не переносится — ' +
+                        'копия начнётся с первой сцены.',
+                      'The project only: world, characters, assets, settings. The playthrough is not copied — ' +
+                        'the copy starts from the first scene.'
+                    )}
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <p className="text-[11px] text-gray-500 mb-4">
+              🔑 {L(
+                'API-ключи хранятся отдельно от проекта — вводить заново не нужно.',
+                'API keys are stored outside the project — no need to re-enter them.'
+              )}
+            </p>
+
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setCopyTarget(null)}>
+                {L('Отмена', 'Cancel')}
+              </button>
+              <button
+                className="btn-primary"
+                disabled={!!busy}
+                onClick={() => onDuplicate(copyTarget, copyTitle, copyProgress)}
+              >
+                ⧉ {L('Создать копию', 'Create copy')}
+              </button>
             </div>
           </>
         )}
@@ -441,6 +612,17 @@ const CARD_ICONS: Record<string, JSX.Element> = {
       />
     </svg>
   ),
+  copy: (
+    <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
+      <rect x="7" y="7" width="9.5" height="9.5" rx="2" stroke="#c8b8ee" strokeWidth="1.5" />
+      <path
+        d="M13 4.5H5.5a2 2 0 0 0-2 2V14"
+        stroke="#c8b8ee"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  ),
   play: (
     <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
       <path d="M6.5 4.5v11l9-5.5-9-5.5Z" fill="#1c1526" />
@@ -478,7 +660,7 @@ function CardIconBtn({
 }: {
   title: string;
   onClick: () => void;
-  icon: 'edit' | 'export' | 'play' | 'trash' | 'info';
+  icon: 'edit' | 'export' | 'copy' | 'play' | 'trash' | 'info';
   primary?: boolean;
 }) {
   const size = primary ? 46 : 34;

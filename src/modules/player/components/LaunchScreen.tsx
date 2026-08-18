@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { useLang } from '../../../shared/i18n';
 import { usePlayerStore } from '../playerStore';
 import { listPlaythroughs, type PlaythroughInfo } from '../../../storage/playthroughs';
+import { getProject, duplicateProject } from '../../../storage/db';
 import type { SaveSlot } from '../../../shared/types';
 import { formatDate } from '../../../shared/utils';
 
 // Экран запуска истории (Batch 5.2): три варианта — Продолжить / Загрузить сейв /
-// Новая история. «Новая» при наличии прогресса спрашивает: удалить старый или вести
-// параллельно.
+// Новая история. «Новая» при наличии прогресса спрашивает, что делать со старым:
+// вести параллельно в этом же проекте, начать в ОТДЕЛЬНОМ проекте-копии (оригинал
+// вообще не трогаем) или удалить старое.
 type View = 'menu' | 'load' | 'new';
 
 export function LaunchScreen({ projectId, onStarted }: { projectId: string; onStarted: () => void }) {
@@ -19,12 +21,23 @@ export function LaunchScreen({ projectId, onStarted }: { projectId: string; onSt
   const [view, setView] = useState<View>('menu');
   const [playthroughs, setPlaythroughs] = useState<PlaythroughInfo[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [copying, setCopying] = useState(false);
 
   useEffect(() => {
+    // Сменился проект (в т.ч. после «в отдельном проекте») — начинаем с меню и
+    // перечитываем прохождения уже нового проекта.
+    setView('menu');
+    setLoaded(false);
+    let alive = true;
     (async () => {
-      setPlaythroughs(await listPlaythroughs(projectId));
+      const list = await listPlaythroughs(projectId);
+      if (!alive) return;
+      setPlaythroughs(list);
       setLoaded(true);
     })();
+    return () => {
+      alive = false;
+    };
   }, [projectId]);
 
   const hasProgress = playthroughs.length > 0;
@@ -95,6 +108,35 @@ export function LaunchScreen({ projectId, onStarted }: { projectId: string; onSt
             <div className="font-medium">➕ {L('Вести параллельно', 'Keep in parallel')}</div>
             <div className="text-xs text-gray-500">
               {L('Старые прохождения остаются, создаётся новое рядом.', 'Old playthroughs stay; a new one is created alongside.')}
+            </div>
+          </button>
+          <button
+            className="btn-ghost w-full !py-3 text-left"
+            disabled={copying}
+            onClick={async () => {
+              setCopying(true);
+              try {
+                const p = await getProject(projectId);
+                if (!p) return;
+                const res = await duplicateProject(
+                  p,
+                  `${p.meta.title || 'Проект'} — новая история`,
+                  { includeProgress: false }
+                );
+                nav(`/play/${res.project.id}`);
+              } finally {
+                setCopying(false);
+              }
+            }}
+          >
+            <div className="font-medium">
+              ⧉ {copying ? L('Копирую…', 'Copying…') : L('В отдельном проекте', 'In a separate project')}
+            </div>
+            <div className="text-xs text-gray-500">
+              {L(
+                'Создаётся копия проекта — те же персонажи и ассеты, но своя история. Этот проект и всё, что в нём пройдено, останутся нетронутыми.',
+                'A copy of the project is created — same characters and assets, but its own story. This project and everything played in it stay untouched.'
+              )}
             </div>
           </button>
           <button

@@ -106,46 +106,58 @@ export async function saveProject(project: Project): Promise<void> {
   }
 }
 
-// Полная независимая копия проекта (игры): новый id проекта, НОВЫЕ id ассетов и
-// СКОПИРОВАННЫЕ blob'ы (чтобы удаление копии не задело оригинал). Прогресс (сейвы) НЕ
-// копируется — копия начинается с чистого листа. Возвращает новый проект.
-export async function duplicateProject(source: Project, newTitle?: string): Promise<Project> {
+// Полная независимая копия проекта (игры) — «вторая история на тех же данных».
+// Новый id проекта, СКОПИРОВАННЫЕ blob'ы под новыми ключами (чтобы удаление копии не
+// задело оригинал и наоборот). id ассетов и персонажей НАМЕРЕННО сохраняются: на них
+// ссылается всё остальное — обложка, спрайты, иконки статов, референсы и галерея
+// CG-студии, обои и аватарки телефона, а в сейвах ещё и фон сцены, играющий трек,
+// вложения в переписке. id проектно-локальные, конфликтовать между проектами им негде,
+// зато перенумерация требовала бы вручную перепривязать КАЖДУЮ такую ссылку — и раньше
+// половина из них (референсы CG, галерея, телефон) действительно терялась при копии.
+// includeProgress=true переносит и прохождения (все сейвы) — копия продолжается с того
+// же места, но дальше живёт своей жизнью.
+export interface DuplicateResult {
+  project: Project;
+  savesCopied: number;
+  assetsMissing: number; // ассеты, чей файл не нашёлся (ссылка останется пустой)
+}
+
+export async function duplicateProject(
+  source: Project,
+  newTitle?: string,
+  opts: { includeProgress?: boolean } = {}
+): Promise<DuplicateResult> {
   const clone: Project = JSON.parse(JSON.stringify(source));
   clone.id = uid('proj');
   clone.createdAt = Date.now();
   clone.updatedAt = Date.now();
   clone.meta.title = (newTitle || `${source.meta.title || 'Проект'} (копия)`).slice(0, 200);
 
-  // Копируем blob'ы под новыми ключами и строим карту старый→новый id ассета.
-  const idMap = new Map<string, string>();
+  let assetsMissing = 0;
   for (const a of clone.assets) {
-    const oldId = a.id;
     const newBlobKey = uid('blob');
     const blob = await getAssetBlob(a.blobKey);
     if (blob) await putAsset(newBlobKey, blob);
-    a.id = uid('asset');
+    else assetsMissing++;
+    // Ключ меняем даже когда файла нет: оставить старый — значит связать копию с
+    // blob'ом оригинала, и удаление оригинала выбило бы картинки из копии.
     a.blobKey = newBlobKey;
-    idMap.set(oldId, a.id);
   }
-  const remap = (id?: string): string | undefined => (id && idMap.get(id)) || undefined;
-
-  // Перепривязываем все ссылки на ассеты внутри проекта.
-  clone.meta.coverAssetId = remap(clone.meta.coverAssetId);
-  for (const c of clone.characters) {
-    const remapMap = (m: Record<string, string>) => {
-      for (const k of Object.keys(m)) {
-        const nn = remap(m[k]);
-        if (nn) m[k] = nn;
-        else delete m[k];
-      }
-    };
-    remapMap(c.sprites as Record<string, string>);
-    for (const o of c.outfits || []) remapMap(o.sprites as Record<string, string>);
-  }
-  for (const st of clone.stats) st.iconAssetId = remap(st.iconAssetId);
 
   await saveProject(clone);
-  return clone;
+
+  let savesCopied = 0;
+  if (opts.includeProgress) {
+    for (const s of await listSaves(source.id)) {
+      // Слот и все метаданные прохождения сохраняем как есть: ключ записи включает
+      // projectId, так что пересечься с оригиналом слоты не могут.
+      const { key: _key, ...rest } = s as SaveSlot & { key?: string };
+      await putSave({ ...rest, projectId: clone.id });
+      savesCopied++;
+    }
+  }
+
+  return { project: clone, savesCopied, assetsMissing };
 }
 
 // Перенос персонажа в другой проект. Спрайты копируются как НОВЫЕ blob'ы + ассеты

@@ -162,6 +162,17 @@ export async function importProjectZip(file: File): Promise<ImportResult> {
             savedAt: typeof s.savedAt === 'number' ? s.savedAt : Date.now(),
             title: typeof s.title === 'string' ? s.title : `Импорт · слот ${s.slot}`,
             state: s.state,
+            // Метаданные прохождений (Batch 5.2) переносим как есть. Без них импорт
+            // бэкапа схлопывал ВСЕ прохождения в одно «Прежнее», автоснимки
+            // превращались в чекпоинты, а «Продолжить» подхватывало не ту ветку —
+            // то есть перенос на другое устройство терял разделение историй.
+            kind: s.kind,
+            playthroughId: s.playthroughId,
+            playthroughLabel: s.playthroughLabel,
+            playthroughCreatedAt: s.playthroughCreatedAt,
+            checkpointId: s.checkpointId,
+            parentCheckpointId: s.parentCheckpointId,
+            branchName: s.branchName,
           });
           imported++;
         }
