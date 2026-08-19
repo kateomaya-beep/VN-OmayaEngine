@@ -774,8 +774,10 @@ function phoneBlock(project: Project, state: RuntimeState): string {
   if (chatLines.length) {
     const tail = chatLines.sort((a, b) => a.at - b.at).slice(-14);
     parts.push(
-      'RECENT TEXT MESSAGES (these already happened on the phone — both sides remember them; ' +
-        'treat them as canon, refer back to them naturally, and do NOT replay them as new):\n' +
+      'RECENT TEXT MESSAGES — ALREADY DELIVERED. They are on the hero\'s phone right now, both sides ' +
+        'remember them, and they are canon. NEVER send any of them again: if the hero mentions the ' +
+        'correspondence, or thinks about it, or answers it out loud, respond to that IN THE SCENE. ' +
+        'Emit sms_incoming ONLY for a message that has never been sent before.\n' +
         tail.map((x) => x.line).join('\n')
     );
   }

@@ -15,7 +15,7 @@ import { selectAssets } from './assetSelector';
 import { maybeCompress } from './memoryEngine';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
 import { presentPersonIds } from './presence';
-import { generateIncomingSms } from './phoneChat';
+import { generateIncomingSms, alreadyInChat } from './phoneChat';
 import { uid } from '../shared/utils';
 
 // Порог, с которого сдвиг отношений считается «заметным событием» и попадает
@@ -391,6 +391,10 @@ export async function applyTurn(
       const ctId = addContact(b.characterId);
       if (phoneOn && ctId) {
         const chat = directChat(ctId);
+        if (alreadyInChat(chat, ctId, { text: b.text })) {
+          logEvent('warn', 'phone', `Повтор уже отправленного СМС отброшен: «${b.text.slice(0, 60)}»`);
+          continue;
+        }
         chat.messages.push({
           id: uid('msg'),
           from: 'contact',
@@ -413,6 +417,10 @@ export async function applyTurn(
       const ctId = addContact(b.characterId);
       if (phoneOn && ctId) {
         const chat = directChat(ctId);
+        if (alreadyInChat(chat, ctId, { photo: b.photo })) {
+          logEvent('warn', 'phone', 'Повтор уже присланного фото отброшен.');
+          continue;
+        }
         chat.messages.push({
           id: uid('msg'),
           from: 'contact',
@@ -805,7 +813,14 @@ async function deliverFallbackSms(
       chat = { id: pickId, kind: 'direct', participantIds: [pickId], messages: [] };
       state.phone.chats.push(chat);
     }
+    let delivered = 0;
     for (const text of msgs) {
+      // Та же защита, что и на управляющих битах: догенерация видит историю
+      // переписки и способна повторить уже отправленное.
+      if (alreadyInChat(chat, pickId, { text })) {
+        logEvent('warn', 'phone', `Повтор в догенерации СМС отброшен: «${text.slice(0, 60)}»`);
+        continue;
+      }
       chat.messages.push({
         id: uid('msg'),
         from: 'contact',
@@ -816,7 +831,9 @@ async function deliverFallbackSms(
         turn: state.turnCount,
         at: Date.now(),
       });
+      delivered++;
     }
+    if (!delivered) return; // всё оказалось повтором — ни события, ни всплывашки
     chat.unread = true;
     // Если во входящем СМС произошло что-то значимое — оно ложится в ту же ленту
     // событий, что и события сцены (переписка — часть той же истории).

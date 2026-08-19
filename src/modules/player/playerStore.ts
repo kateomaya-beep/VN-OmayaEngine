@@ -4,7 +4,7 @@ import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRela
 import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
-import { generateChatReplies, findContact, nameOfContact, heroNameOf, type ChatTurn } from '../../ai/phoneChat';
+import { generateChatReplies, findContact, nameOfContact, heroNameOf, alreadyInChat, type ChatTurn } from '../../ai/phoneChat';
 import { generateContactPhoto, generateAvatarImage, generateGroupAvatarImage } from '../../ai/phonePhoto';
 import { generateImage } from '../../ai/imageProvider';
 import { renderImage } from '../../ai/imageCast';
@@ -1255,6 +1255,13 @@ async function runChatReplies(
     return;
   }
   for (const r of replies) {
+    // Собеседник видит собственную переписку в контексте и умеет повторить уже
+    // отправленное дословно — та же проверка, что и на СМС из основной игры.
+    const before = get().state?.phone?.chats.find((x) => x.id === chatId);
+    if (before && alreadyInChat(before, r.senderId, { text: r.text, photo: r.photoPrompt })) {
+      logEvent('warn', 'phone', `Повтор реплики собеседника отброшен: «${(r.text || '').slice(0, 60)}»`);
+      continue;
+    }
     await sleep(typingDelay(r.text || '📷'));
     const msgId = uid('msg');
     get().patchPhone((p) => {

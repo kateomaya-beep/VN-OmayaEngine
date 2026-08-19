@@ -15,6 +15,35 @@ import { logEvent } from '../shared/logStore';
 
 const MAX_HISTORY = 16; // сколько последних реплик переписки давать в контекст
 
+// ---- Защита от повтора уже доставленных сообщений ----------------------------
+// Переписка уходит в контекст основной игры (она — часть сюжета), и стоит игроку
+// упомянуть её в сцене, как модель присылает те же реплики заново, целым блоком и
+// с новым временем. В промпте это запрещено словами, но словами такое не держится.
+// Единственная проверка на весь движок: тот же отправитель, тот же текст, в пределах
+// последних сорока сообщений чата. Короткие реплики («ок», «ага») не проверяем —
+// они повторяются естественно, и глушить их хуже, чем пропустить дубль.
+const MIN_DEDUPE_LEN = 12;
+const RECENT_MESSAGES = 40;
+
+export function messageKey(t: string): string {
+  return t.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+export function alreadyInChat(
+  chat: PhoneChat,
+  senderId: string,
+  what: { text?: string; photo?: string }
+): boolean {
+  const recent = chat.messages.slice(-RECENT_MESSAGES).filter((m) => m.from === 'contact' && (m.senderId || senderId) === senderId);
+  if (what.photo?.trim()) {
+    const key = messageKey(what.photo);
+    if (recent.some((m) => m.photoPrompt && messageKey(m.photoPrompt) === key)) return true;
+  }
+  const key = messageKey(what.text || '');
+  if (key.length < MIN_DEDUPE_LEN) return false;
+  return recent.some((m) => messageKey(m.text || '') === key);
+}
+
 // ---- Контакты (Телефон 2.0) --------------------------------------------------
 // Контакт больше не обязан быть персонажем проекта: он может ссылаться на запись
 // реестра Game Master («тот, кого задетектил ГМ») или существовать сам по себе
