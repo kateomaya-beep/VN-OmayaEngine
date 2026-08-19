@@ -47,10 +47,15 @@ export function condenseAssistantTurn(raw: string, project: Project, state: Runt
     }
     return typeof b.name === 'string' ? b.name : '';
   };
+  // Только то, что герой реально видел на экране. У СМС-битов тоже есть text, и
+  // раньше он попадал сюда голой строкой — без отправителя и без пометки, что это
+  // переписка. Получалась вторая копия сообщения в контексте (первая — в блоке
+  // ТЕЛЕФОН, с именами и временем), и модель принимала её за реплику сцены.
+  const SHOWN = new Set(['narration', 'dialogue', 'thought']);
   const lines = obj.beats
     .map((b: any) => {
       const text = typeof b?.text === 'string' ? b.text : '';
-      if (!text) return '';
+      if (!text || !SHOWN.has(b?.type)) return '';
       if (b.type === 'dialogue') {
         const n = nameOf(b);
         return n ? `${n}: ${text}` : text;
@@ -294,7 +299,8 @@ function whoIsWhoBlock(
     `messages or the episode log show something newer — a pregnancy that ended in a birth, a wound that healed, a move, ` +
     `a death — THE STORY WINS. Do not act on a stale line; describe the current reality and send the corrected value in ` +
     `worldState.characters this turn.\n` +
-    `- Anyone with a "Phone:" line can be texted: reach them with sms_incoming / sms_photo using their id.\n` +
+    `- Anyone with a "Phone:" line can be texted: sms_incoming / sms_photo when THEY write to the hero, ` +
+    `sms_outgoing when the HERO writes to them — always by their id.\n` +
     `- Genuinely new person → {"type":"character_new",...}. Known person under a new nickname → ` +
     `{"type":"character_alias_add","id":"<existing id>","alias":"..."}. Situation changed → ` +
     `{"type":"character_update","id":"<id>","status":"..."}. Never create a second entry for the same person.`
@@ -719,6 +725,7 @@ function phoneBlock(project: Project, state: RuntimeState): string {
   const parts = [
     'The hero carries a smartphone. Phone control beats (no display text):',
     '  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero (appears in Messages). ONLY someone who is somewhere else: a person standing in the scene talks, they do not text. The rare exception is a deliberate silent message under the table, and then the narration must show them reaching for their phone.',
+    '  - {"type":"sms_outgoing","characterId":"<id>","text":"<message>"} — the HERO texts that person. Use this whenever the hero writes, answers or forwards something on the phone during the scene. Never put the hero\'s own words into sms_incoming: that beat is the other person speaking.',
     '  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone\'s number (characters who appear are auto-added; use only for someone met off-screen).',
     '  - {"type":"sms_photo","characterId":"<id>","caption":"<what they write with it>","photo":"<what the photo shows, from THEIR side: a selfie, their room, the street they are on>"} — a character sends the hero a PHOTO. The engine draws it. Use it when someone would naturally snap something (showing off, proof, a view, a joke); the caption is optional.',
   ];

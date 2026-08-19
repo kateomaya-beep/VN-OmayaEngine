@@ -1007,6 +1007,10 @@ export type Beat =
   | { type: 'transaction'; amount: number; vendor?: string; item?: string; time?: string }
   | { type: 'money_change'; amount: number; reason?: string }
   | { type: 'sms_incoming'; characterId: string; text: string }
+  // Герой САМ пишет кому-то из игры. Раньше такого бита не было вовсе, и когда
+  // героиня отвечала на СМС прямо в сцене, модели оставался только sms_incoming —
+  // ответ ложился в переписку от лица собеседника, а не от её.
+  | { type: 'sms_outgoing'; characterId: string; text: string }
   // Персонаж присылает герою ФОТО: движок рисует картинку по описанию photo.
   | { type: 'sms_photo'; characterId: string; caption?: string; photo: string }
   | { type: 'contact_added'; characterId: string }

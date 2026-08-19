@@ -410,6 +410,28 @@ export async function applyTurn(
       }
       continue;
     }
+    // Герой отвечает на СМС прямо из сцены. Без этого бита у модели был только
+    // sms_incoming, и ответ героини ложился в переписку от лица собеседника.
+    if (b.type === 'sms_outgoing') {
+      const ctId = addContact(b.characterId);
+      if (phoneOn && ctId) {
+        const chat = directChat(ctId);
+        if (alreadyInChat(chat, ctId, { text: b.text, from: 'protagonist' })) {
+          logEvent('warn', 'phone', `Повтор уже отправленного героем сообщения отброшен: «${b.text.slice(0, 60)}»`);
+          continue;
+        }
+        chat.messages.push({
+          id: uid('msg'),
+          from: 'protagonist',
+          text: b.text,
+          ...stamp(),
+        });
+        // Ответила — значит прочитала: снимаем непрочитанное, ровно как это делает
+        // мессенджер, когда игрок пишет там руками.
+        chat.unread = false;
+      }
+      continue;
+    }
     // Бот сам присылает фото (Телефон 2.0). Сообщение появляется сразу — с подписью
     // и плашкой «загружается»; картинку движок генерирует после хода (см. deliverPendingPhotos),
     // иначе ход игрока ждал бы медленный image-API.

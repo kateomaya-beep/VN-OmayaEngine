@@ -56,6 +56,7 @@ RESPONSE SCHEMA:
     { "type": "inventory_add", "name": string, "emoji": string, "quantity": number, "category": string, "source": string },
     { "type": "inventory_remove", "name": string, "quantity": number, "reason": string },
     { "type": "sms_incoming", "characterId": string, "text": string },
+    { "type": "sms_outgoing", "characterId": string, "text": string },
     { "type": "sms_photo", "characterId": string, "caption": string, "photo": "<what the photo shows>" },
     { "type": "contact_added", "characterId": string },
     { "type": "character_new", "canonicalName": string, "aliases": [string], "role": string },
@@ -379,6 +380,9 @@ const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
   // Контракт без правила про теги персонажа: записать «этот человек знает мою
   // тайну» было НЕКУДА, и тайна жила ровно до конца той сцены в контексте.
   { key: 'json_contract', signature: 'never paraphrase a record just to restate it.\n- relations:' },
+  // Контракт без sms_outgoing: герой не мог сам написать в переписку, и его ответ
+  // на СМС ложился в чат от лица собеседника.
+  { key: 'json_contract', signature: '{ "type": "sms_incoming", "characterId": string, "text": string },\n    { "type": "sms_photo"' },
 ];
 function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
   let changed = false;

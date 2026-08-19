@@ -32,9 +32,12 @@ export function messageKey(t: string): string {
 export function alreadyInChat(
   chat: PhoneChat,
   senderId: string,
-  what: { text?: string; photo?: string }
+  what: { text?: string; photo?: string; from?: 'contact' | 'protagonist' }
 ): boolean {
-  const recent = chat.messages.slice(-RECENT_MESSAGES).filter((m) => m.from === 'contact' && (m.senderId || senderId) === senderId);
+  const side = what.from || 'contact';
+  const recent = chat.messages
+    .slice(-RECENT_MESSAGES)
+    .filter((m) => m.from === side && (side === 'protagonist' || (m.senderId || senderId) === senderId));
   if (what.photo?.trim()) {
     const key = messageKey(what.photo);
     if (recent.some((m) => m.photoPrompt && messageKey(m.photoPrompt) === key)) return true;

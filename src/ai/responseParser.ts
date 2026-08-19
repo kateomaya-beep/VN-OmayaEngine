@@ -168,10 +168,10 @@ export function repairBeat(project: Project, b: any, state?: RuntimeState): Beat
     if (amount === 0) return { type: 'narration', text: '' };
     return { type: 'money_change', amount, reason: typeof b.reason === 'string' ? b.reason : undefined };
   }
-  if (b?.type === 'sms_incoming') {
+  if (b?.type === 'sms_incoming' || b?.type === 'sms_outgoing') {
     const ch = charByRef(project, b.characterId, state);
     const text = txt(b.text);
-    if (ch && text.trim()) return { type: 'sms_incoming', characterId: ch.id, text };
+    if (ch && text.trim()) return { type: b.type, characterId: ch.id, text };
     return { type: 'narration', text: '' };
   }
   if (b?.type === 'contact_added') {

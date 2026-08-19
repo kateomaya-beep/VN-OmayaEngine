@@ -40,6 +40,7 @@ export const beatSchema = z.union([
   }),
   z.object({ type: z.literal('money_change'), amount: z.number(), reason: z.string().nullish() }),
   z.object({ type: z.literal('sms_incoming'), characterId: z.string(), text: z.string() }),
+  z.object({ type: z.literal('sms_outgoing'), characterId: z.string(), text: z.string() }),
   z.object({
     type: z.literal('sms_photo'),
     characterId: z.string(),
