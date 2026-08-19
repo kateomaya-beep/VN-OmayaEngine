@@ -327,6 +327,7 @@ export function normalizeProject(raw: any): Project {
         ? ai.reasoningEffort
         : undefined,
       guidedThinking: bool(ai.guidedThinking, false) || undefined,
+      // (легаси-поле: реальный план живёт в ГЛОБАЛЬНОМ пресете, см. ai/presetSettings)
       thinkingPlan: typeof ai.thinkingPlan === 'string' ? ai.thinkingPlan : undefined,
       advancedBlocks: arr<any>(ai.advancedBlocks)
         .filter((b) => b && typeof b.content === 'string')

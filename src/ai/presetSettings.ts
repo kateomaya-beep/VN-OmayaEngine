@@ -1,7 +1,12 @@
 import { create } from 'zustand';
 import { defaultPreset, normalizePreset, type PromptPreset } from './promptPreset';
 import type { AdvancedPromptBlock } from '../shared/types';
-import { DEFAULT_TURN_LENGTH, normalizeTurnLength } from '../shared/types';
+import {
+  DEFAULT_TURN_LENGTH,
+  normalizeTurnLength,
+  DEFAULT_THINKING_PLAN,
+  LEGACY_THINKING_PLANS,
+} from '../shared/types';
 
 // ГЛОБАЛЬНЫЕ настройки пресета/генерации — ОДИН пресет на все истории (не на проект).
 // Доступны из верхней панели везде и всегда, даже без открытого проекта. В будущем —
@@ -47,6 +52,11 @@ function defaults(): PresetSettings {
   };
 }
 
+function refreshThinkingPlan(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined;
+  return LEGACY_THINKING_PLANS.some((old) => old.trim() === v.trim()) ? DEFAULT_THINKING_PLAN : v;
+}
+
 function load(): PresetSettings {
   const d = defaults();
   try {
@@ -70,7 +80,10 @@ function load(): PresetSettings {
         ? v.reasoningEffort
         : undefined,
       guidedThinking: !!v.guidedThinking,
-      thinkingPlan: typeof v.thinkingPlan === 'string' ? v.thinkingPlan : undefined,
+      // План размышления: если лежит РОВНО прежний дефолт — автор его не писал, он
+      // просто сохранился при открытии панели; обновляем на новый чек-лист. Всё,
+      // что отличается хоть символом, считаем авторским и не трогаем.
+      thinkingPlan: refreshThinkingPlan(v.thinkingPlan),
       prefill: typeof v.prefill === 'string' ? v.prefill : undefined,
       advancedBlocks: Array.isArray(v.advancedBlocks)
         ? v.advancedBlocks

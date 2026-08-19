@@ -9,7 +9,7 @@ import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion } from './providers';
 import { getPresetSettings } from './presetSettings';
-import { parseAiResponse, applyStatChanges, applyRelationshipChanges } from './responseParser';
+import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { maybeCompress } from './memoryEngine';
@@ -730,6 +730,11 @@ export async function runTurn(
   if (!parsed.ok || !parsed.turn) {
     throw new Error(parsed.error || 'Не удалось разобрать ответ ИИ');
   }
+
+  // План хода — в лог (раскрывается по клику). Без этого управляемое размышление
+  // было ящиком без окна: шаблон правишь, а что модель по нему думает — не видно.
+  const plan = extractThinking(raw);
+  if (plan) logEvent('info', 'think', `План хода ${state.turnCount + 1}`, plan);
 
   // Разделение ролей ИИ (Batch 5.4): если настроен отдельный Селектор ассетов
   // ('custom'/'local'), он переопределяет emotion/наряд/музыку из закрытых списков.

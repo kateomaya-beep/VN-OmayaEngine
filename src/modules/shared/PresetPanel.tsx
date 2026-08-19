@@ -405,15 +405,33 @@ function GuidedThinkingField({
       <p className="text-xs text-gray-500 mt-1">
         Вместо медленной родной «думалки» модель пишет короткий план в тегах{' '}
         <code>&lt;thinking&gt;</code> (через префилл), затем сразу ответ. Обычно это заметно быстрее
-        «думающих» моделей. Родной reasoning при этом принудительно выключается. План держите{' '}
-        <b>коротким</b> — длинный сведёт весь выигрыш на нет.
+        «думающих» моделей. Родной reasoning при этом принудительно выключается.
       </p>
       {on && (
-        <textarea
-          className="input h-28 mt-2 text-sm font-mono"
-          value={cfg.thinkingPlan ?? DEFAULT_THINKING_PLAN}
-          onChange={(e) => patch({ thinkingPlan: e.target.value })}
-        />
+        <>
+          <textarea
+            className="input h-40 mt-2 text-sm font-mono"
+            value={cfg.thinkingPlan ?? DEFAULT_THINKING_PLAN}
+            onChange={(e) => patch({ thinkingPlan: e.target.value })}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Каждая строка плана оплачивается на <b>каждом</b> ходу — и деньгами, и ожиданием.
+            Поэтому список закрытый: добавляйте пункт слиянием с соседним, а не сверху. План на
+            пятнадцать пунктов — это уже та самая медленная «думалка», от которой мы уходим.
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Что модель по нему надумала — видно в{' '}
+            <b>логах</b> (значок на верхней панели), запись «План хода N»: нажмите на неё, чтобы
+            развернуть. Так план можно править не вслепую.
+          </p>
+          <button
+            className="btn-ghost !px-3 !py-1 text-xs mt-2"
+            onClick={() => patch({ thinkingPlan: DEFAULT_THINKING_PLAN })}
+            disabled={(cfg.thinkingPlan ?? DEFAULT_THINKING_PLAN) === DEFAULT_THINKING_PLAN}
+          >
+            Вернуть стандартный план
+          </button>
+        </>
       )}
     </div>
   );

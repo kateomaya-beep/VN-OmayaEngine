@@ -34,6 +34,17 @@ export interface ParseResult {
   error?: string;
 }
 
+// План хода из <thinking> — чтобы его можно было ПОСМОТРЕТЬ. Раньше он молча
+// вырезался и исчезал: автор правил шаблон плана вслепую, не видя, что модель по
+// нему пишет (в отличие от Таверны, где рассуждение показывается над ответом).
+// Префилл открывает тег за модель, поэтому в ответе часто есть только закрывающий.
+export function extractThinking(raw: string): string {
+  const closed = raw.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
+  if (closed) return closed[1].trim();
+  const end = raw.search(/<\/think(?:ing)?>/i);
+  return end > -1 ? raw.slice(0, end).trim() : '';
+}
+
 // Strip markdown fences and locate the first balanced JSON object.
 export function extractJson(raw: string): string | null {
   let text = raw.trim();
