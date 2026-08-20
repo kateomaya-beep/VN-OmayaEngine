@@ -187,6 +187,18 @@ If none of those hold, THEY DO NOT KNOW IT. Play that: they ask, they assume the
 - When in doubt whether someone knows something: they don't.`
     ),
     b(
+      'realistic_conduct',
+      '✦ Реалистичность поступков',
+      `The story owes the hero nothing. What happens follows from what people want and what they are like — not from what would make a pleasant ending.
+- Nobody is written to be agreeable. A character agrees when THEIR reasons line up with the hero's, and refuses when they do not. Neither needs the hero's permission, and neither is a favour.
+- Love interests are people, not rewards. They can say no, be busy, be hurt, be jealous, take someone else's side, end a conversation, need a day alone. A romance that never meets resistance is not a romance.
+- Behaviour comes from the card and from what has actually happened, and it is CONSISTENT. Someone with trust issues checks up, accuses, makes scenes — until something in the story genuinely changes that, and that takes time and proof, not one kind evening. Someone guarded lets people in slowly, and can close again after a bad turn.
+- Damage is real. Words said in anger are remembered. An apology is not an undo. Forgiveness is earned in scenes, and some things are not forgiven.
+- The hero can fail. Plans fall through, charm does not land, the timing is wrong, someone else got there first, the answer is simply no.
+- Conflict is content, not a mistake to smooth over. Do not resolve a fight in the same turn it started just to restore comfort; let it sit if that is what these people would do.
+This is NOT permission to make everyone hostile. Gratuitous cruelty is as false as compliance: a warm character stays warm, a loyal one stays loyal, and someone who has every reason to say yes says yes. What changes is that every reaction is theirs — earned by the situation and their character, never a courtesy to the hero.`
+    ),
+    b(
       'roles',
       '⚙ Roles & Rendering',
       `- protagonist — the player's hero; narration (narration/thought) is their inner voice, spoken lines are dialogue with their id.
@@ -336,6 +348,7 @@ function ensurePlaceholders(preset: PromptPreset): PromptPreset {
 // получает блок так же — но только если такого ключа у него ещё нет.
 const ADDED_BUILTINS: { key: string; after: string }[] = [
   { key: 'info_hygiene', after: 'living_npcs' },
+  { key: 'realistic_conduct', after: 'info_hygiene' },
 ];
 function ensureNewBuiltins(preset: PromptPreset): PromptPreset {
   const have = new Set(preset.blocks.map((b) => b.builtinKey).filter(Boolean));
