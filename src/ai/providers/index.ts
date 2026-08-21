@@ -75,13 +75,22 @@ async function ensureProxy(): Promise<void> {
 }
 
 // Универсальный fetch: через прокси, если он есть; иначе напрямую.
+//
+// cache:'no-store' здесь ОБЯЗАТЕЛЕН, а не «на всякий случай». Через прокси у ВСЕХ
+// запросов один и тот же адрес (/__proxy), а настоящий адрес провайдера сидит в
+// заголовке x-target-url — HTTP-кэш браузера ключуется по URL и заголовок не
+// различает. Стоило провайдеру отдать на GET /models обычный для CDN
+// «cache-control: max-age=…», и дальше браузер возвращал ЭТОТ ответ на любой
+// следующий GET через прокси: новые модели у старого провайдера не появлялись
+// никогда, а только что добавленный провайдер получал чужой список (или пустоту).
+// Прямые запросы (без прокси) кэшировались так же, просто по своему адресу.
 export async function netFetch(url: string, init: RequestInit): Promise<Response> {
   await ensureProxy();
   if (proxyState === 'on' && /^https?:\/\//i.test(url)) {
     const headers = { ...((init.headers as Record<string, string>) || {}), 'x-target-url': url };
-    return fetch('/__proxy', { ...init, headers });
+    return fetch('/__proxy', { cache: 'no-store', ...init, headers });
   }
-  return fetch(url, init);
+  return fetch(url, { cache: 'no-store', ...init });
 }
 
 // Доступен ли прокси (для индикатора в UI). Гарантирует, что детект запущен.
@@ -491,6 +500,25 @@ function parseModelList(data: any): string[] {
   const ids = list
     .map((m) => (typeof m === 'string' ? m : m?.id || m?.name || m?.model || m?.slug))
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  // Пусто — значит ответ пришёл, но в незнакомой форме. Раньше пользователь видел
+  // только «0 моделей подтянуто» и упирался в тупик; теперь в логах видно, ЧТО
+  // именно ответил провайдер, и понятно, чинить обёртку или адрес.
+  if (!ids.length) {
+    let preview: string;
+    try {
+      preview = JSON.stringify(data).slice(0, 400);
+    } catch {
+      preview = String(data).slice(0, 400);
+    }
+    logEvent(
+      'warn',
+      'llm',
+      'Список моделей пуст: провайдер ответил, но не в одном из известных форматов ' +
+        '(массив, {data:[…]}, {models:[…]}, {result:[…]}). Проверьте Base URL — он должен ' +
+        'заканчиваться на /v1 (или тем, что требует ваш шлюз).',
+      preview
+    );
+  }
   return Array.from(new Set(ids)).sort();
 }
 

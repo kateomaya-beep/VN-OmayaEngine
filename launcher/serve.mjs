@@ -79,9 +79,20 @@ function handleProxy(req, res) {
       upstream.headers.forEach((v, k) => {
         const lk = k.toLowerCase();
         if (['content-encoding', 'content-length', 'transfer-encoding'].includes(lk)) return;
+        // Заголовки кэширования провайдера НЕ пропускаем. У всех проксируемых
+        // запросов один адрес (/__proxy), настоящий адрес — в заголовке
+        // x-target-url, а HTTP-кэш браузера ключуется по URL. Пришедший от
+        // провайдера «cache-control: max-age=600» на GET /models превращался в
+        // «этот список моделей теперь ответ на ЛЮБОЙ запрос через прокси».
+        if (['cache-control', 'etag', 'last-modified', 'expires', 'age', 'pragma', 'vary'].includes(lk)) return;
         out[k] = v;
       });
       out['access-control-allow-origin'] = '*';
+      out['cache-control'] = 'no-store, no-cache, must-revalidate';
+      out['pragma'] = 'no-cache';
+      // На случай кэша, который всё же захочет что-то сохранить: разные цели —
+      // разные записи, а не одна общая.
+      out['vary'] = 'x-target-url';
       out['x-vn-proxy'] = '1';
       const buf = Buffer.from(await upstream.arrayBuffer());
       res.writeHead(upstream.status, out);

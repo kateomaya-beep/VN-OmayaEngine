@@ -27,14 +27,22 @@ export function ApiConnectionField({
   const [key, setKey] = useState('');
   const [status, setStatus] = useState<{ busy: boolean; msg?: string; ok?: boolean }>({ busy: false });
 
+  // Ключ перечитываем не только при смене роли, но и при смене самого подключения:
+  // переключение пресета подключения кладёт ключ пресета в ТУ ЖЕ роль (провайдер не
+  // менялся), поэтому по одной лишь роли поле оставалось с ключом прошлого пресета —
+  // и «⟳» стучалось к новому провайдеру старым ключом. Набранное вручную не теряется:
+  // поле пишет ключ в хранилище на каждый символ, так что читаем мы то же самое.
   useEffect(() => {
-    setKey(getApiKey(keyRole));
-  }, [keyRole]);
+    const stored = getApiKey(keyRole);
+    setKey((cur) => (cur === stored ? cur : stored));
+  }, [keyRole, conn]);
 
   async function refreshModels() {
     setStatus({ busy: true });
     try {
-      const models = await listModels(conn, key);
+      // Ключ берём из хранилища, а не из состояния поля: состояние может отставать
+      // на один рендер после переключения пресета.
+      const models = await listModels(conn, getApiKey(keyRole));
       // НЕ затираем уже выбранную/вписанную модель (провайдер может отдавать не весь
       // список). Автоподставляем первую только если модель ещё не задана.
       const model = conn.model || models[0] || '';
@@ -53,7 +61,7 @@ export function ApiConnectionField({
 
   async function test() {
     setStatus({ busy: true });
-    const res = await testConnection(conn, key);
+    const res = await testConnection(conn, getApiKey(keyRole));
     setStatus({ busy: false, ok: res.ok, msg: res.message });
   }
 
