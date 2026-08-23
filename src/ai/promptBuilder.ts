@@ -155,7 +155,7 @@ function whoIsWhoBlock(
     // «беременна» столетней давности выглядело как факт этого хода.
     const out: string[] = [];
     if (os) out.push(`Present in the scene right now (emotion: ${os.emotion}${os.outfit ? `, outfit: ${os.outfit}` : ''})`);
-    const age = d?.updatedAtTurn && turnNow ? turnNow - d.updatedAtTurn : null;
+    const recordedAt = d?.updatedAtTurn ?? null;
     // Ничего не затухает и не выбрасывается. Персонаж, с которым давно не играли,
     // обязан остаться известным — иначе движок сам создаёт амнезию. Свежесть
     // обеспечивается не забыванием, а тем, что модель переписывает сводку по тем,
@@ -167,12 +167,12 @@ function whoIsWhoBlock(
       d?.location && !os && `at: ${d.location}`,
     ].filter(Boolean);
     if (recorded.length) {
+      // Тоже абсолютным номером хода — по той же причине, что и снапшот выше:
+      // «N ходов назад» меняется каждый ход и рушит общий префикс запроса.
       const stamp =
-        age === null
+        recordedAt === null
           ? ' [age unknown — verify against the story]'
-          : age <= 1
-            ? ' [recorded this turn]'
-            : ` [recorded ${age} turns ago — may be stale]`;
+          : ` [recorded at turn ${recordedAt}; compare with the current turn at the end of this request]`;
       out.push(`Last recorded: ${recorded.join('; ')}${stamp}`);
     }
     // ИСТОРИЯ СТАТУСА. Одна строка «status: беременна» не говорит, было это
@@ -407,18 +407,20 @@ async function memoryBlock(
   // свёртке) описывал момент десятки ходов назад — и модель продолжала историю
   // оттуда: «ход идёт сразу после старого саммари», сюжет ходил по кругу.
   if (m.storyState?.trim()) {
+    // ВОЗРАСТ — АБСОЛЮТНЫМ НОМЕРОМ ХОДА, а не «N ходов назад». Разница огромная:
+    // «N ходов назад» меняется КАЖДЫЙ ход, а строчка стоит в начале системного
+    // промпта — то есть каждый ход рушила общий префикс запроса, и провайдер
+    // пересчитывал весь контекст заново вместо того, чтобы взять его из своего кэша
+    // префикса. Измерено: до первой свёртки соседние ходы делили 97% запроса, после
+    // неё — 28%. Отсюда «контекст стал меньше, а ответ втрое дольше». Номер хода
+    // не меняется, пока не изменился сам снапшот; «какой ход сейчас» лежит в конце
+    // запроса, в блоке STATE RIGHT NOW, и модель вычитает одно из другого сама.
     const at = m.storyStateAtTurn ?? 0;
-    const age = at ? state.turnCount - at : null;
-    const stamp =
-      age === null
-        ? 'taken at an unknown point'
-        : age <= 0
-          ? 'taken at the current turn'
-          : `taken at turn ${at}; the story has since advanced to turn ${state.turnCount} — ${age} turn(s) of newer events happened AFTER it`;
+    const stamp = at ? `taken at turn ${at}` : 'taken at an unknown point';
     const warn =
-      age !== null && age > 0
-        ? ' Anything in the recent messages or the newest episode-log entries OVERRIDES this snapshot: continue from where the story is NOW, not from the situation described here.'
-        : '';
+      ' Compare that turn number with the current turn at the end of this request: everything that happened' +
+      ' after it — the recent messages and the newest episode-log entries — OVERRIDES this snapshot.' +
+      ' Continue from where the story is NOW, not from the situation described here.';
     const snapCap = Math.round(memBudget * 0.6);
     let snapText = m.storyState.trim();
     if (estimateTokens(snapText) > snapCap) {
@@ -1093,6 +1095,12 @@ export async function buildRequest(
   // В Таверне это решают инжектом на глубину; делаем так же — короткая сводка того,
   // что меняется чаще всего, идёт в самый конец, после всей истории.
   const nowBits: string[] = [];
+  // Номер текущего хода — ЗДЕСЬ, в самом конце запроса, и больше нигде. Всё, что
+  // выше, датируется абсолютными номерами ходов; свежесть модель считает отсюда.
+  // Так «сейчас» меняется в одной строке в хвосте, а не в начале системной части,
+  // где каждая правка обнуляет кэш префикса у провайдера и заставляет пересчитывать
+  // весь контекст с нуля каждый ход.
+  nowBits.push(`Current turn: ${state.turnCount}. Anything above stamped with an earlier turn number is OLDER than the story is now.`);
   const clockNow = formatClock(state.gm.clock);
   if (clockNow) {
     const el = elapsedPhrase(state.gm.clock.startDate, state.gm.clock.date);

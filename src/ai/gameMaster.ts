@@ -127,19 +127,24 @@ export function mergeWorldState(
           }
         }
       }
-      set(c, 'dossier', u.dossier);
-      set(c, 'appearance', u.appearance);
-      set(c, 'personality', u.personality);
-      set(c, 'roleToHero', u.roleToHero);
-      set(c, 'outfit', u.outfit);
-      set(c, 'mood', u.mood);
-      set(c, 'status', u.status);
-      set(c, 'location', u.location);
+      // «Обновлено» = значение РЕАЛЬНО изменилось, а не «ИИ прислал ту же строку».
+      // Контракт просит сводку по людям в кадре каждый ход, и она часто приходит
+      // слово в слово прежней. Раньше такой повтор двигал отметку хода — досье
+      // считалось свежим каждый ход, а строка в картотеке (она стоит в начале
+      // системного промпта) менялась на каждом запросе и рушила общий префикс:
+      // провайдер пересчитывал весь контекст заново вместо своего кэша.
+      const fields = ['dossier', 'appearance', 'personality', 'roleToHero', 'outfit', 'mood', 'status', 'location'] as const;
+      let changed = false;
+      for (const f of fields) {
+        const incoming = (u as Record<string, unknown>)[f];
+        if (typeof incoming === 'string' && incoming.trim() && normName(incoming) !== normName(String(c[f] ?? ''))) {
+          changed = true;
+        }
+        set(c, f, (u as any)[f]);
+      }
       if (Array.isArray(u.tags) && u.tags.length) c.tags = u.tags;
       if (!c.charId) c.charId = u.charId || viaRegistry?.entry.sheetId || c.charId;
-      // Отмечаем ход обновления только если что-то реально пришло: иначе досье
-      // выглядело бы свежим каждый ход, даже когда ИИ его не трогал.
-      if (u.dossier || u.status || u.mood || u.outfit || u.location || u.roleToHero) c.updatedAtTurn = turn;
+      if (changed) c.updatedAtTurn = turn;
     }
   }
 
