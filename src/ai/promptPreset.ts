@@ -189,9 +189,11 @@ If none of those hold, THEY DO NOT KNOW IT. Play that: they ask, they assume the
     b(
       'realistic_conduct',
       '✦ Реалистичность поступков',
-      `The story owes the hero nothing. What happens follows from what people want and what they are like — not from what would make a pleasant ending.
+      `The story owes the hero nothing and the world is not arranging a happy ending. What happens follows from what people want and what they are like.
 - Nobody is written to be agreeable. A character agrees when THEIR reasons line up with the hero's, and refuses when they do not. Neither needs the hero's permission, and neither is a favour.
-- Love interests are people, not rewards. They can say no, be busy, be hurt, be jealous, take someone else's side, end a conversation, need a day alone. A romance that never meets resistance is not a romance.
+- Love interests are people, not rewards, and they are NOT easy. Nobody falls for the hero because the hero exists. Interest starts near nothing and moves only on evidence, across many scenes — and it can move back. Being liked is a slow result, not a starting condition.
+- They can say no, be busy, be hurt, be jealous, take someone else's side, end a conversation, need a day alone, want something the hero does not want.
+- Even a good relationship has ordinary friction: tiredness, money, plans, chores, being taken for granted, one of them wanting to talk when the other does not. A couple who never bicker is not "perfect", they are unwritten. Put that friction in.
 - Behaviour comes from the card and from what has actually happened, and it is CONSISTENT. Someone with trust issues checks up, accuses, makes scenes — until something in the story genuinely changes that, and that takes time and proof, not one kind evening. Someone guarded lets people in slowly, and can close again after a bad turn.
 - Damage is real. Words said in anger are remembered. An apology is not an undo. Forgiveness is earned in scenes, and some things are not forgiven.
 - The hero can fail. Plans fall through, charm does not land, the timing is wrong, someone else got there first, the answer is simply no.
@@ -396,6 +398,9 @@ const OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
   // Контракт без sms_outgoing: герой не мог сам написать в переписку, и его ответ
   // на СМС ложился в чат от лица собеседника.
   { key: 'json_contract', signature: '{ "type": "sms_incoming", "characterId": string, "text": string },\n    { "type": "sms_photo"' },
+  // Первая версия блока про реализм: не называла главное — что симпатию надо
+  // заработать и что даже в хороших отношениях бывают бытовые ссоры.
+  { key: 'realistic_conduct', signature: 'Love interests are people, not rewards. They can say no' },
 ];
 function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
   let changed = false;

@@ -475,6 +475,30 @@ async function memoryBlock(
   return parts.join('\n\n') || '(memory is empty — this is the start of the story)';
 }
 
+// КОРОТКИЕ НАПОМИНАНИЯ «НА ГЛУБИНЕ». Правила поведения лежат в начале системной
+// части — на длинной истории это примерно 3% от начала запроса, после них идут
+// десятки тысяч токенов сюжета. Модель весит свежее сильнее, и правило, прочитанное
+// первым, к сороковому ходу перестаёт работать: отсюда «тумблеры как будто
+// игнорируются». Полный текст остаётся наверху (там объяснено ПОЧЕМУ), а сюда, в
+// самый конец запроса, идёт одна фраза-напоминание — как инжект на глубину в
+// Таверне. Выключил блок в пресете — напоминание тоже исчезает.
+const DEPTH_REMINDERS: { key: string; text: string }[] = [
+  {
+    key: 'info_hygiene',
+    text:
+      'Info hygiene: each character knows ONLY what they were actually told or witnessed. ' +
+      'Thoughts and narration are not audible. If you are unsure whether someone knows something — they do not.',
+  },
+  {
+    key: 'realistic_conduct',
+    text:
+      'Reality check before you write this turn: nobody owes the hero agreement, and the world is not arranging a happy ending. ' +
+      'If someone here would push back, be busy, be hurt, be jealous, want something else or simply say no — write THAT, ' +
+      'and let it stand instead of smoothing it over in the same turn. Affection is not compliance: even a settled, loving couple ' +
+      'bickers about ordinary things. A love interest who agrees with everything is a broken character, not a happy one.',
+  },
+];
+
 // Компактный дамп состояния Game Master для контекста ИИ (Horae-подобная память):
 // часы, досье персонажей тегами, сетка отношений, открытые задачи, последние события.
 // Сколько внутриигрового времени прошло с начала истории, словами. Нужно, чтобы
@@ -877,6 +901,11 @@ export async function buildRequest(
   // которых в пресете нет вовсе (импорт из Таверны): первые уважаем, вторые
   // добавляем сами, иначе память или манифест выпадали из контекста целиком.
   const disabledDynamics = new Set<DynamicSource>();
+  // Какие встроенные блоки включены — нужно для коротких напоминаний «на глубине»
+  // (см. DEPTH_REMINDERS ниже).
+  const enabledBuiltins = new Set(
+    preset.blocks.filter((b) => b.enabled && b.builtinKey).map((b) => b.builtinKey as string)
+  );
   for (const block of preset.blocks) {
     if (!block.enabled) {
       if (block.dynamic) disabledDynamics.add(block.dynamic);
@@ -1142,6 +1171,11 @@ export async function buildRequest(
         notes.map((n) => `- ${expandMacros(n.text, ctx)}`).join('\n')
     );
   }
+
+  // Напоминания по включённым блокам поведения — перед директивами хода, но уже
+  // после всей истории: это последнее, что модель читает про то, КАК себя вести.
+  const depth = DEPTH_REMINDERS.filter((r) => enabledBuiltins.has(r.key)).map((r) => r.text);
+  if (depth.length) tail.push(depth.join('\n'));
 
   // Скрытая директива случайного события/СМС/реролла — игрок её не видит и она НЕ
   // сохраняется в истории (buildRequest собирает сообщения заново каждый ход).

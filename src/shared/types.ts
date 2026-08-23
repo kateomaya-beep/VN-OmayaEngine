@@ -320,6 +320,7 @@ export const DEFAULT_TURN_LENGTH = { min: 500, max: 900 };
 // от которой мы и уходили.
 export const DEFAULT_THINKING_PLAN = `- Scene: where we are, who is actually here, what each of them wants, what they are wearing — carried over from last turn; name only what CHANGES now (1 line)
 - Focus: what shifts this turn — does the story move, or circle what already happened? (1 line)
+- Friction: who here does NOT simply go along with the hero right now, and why? (1 line, or "nobody, and here is why that is earned")
 - Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")
 - Tone: does the mood of the scene turn this turn? (1 line, or "same")
 - Any stat/relationship change? (1 line, or "none")
@@ -329,6 +330,12 @@ export const DEFAULT_THINKING_PLAN = `- Scene: where we are, who is actually her
 // правил, просто он сохранился при первом открытии панели, и его надо обновить.
 // Отредактированный вручную план не трогаем никогда.
 export const LEGACY_THINKING_PLANS = [
+  `- Scene: where we are, who is actually here, what each of them wants, what they are wearing — carried over from last turn; name only what CHANGES now (1 line)
+- Focus: what shifts this turn — does the story move, or circle what already happened? (1 line)
+- Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")
+- Tone: does the mood of the scene turn this turn? (1 line, or "same")
+- Any stat/relationship change? (1 line, or "none")
+- Offer a choice? (only at a real fork, else "no")`,
   `- Focus: what shifts this turn (1 line)
 - Present & what each wants (1 line)
 - Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")
