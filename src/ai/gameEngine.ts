@@ -12,7 +12,6 @@ import { getPresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
-import { maybeCompress } from './memoryEngine';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
 import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
@@ -25,6 +24,9 @@ const NOTABLE_RELATIONSHIP_DELTA = 5;
 export interface TurnResult {
   turn: AiTurn;
   state: RuntimeState;
+  // Подошёл срок свёртки памяти. Сама свёртка НЕ выполняется внутри хода: это
+  // отдельный запрос к модели, и ждать его игроку незачем (см. applyTurn).
+  compressDue: boolean;
 }
 
 const RETRY_HINT =
@@ -122,7 +124,7 @@ export async function applyTurn(
   turn: AiTurn,
   raw: string,
   opts?: { eventFired?: boolean; smsFired?: boolean; forceCompress?: boolean }
-): Promise<RuntimeState> {
+): Promise<{ state: RuntimeState; compressDue: boolean }> {
   const nextTurnNumber = state.turnCount + 1;
 
   // Частота выборов: если задан минимальный интервал (choiceMinGap) и с прошлого
@@ -658,12 +660,17 @@ export async function applyTurn(
     },
   };
 
-  // «Веха» из ИИ (бывший chapter_end) — форсируем немедленную свёртку живого окна,
-  // не дожидаясь счётчика (глав больше нет, но крупный сюжетный рубеж всё ещё
-  // повод подытожить историю — см. CR v2 §E).
-  nextState = await maybeCompress(project, nextState, turn.chapterEvent === 'chapter_end' || !!opts?.forceCompress);
-
-  return nextState;
+  // СВЁРТКА ПАМЯТИ ЗДЕСЬ БОЛЬШЕ НЕ ЖДЁТСЯ. Раньше она вызывалась прямо тут, внутри
+  // хода, — то есть игрок ждал ДВА запроса к модели: свой ход и пересказ памяти.
+  // Пересказ идёт с большим входом и потолком в 8000 токенов ответа, так что на
+  // быстрой модели он один занимал больше минуты: «ход за 16 секунд» превращался в
+  // полторы минуты, и так каждый раз, когда подходил срок свёртки. Теперь ход
+  // отдаётся игроку сразу, а память сворачивается в фоне (см. playerStore).
+  // Флаг говорит вызывающему, что свёртку пора запустить.
+  return {
+    state: nextState,
+    compressDue: turn.chapterEvent === 'chapter_end' || !!opts?.forceCompress,
+  };
 }
 
 // Run one player turn: build context -> call LLM -> parse/repair -> apply to state.
@@ -772,7 +779,7 @@ export async function runTurn(
   const turn = await selectAssets(project, state, parsed.turn);
   // Проверяем ДО applyTurn: он вырезает управляющие биты из потока.
   const modelSentSms = turn.beats.some((b) => b.type === 'sms_incoming');
-  const nextState = await applyTurn(project, state, playerMove, turn, raw, {
+  const applied = await applyTurn(project, state, playerMove, turn, raw, {
     eventFired: evt.fired,
     smsFired: sms.fired,
     // Живая история не влезла в бюджет и часть ещё не свёрнутых ходов выпала из
@@ -782,6 +789,7 @@ export async function runTurn(
     // добавит эпизод в журнал) — тогда не форсируем, память уплотняется отдельно.
     forceCompress: (req.droppedUnfolded ?? 0) > 0 && !req.systemOverBudget,
   });
+  const nextState = applied.state;
 
   // ГАРАНТИЯ ДВИЖКА: событие «входящее СМС» сработало, но модель не прислала
   // sms_incoming-бит (частый случай — она увлекается основной сценой). Тогда СМС
@@ -789,7 +797,7 @@ export async function runTurn(
   if (sms.fired && !modelSentSms) {
     await deliverFallbackSms(project, nextState, signal);
   }
-  return { turn, state: nextState };
+  return { turn, state: nextState, compressDue: applied.compressDue };
 }
 
 // Догенерация входящего СМС от случайного контакта прямо в состояние телефона.

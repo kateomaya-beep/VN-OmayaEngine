@@ -294,6 +294,23 @@ async function summarizeWithRetry(
 // chronicle entry, then drop them from verbatim history. Runs in background;
 // on any error it leaves history intact (live window temporarily longer, счётчик
 // не сбрасывается — попробуем на следующем ходу).
+// Наложить результат ФОНОВОЙ свёртки на текущее состояние. Пока свёртка шла, игрок
+// мог сделать ещё ход, и просто подставить её результат нельзя — этот ход пропал бы.
+// Свёртка удаляет сообщения ТОЛЬКО с начала истории, новые приписываются в конец,
+// поэтому наложение сводится к «срезать столько же с начала и взять новую память».
+export function applyFold(
+  cur: RuntimeState,
+  folded: number,
+  memory: RuntimeState['memory'],
+  addedSince: number
+): RuntimeState {
+  return {
+    ...cur,
+    history: folded > 0 ? cur.history.slice(folded) : cur.history,
+    memory: { ...memory, messagesSinceSummary: memory.messagesSinceSummary + Math.max(0, addedSince) },
+  };
+}
+
 export async function maybeCompress(
   project: Project,
   state: RuntimeState,

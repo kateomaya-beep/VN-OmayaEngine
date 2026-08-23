@@ -26,7 +26,7 @@ import { playMusic, playSfx, toggleMute } from './audio';
 import { parseSlash, SLASH_HELP } from './slashCommands';
 import { logEvent } from '../../shared/logStore';
 import { pushToast } from '../../shared/toast';
-import { parseArchivedTranscript } from '../../ai/memoryEngine';
+import { parseArchivedTranscript, maybeCompress, applyFold } from '../../ai/memoryEngine';
 import { uid } from '../../shared/utils';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -230,6 +230,48 @@ interface InFlight {
   handled: boolean;
 }
 let inFlight: InFlight | null = null;
+
+// Свёртка памяти идёт В ФОНЕ, уже после того как ход показан игроку: это отдельный
+// запрос к модели с большим входом и потолком ответа в 8000 токенов, и раньше
+// игрок ждал его вместе со своим ходом (16 секунд превращались в полторы минуты).
+// Флаг не даёт запустить вторую свёртку поверх идущей.
+let compressing = false;
+
+async function compressInBackground(
+  get: () => PlayerStore,
+  set: (partial: Partial<PlayerStore>) => void,
+  force: boolean
+): Promise<void> {
+  if (compressing) return;
+  const st = get();
+  const project = st.project;
+  const snapshot = st.state;
+  if (!project || !snapshot) return;
+  compressing = true;
+  const t0 = Date.now();
+  try {
+    const before = snapshot.history.length;
+    const result = await maybeCompress(project, snapshot, force);
+    const folded = before - result.history.length;
+    if (!folded && result.memory === snapshot.memory) return; // свёртка не потребовалась
+    // Пока шла свёртка, игрок мог сделать ещё ход. Сворачивание УДАЛЯЕТ сообщения
+    // ТОЛЬКО С НАЧАЛА истории, а новые ходы приписываются в конец — поэтому к
+    // текущему состоянию применяем ровно то же: срезаем свёрнутые с начала и берём
+    // обновлённую память. Иначе фоновая свёртка затёрла бы ход, сделанный за это время.
+    const cur = get().state;
+    if (!cur) return;
+    const addedSince = cur.memory.messagesSinceSummary - snapshot.memory.messagesSinceSummary;
+    set({ state: applyFold(cur, folded, result.memory, addedSince) });
+    if (folded) {
+      logEvent('info', 'memory', `Свёртка в фоне заняла ${Math.round((Date.now() - t0) / 1000)} с — ход игрока её не ждал`);
+      void get().autosave();
+    }
+  } catch (e) {
+    logEvent('error', 'memory', 'Фоновая свёртка памяти не удалась: ' + (e as Error).message);
+  } finally {
+    compressing = false;
+  }
+}
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
   project: null,
@@ -1449,7 +1491,9 @@ async function runAndApply(
   logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
   try {
     // Обычная (нестриминговая) генерация — один ход целиком, затем показ.
-    const { turn, state } = await runTurn(project, baseState, playerMove, controller.signal, rejectedTurn);
+    const askedAt = Date.now();
+    const { turn, state, compressDue } = await runTurn(project, baseState, playerMove, controller.signal, rejectedTurn);
+    const waited = Math.round((Date.now() - askedAt) / 1000);
 
     // Ход вытеснен (отмена/регенерация) пока ждали ответ — результат игнорируем,
     // UI уже приведён в нужное состояние тем, кто нас вытеснил.
@@ -1490,7 +1534,16 @@ async function runAndApply(
       .autosave()
       .catch((err) => logEvent('error', 'save', 'Фоновое автосохранение не удалось: ' + (err as Error).message));
     preTurnState = { move: playerMove, state: turnBase };
-    logEvent('info', 'turn', `Ход применён (ход ${state.turnCount}, beats: ${turn.beats.length})`);
+    // Время ожидания — в лог каждым ходом. Без него «стало дольше» невозможно
+    // ни подтвердить, ни опровергнуть: видно только субъективное ощущение.
+    logEvent(
+      'info',
+      'turn',
+      `Ход применён за ${waited} с (ход ${state.turnCount}, beats: ${turn.beats.length})`
+    );
+    // Память сворачиваем ПОСЛЕ показа хода, в фоне: игроку незачем ждать второй
+    // запрос к модели.
+    void compressInBackground(get, set, compressDue);
     // Телефон живёт своей жизнью параллельно сцене: догенерируем фото, которые
     // боты прислали этим ходом, и даём группам шанс написать самим. Всё в фоне —
     // ход игрока это не задерживает и падать из-за этого не должно.
