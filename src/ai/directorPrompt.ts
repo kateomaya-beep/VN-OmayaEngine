@@ -68,6 +68,13 @@ Time/Date: … | Location: … | Active scene: … | Immediate tensions: … |
 Narrative momentum: …
 
 RULES:
+- SIZE: keep the whole STORY STATE section under ~8000 characters. It is rebuilt
+  every time and rides in EVERY later request, so it must not grow without end.
+  When it approaches that size, do not drop the newest material — COMPRESS the
+  oldest: merge RESOLVED ARCS into one line each, trim WORLD STATE to the rules
+  that still matter, shorten SECONDARY CHARACTERS to name + one clause. Never
+  compress RELATIONSHIPS & DYNAMICS or CURRENT SITUATION to save room — take the
+  room from the sections above them.
 - Never lose facts from the previous snapshot unless newer events supersede
   them; move finished storylines into RESOLVED ARCS instead of deleting them.
 - Facts only, no embellishment. Write BOTH sections in ENGLISH regardless of

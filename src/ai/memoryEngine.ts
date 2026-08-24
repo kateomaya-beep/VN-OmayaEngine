@@ -311,10 +311,20 @@ export function applyFold(
   };
 }
 
+// Сколько заходов свёртки подряд разрешено за один запуск. Один заход ограничен
+// объёмом входа саммарайзера (MAX_TRANSCRIPT_CHARS), и на длинных ходах в него
+// влезает 5-6 сообщений — этого хватает, чтобы едва уйти под лимит, но не хватает,
+// чтобы дойти до цели гистерезиса. Через несколько ходов лимит снова перебит, и
+// свёртка идёт заново: в логах это выглядит как «саммари каждые шесть сообщений».
+// Свёртка теперь фоновая, поэтому несколько заходов подряд игрока не задерживают —
+// зато после них наступает долгая тишина вместо вечного «сворачиваю по чуть-чуть».
+const MAX_FOLD_PASSES = 4;
+
 export async function maybeCompress(
   project: Project,
   state: RuntimeState,
-  force = false
+  force = false,
+  pass = 0
 ): Promise<RuntimeState> {
   const ps = getPresetSettings();
   const K = Math.max(2, ps.liveWindow);
@@ -366,10 +376,19 @@ export async function maybeCompress(
   // за раз сворачиваем ровно столько, сколько влезает в лимит; остальное остаётся в
   // живой истории и уйдёт в память следующей свёрткой.
   const staleAll = stale.length;
+  // Меряем ТО, ЧТО РЕАЛЬНО УЙДЁТ В СВЁРТКУ. Ходы ассистента идут саммарайзеру
+  // сжатой прозой (condenseAssistantTurn), а лимит считался по сырому JSON хода —
+  // а он вместе с id, эмоциями, нарядами и statChanges в 3-5 раз длиннее прозы.
+  // Из-за этого в «40000 символов» влезало 5-6 сообщений вместо двух десятков:
+  // свёртка едва уходила под лимит и через несколько ходов запускалась снова
+  // («саммари каждые шесть сообщений»).
+  const asText = (m: LlmMessage): string =>
+    m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content;
+  const staleText = stale.map(asText);
   let chars = 0;
   let fits = 0;
-  for (const msg of stale) {
-    chars += msg.content.length + 2;
+  for (const text of staleText) {
+    chars += text.length + 2;
     if (chars > MAX_TRANSCRIPT_CHARS && fits >= 4) break;
     fits++;
   }
@@ -387,12 +406,7 @@ export async function maybeCompress(
   // служебные поля (id, эмоции, наряды, statChanges) и раздували вход свёртки в 3–5
   // раз: на 30 ходах это десятки тысяч токенов, отсюда «ошибка автосаммари» на
   // рабочем API.
-  const lines = stale.map(
-    (m) =>
-      `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${
-        m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content
-      }`
-  );
+  const lines = stale.map((m, i) => `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${staleText[i]}`);
   // ПЕРЕПИСКА ТЕЛЕФОНА — ЧАСТЬ ТОЙ ЖЕ ИСТОРИИ. Раньше она в свёртку не попадала
   // вовсе: в контекст уходили только последние 14 строк, а всё, что старше,
   // исчезало навсегда — при том что сцены аккуратно сворачивались в эпизоды. Один
@@ -517,7 +531,7 @@ export async function maybeCompress(
       { turn: state.turnCount, text: transcript.slice(0, RAW_ARCHIVE_CHARS) },
     ];
 
-    return {
+    const next: RuntimeState = {
       ...state,
       // Удаляем РОВНО то, что ушло в свёртку. Считать от `keep` нельзя: когда период
       // не влез в один заход, свёрнута только его часть — остальное обязано остаться
@@ -535,6 +549,20 @@ export async function maybeCompress(
         messagesSinceSummary: 0,
       }),
     };
+    // Не дошли до цели за один заход (вход саммарайзера ограничен) — доворачиваем
+    // сразу, а не через несколько ходов. Иначе живая история всё время висит чуть
+    // выше лимита и свёртка запускается снова и снова.
+    const stillOver = liveHistoryTokens(project, next) > target;
+    if (stillOver && pass + 1 < MAX_FOLD_PASSES && next.history.length > keep + 4) {
+      logEvent(
+        'info',
+        'memory',
+        `Заход ${pass + 1}: живая история ~${liveHistoryTokens(project, next)} ток. при цели ~${target} — доворачиваю сразу, ` +
+          `чтобы не возвращаться к свёртке каждые несколько ходов`
+      );
+      return maybeCompress(project, next, true, pass + 1);
+    }
+    return next;
   } catch (e) {
     updateToast(
       toastId,
