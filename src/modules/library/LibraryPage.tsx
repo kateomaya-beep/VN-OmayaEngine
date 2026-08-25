@@ -315,7 +315,7 @@ export function LibraryPage() {
                   )}
                 </div>
 
-                {/* По две иконки по бокам, Play — по центру */}
+                {/* По три иконки по бокам, Play — по центру */}
                 <div className="flex items-center justify-center gap-3.5 pb-5 pt-1">
                   <CardIconBtn title={t('library.editor')} onClick={() => nav(`/project/${p.id}`)} icon="edit" />
                   <CardIconBtn title={t('library.export')} onClick={() => setShareTarget(p)} icon="export" />
@@ -324,6 +324,7 @@ export function LibraryPage() {
                     onClick={() => setCopyTarget(p)}
                     icon="copy"
                   />
+                  <CardIconBtn title={t('library.play')} onClick={() => nav(`/play/${p.id}`)} icon="play" primary />
                   <CardIconBtn
                     title={
                       normalizeNarrativeMode(p.mode) === 'rp'
@@ -333,7 +334,6 @@ export function LibraryPage() {
                     onClick={() => adapt(p)}
                     icon="adapt"
                   />
-                  <CardIconBtn title={t('library.play')} onClick={() => nav(`/play/${p.id}`)} icon="play" primary />
                   <CardIconBtn
                     title={L('Ассеты и целостность', 'Assets & integrity')}
                     onClick={() => setDetailsTarget(p)}
