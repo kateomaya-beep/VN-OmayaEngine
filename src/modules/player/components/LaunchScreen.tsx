@@ -4,7 +4,8 @@ import { useLang } from '../../../shared/i18n';
 import { usePlayerStore } from '../playerStore';
 import { listPlaythroughs, type PlaythroughInfo } from '../../../storage/playthroughs';
 import { getProject, duplicateProject } from '../../../storage/db';
-import type { SaveSlot } from '../../../shared/types';
+import type { NarrativeMode, SaveSlot } from '../../../shared/types';
+import { normalizeNarrativeMode } from '../../../shared/types';
 import { formatDate } from '../../../shared/utils';
 
 // Экран запуска истории (Batch 5.2): три варианта — Продолжить / Загрузить сейв /
@@ -20,6 +21,9 @@ export function LaunchScreen({ projectId, onStarted }: { projectId: string; onSt
   const s = usePlayerStore();
   const [view, setView] = useState<View>('menu');
   const [playthroughs, setPlaythroughs] = useState<PlaythroughInfo[]>([]);
+  // Режим повествования показываем ДО запуска: он определяет, что вообще будет на
+  // экране — сцена со спрайтами или лента переписки.
+  const [mode, setMode] = useState<NarrativeMode>('vn');
   const [loaded, setLoaded] = useState(false);
   const [copying, setCopying] = useState(false);
 
@@ -30,9 +34,10 @@ export function LaunchScreen({ projectId, onStarted }: { projectId: string; onSt
     setLoaded(false);
     let alive = true;
     (async () => {
-      const list = await listPlaythroughs(projectId);
+      const [list, proj] = await Promise.all([listPlaythroughs(projectId), getProject(projectId)]);
       if (!alive) return;
       setPlaythroughs(list);
+      setMode(normalizeNarrativeMode(proj?.mode));
       setLoaded(true);
     })();
     return () => {
@@ -62,6 +67,13 @@ export function LaunchScreen({ projectId, onStarted }: { projectId: string; onSt
     return shell(
       <>
         <h2 className="text-lg font-semibold mb-1 text-center">{L('Запуск истории', 'Start the story')}</h2>
+        <p className="text-center mb-2">
+          <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] bg-white/[0.05] border border-[rgba(180,150,255,0.22)] text-[#c8c2dd]">
+            {mode === 'rp'
+              ? L('💬 Классический РП — только текст', '💬 Classic RP — text only')
+              : L('🎭 Визуальная новелла', '🎭 Visual novel')}
+          </span>
+        </p>
         <p className="text-sm text-gray-500 mb-5 text-center">
           {hasProgress
             ? L('Продолжите, загрузите сейв или начните заново.', 'Continue, load a save, or start over.')

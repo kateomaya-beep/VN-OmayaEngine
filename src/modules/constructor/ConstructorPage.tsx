@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useProjectStore } from './projectStore';
-import { useT } from '../../shared/i18n';
+import { useT, useLang } from '../../shared/i18n';
 import { validateProject } from '../../shared/validator';
+import { normalizeNarrativeMode } from '../../shared/types';
 import { ProjectSettings } from './editors/ProjectSettings';
 import { LoreEditor } from './editors/LoreEditor';
 import { CharacterEditor } from './editors/CharacterEditor';
@@ -23,6 +24,8 @@ export function ConstructorPage() {
   const { projectId } = useParams();
   const nav = useNavigate();
   const tr = useT();
+  const lang = useLang((s) => s.lang);
+  const L = (ru: string, en: string) => (lang === 'en' ? en : ru);
   const { project, load, persist, dirty, loading } = useProjectStore();
   const [tab, setTab] = useState<string>('settings');
 
@@ -51,7 +54,26 @@ export function ConstructorPage() {
         <button className="btn-ghost !px-3 !py-1.5" onClick={() => nav('/library')}>
           {tr('constructor.back')}
         </button>
-        <h1 className="text-xl font-bold truncate flex-1">{project.meta.title}</h1>
+        <h1 className="text-xl font-bold truncate">{project.meta.title}</h1>
+        {/* Режим — рядом с названием, а не только в настройках: от него зависит,
+            что вообще имеет смысл заполнять на остальных вкладках. */}
+        <button
+          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] border transition-colors ${
+            normalizeNarrativeMode(project.mode) === 'rp'
+              ? 'bg-[rgba(160,110,255,0.18)] border-[rgba(190,150,255,0.5)] text-[#e5deF7]'
+              : 'bg-white/[0.05] border-[rgba(180,150,255,0.2)] text-[#a8a2c0]'
+          }`}
+          title={L(
+            'Режим повествования — переключается здесь и в настройках проекта',
+            'Narrative mode — switch here or in project settings'
+          )}
+          onClick={() => setTab('settings')}
+        >
+          {normalizeNarrativeMode(project.mode) === 'rp'
+            ? L('💬 Классический РП', '💬 Classic RP')
+            : L('🎭 Визуальная новелла', '🎭 Visual novel')}
+        </button>
+        <span className="flex-1" />
         <span className="text-xs text-gray-500">
           {dirty ? tr('constructor.saving') : tr('constructor.saved')}
         </span>

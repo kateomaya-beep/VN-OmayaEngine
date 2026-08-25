@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '../../shared/types';
+import { normalizeNarrativeMode } from '../../shared/types';
 import { listProjects, saveProject, deleteProject, duplicateProject } from '../../storage/db';
 import { createEmptyProject } from '../../shared/factory';
 import { exportProjectZip, downloadBlob, importProjectZip, countSaves } from '../../storage/zip';
@@ -24,6 +25,19 @@ export function LibraryPage() {
   useEffect(() => {
     refresh();
   }, []);
+
+  // Режим повествования прямо на карточке: он меняет ВСЁ — и как выглядит игра, и
+  // каким пресетом собирается запрос, — а жил только в настройках проекта, куда за
+  // ним никто не пойдёт. Переключение безобидное и обратимое: данные общие.
+  async function toggleMode(p: Project) {
+    const next: Project = {
+      ...p,
+      mode: normalizeNarrativeMode(p.mode) === 'rp' ? undefined : 'rp',
+      updatedAt: Date.now(),
+    };
+    await saveProject(next);
+    await refresh();
+  }
 
   async function create() {
     const p = createEmptyProject(title.trim() || 'Без названия');
@@ -221,6 +235,22 @@ export function LibraryPage() {
                   <div className="text-[10.5px] text-[#7a7690] mt-1">
                     {t('library.lastSave')} · {formatDate(p.updatedAt)}
                   </div>
+                  <button
+                    className={`mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10.5px] border transition-colors ${
+                      normalizeNarrativeMode(p.mode) === 'rp'
+                        ? 'bg-[rgba(160,110,255,0.18)] border-[rgba(190,150,255,0.5)] text-[#e5deF7]'
+                        : 'bg-white/[0.05] border-[rgba(180,150,255,0.2)] text-[#a8a2c0]'
+                    }`}
+                    title={L(
+                      'Режим повествования. Нажмите, чтобы переключить: новелла — спрайты, сцены и выборы; РП — только текст, вы пишете сами. Сеттинг, персонажи и память общие.',
+                      'Narrative mode. Click to switch: visual novel — sprites, scenes and choices; RP — text only, you write your own moves. Setting, characters and memory are shared.'
+                    )}
+                    onClick={() => toggleMode(p)}
+                  >
+                    {normalizeNarrativeMode(p.mode) === 'rp'
+                      ? `💬 ${L('Классический РП', 'Classic RP')}`
+                      : `🎭 ${L('Визуальная новелла', 'Visual novel')}`}
+                  </button>
                 </div>
 
                 <div
@@ -526,10 +556,14 @@ function ProjectDetails({ project, L }: { project: Project; L: (ru: string, en: 
   const charsWithSprite = project.characters.filter((c) => Object.keys(c.sprites).length > 0).length;
   const charsNoSprite = project.characters.length - charsWithSprite;
 
+  // В текстовом РП спрайтов и фонов нет по определению — жаловаться на их
+  // отсутствие значило бы советовать починить то, что не сломано.
+  const rp = normalizeNarrativeMode(project.mode) === 'rp';
   const issues: string[] = [];
-  if (project.assets.length === 0) issues.push(L('В проекте нет ассетов.', 'No assets in the project.'));
+  if (!rp && project.assets.length === 0)
+    issues.push(L('В проекте нет ассетов.', 'No assets in the project.'));
   if (project.characters.length === 0) issues.push(L('Нет персонажей.', 'No characters.'));
-  if (charsNoSprite > 0)
+  if (!rp && charsNoSprite > 0)
     issues.push(
       L(
         `Персонажей без спрайтов: ${charsNoSprite} (играются как имя + текст).`,
@@ -553,7 +587,12 @@ function ProjectDetails({ project, L }: { project: Project; L: (ru: string, en: 
       <div>
         <h3 className="font-semibold mb-1 truncate">{project.meta.title}</h3>
         <p className="text-xs text-gray-500">
-          {L('Всего ассетов', 'Total assets')}: {project.assets.length}
+          {L('Режим', 'Mode')}:{' '}
+          {normalizeNarrativeMode(project.mode) === 'rp'
+            ? L('💬 классический РП', '💬 classic RP')
+            : L('🎭 визуальная новелла', '🎭 visual novel')}
+          {' · '}
+          {L('всего ассетов', 'total assets')}: {project.assets.length}
         </p>
       </div>
 
