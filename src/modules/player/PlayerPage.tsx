@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { usePlayerStore } from './playerStore';
-import { isDefaultSpriteDisplay } from '../../shared/types';
+import { isDefaultSpriteDisplay, normalizeNarrativeMode } from '../../shared/types';
 import { LaunchScreen } from './components/LaunchScreen';
 import { stopAllMusic } from './audio';
 import { Stage, type ActiveSprite } from './components/Stage';
 import { DialogueBox } from './components/DialogueBox';
+import { RpChat } from './components/RpChat';
 import { StatsHUD } from './components/StatsHUD';
 import { ChoiceMenu } from './components/ChoiceMenu';
 import { Console } from './components/Console';
@@ -70,6 +71,12 @@ export function PlayerPage() {
     );
   }
 
+  // Режим повествования решает, чем занят экран: сценой со спрайтами или лентой
+  // переписки. Всё вокруг (верхняя панель, панели, сейвы, Game Master) — общее.
+  const rp = normalizeNarrativeMode(s.project.mode) === 'rp';
+  const notesPresent =
+    s.state.authorNotes.some((n) => n.text.trim()) || globalNotes.some((n) => n.text.trim());
+
   const moreBeatsQueued = s.queue.length > 0;
   const currentBeat = s.visibleBeats[s.visibleBeats.length - 1] || null;
   // Динамический фон: фон текущего бита (движок протянул его вперёд), иначе — фон хода.
@@ -85,7 +92,7 @@ export function PlayerPage() {
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden" style={themeVars(theme)}>
-      <Stage project={s.project} backgroundId={bgId} active={active} cg={s.cg} />
+      {!rp && <Stage project={s.project} backgroundId={bgId} active={active} cg={s.cg} />}
 
       {/* Постоянная верхняя панель (общая с главным экраном) + игровое бургер-меню.
           В самом поле сцены игровых иконок больше нет (см. Batch 3 §3). */}
@@ -112,12 +119,14 @@ export function PlayerPage() {
                   {/* Отношения/память/история переехали в Game Master (🎮) на верхней панели. */}
                   <MenuItem icon="📜" label="История" onClick={() => setPanel('history')} />
                   <MenuItem icon="💾" label={t('player.saves')} onClick={() => setPanel('saves')} />
-                  <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />
-                  <MenuItem icon="👗" label="Гардероб" onClick={() => setWardrobeOpen(true)} />
+                  {!rp && <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />}
+                  {/* Спрайты, фоны, музыка и телефон живут в сцене — в текстовом
+                      режиме их попросту некуда показать. */}
+                  {!rp && <MenuItem icon="👗" label="Гардероб" onClick={() => setWardrobeOpen(true)} />}
                   <MenuItem icon="🎨" label="Оформление" onClick={() => setWorkshopOpen(true)} />
-                  <MenuItem icon="🎬" label="CG-студия" onClick={() => setCgStudioOpen(true)} />
-                  <MenuItem icon="📱" label="Телефон" onClick={() => setPhoneOpen(true)} />
-                  <MenuItem icon="🖼" label="Генерация фонов" onClick={() => setGenOpen((v) => !v)} />
+                  {!rp && <MenuItem icon="🎬" label="CG-студия" onClick={() => setCgStudioOpen(true)} />}
+                  {!rp && <MenuItem icon="📱" label="Телефон" onClick={() => setPhoneOpen(true)} />}
+                  {!rp && <MenuItem icon="🖼" label="Генерация фонов" onClick={() => setGenOpen((v) => !v)} />}
                   <MenuItem icon="✎" label="Правка в игре" onClick={() => setPanel('edit')} />
                   <MenuItem icon="↻" label={t('player.regen')} onClick={() => s.regenerate()} />
                 </div>
@@ -127,8 +136,10 @@ export function PlayerPage() {
         }
       />
 
-      {/* HUD: календарь/локация + статы — единая стеклянная плашка (StatsHUD). */}
-      <StatsHUD project={s.project} state={s.state} flash={s.statFlash} />
+      {/* HUD: календарь/локация + статы — единая стеклянная плашка (StatsHUD).
+          В ленте переписки она перекрывала бы текст, а часы и статы и так видны в
+          Game Master на верхней панели. */}
+      {!rp && <StatsHUD project={s.project} state={s.state} flash={s.statFlash} />}
 
       <Mixer open={mixerOpen} onClose={() => setMixerOpen(false)} />
       <QuickActions open={genOpen} onClose={() => setGenOpen(false)} />
@@ -149,8 +160,9 @@ export function PlayerPage() {
         </div>
       )}
 
-      {/* Thinking spinner + отмена генерации */}
-      {s.thinking && (
+      {/* Thinking spinner + отмена генерации. В ленте переписки он свой — прямо
+          под последним сообщением, где его и ждут. */}
+      {s.thinking && !rp && (
         <div className="absolute inset-x-0 bottom-28 flex justify-center z-20">
           <div className="bg-black/70 rounded-full pl-4 pr-2 py-2 text-sm flex items-center gap-2">
             <span className="inline-block w-3 h-3 border-2 border-[var(--pl-accent)] border-t-transparent rounded-full animate-spin" />
@@ -183,8 +195,10 @@ export function PlayerPage() {
         </div>
       )}
 
+      {rp && <RpChat hasNotes={notesPresent} onOpenNotes={() => setNotesOpen(true)} />}
+
       {/* Нижний стек: реплика → выборы → консоль (консоль всегда видна) */}
-      {!s.chapterTitle && (
+      {!rp && !s.chapterTitle && (
         <div className="absolute inset-x-0 bottom-0 z-10">
           {!s.thinking && currentBeat && (
             <DialogueBox
@@ -212,9 +226,7 @@ export function PlayerPage() {
             canContinue={canContinue}
             onSubmit={(txt) => s.submitFreeInput(txt)}
             onContinue={() => s.continueStory()}
-            hasNotes={
-              s.state.authorNotes.some((n) => n.text.trim()) || globalNotes.some((n) => n.text.trim())
-            }
+            hasNotes={notesPresent}
             onOpenNotes={() => setNotesOpen(true)}
           />
         </div>
@@ -225,7 +237,7 @@ export function PlayerPage() {
       <AuthorNotesPanel open={notesOpen} onClose={() => setNotesOpen(false)} />
       <SaveLoadPanel open={panel === 'saves'} onClose={() => setPanel(null)} />
       <CgStudio open={cgStudioOpen} onClose={() => setCgStudioOpen(false)} />
-      <PhoneFloatingIcon onOpen={() => setPhoneOpen(true)} />
+      {!rp && <PhoneFloatingIcon onOpen={() => setPhoneOpen(true)} />}
       <PhoneWindow open={phoneOpen} onClose={() => setPhoneOpen(false)} />
       <WardrobePanel open={wardrobeOpen} onClose={() => setWardrobeOpen(false)} />
       <WorkshopPanel

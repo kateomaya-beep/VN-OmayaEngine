@@ -1,8 +1,10 @@
-import type { Project, RuntimeState, LlmMessage } from '../shared/types';
-import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, PHONE_BALANCE_STAT } from '../shared/types';
+import type { NarrativeMode, Project, RuntimeState, LlmMessage } from '../shared/types';
+import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
-import { getPresetSettings } from './presetSettings';
+import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
+import { stripStateBlock } from './rpResponse';
+import { getPresetSettings, presetForMode } from './presetSettings';
 import { matchLorebook } from './lorebookEngine';
 import { logEvent } from '../shared/logStore';
 import { getGlobalNotes } from '../shared/globalNotes';
@@ -121,7 +123,10 @@ function whoIsWhoBlock(
   project: Project,
   state: RuntimeState,
   onScreenIds: string[],
-  ctx: MacroContext
+  ctx: MacroContext,
+  // В текстовом РП спрайтов нет — перечислять доступные эмоции незачем: это лишние
+  // токены и прямое приглашение модели писать служебные пометки в прозе.
+  mode: NarrativeMode = 'vn'
 ): string {
   const turnNow = state.turnCount;
   const roleLabel: Record<string, string> = {
@@ -251,8 +256,10 @@ function whoIsWhoBlock(
       );
     }
     if (inFocus) {
-      const emotions = Object.keys(c.sprites);
-      lines.push(`Emotions available: ${emotions.length ? emotions.join(', ') : '(no sprites — render as name + text)'}`);
+      if (mode !== 'rp') {
+        const emotions = Object.keys(c.sprites);
+        lines.push(`Emotions available: ${emotions.length ? emotions.join(', ') : '(no sprites — render as name + text)'}`);
+      }
       if (hasExtraOutfits(c)) {
         lines.push(
           `Outfits — pick the tag matching the scene (default "${defaultOutfitTag(c)}"):\n${characterOutfits(c)
@@ -482,20 +489,32 @@ async function memoryBlock(
 // игнорируются». Полный текст остаётся наверху (там объяснено ПОЧЕМУ), а сюда, в
 // самый конец запроса, идёт одна фраза-напоминание — как инжект на глубину в
 // Таверне. Выключил блок в пресете — напоминание тоже исчезает.
-const DEPTH_REMINDERS: { key: string; text: string }[] = [
+// Ключи блоков, чьё включение добавляет короткое напоминание в самый конец запроса
+// (после всей истории). Новелла и РП называют одни и те же блоки по-разному, поэтому
+// у напоминания два ключа — иначе в РП оно бы просто не срабатывало.
+const DEPTH_REMINDERS: { keys: string[]; text: string }[] = [
   {
-    key: 'info_hygiene',
+    keys: ['info_hygiene', 'rp_info_hygiene'],
     text:
       'Info hygiene: each character knows ONLY what they were actually told or witnessed. ' +
       'Thoughts and narration are not audible. If you are unsure whether someone knows something — they do not.',
   },
   {
-    key: 'realistic_conduct',
+    keys: ['realistic_conduct', 'rp_realistic_conduct'],
     text:
       'Reality check before you write this turn: nobody owes the hero agreement, and the world is not arranging a happy ending. ' +
       'If someone here would push back, be busy, be hurt, be jealous, want something else or simply say no — write THAT, ' +
       'and let it stand instead of smoothing it over in the same turn. Affection is not compliance: even a settled, loving couple ' +
       'bickers about ordinary things. A love interest who agrees with everything is a broken character, not a happy one.',
+  },
+  {
+    // Только РП: в новелле ход игрока приходит выбором, и разворачивать его — работа
+    // модели. Здесь наоборот — это единственное, чего делать нельзя, и правило из
+    // начала запроса к сороковому ходу перестаёт держать.
+    keys: ['rp_no_impersonation'],
+    text:
+      'Do not write for the player. Not their words, not their thoughts, not their actions, not their feelings. ' +
+      'Stop where it is their move and leave the scene open.',
   },
 ];
 
@@ -831,6 +850,10 @@ export interface BuiltRequest {
   // Системная часть больше всего бюджета. Свёртку в этом случае форсировать
   // вредно (она наращивает журнал) — надо уплотнять память, а не историю.
   systemOverBudget?: boolean;
+  // Режим, которым собран запрос, и ждать ли в ответе служебный блок состояния.
+  // Движок читает это, чтобы не пытаться разобрать прозу как JSON и наоборот.
+  mode: NarrativeMode;
+  expectStateBlock: boolean;
 }
 
 export async function buildRequest(
@@ -841,6 +864,9 @@ export async function buildRequest(
 ): Promise<BuiltRequest> {
   const cfg = project.aiConfig;
   const ps = getPresetSettings(); // ГЛОБАЛЬНЫЙ пресет/настройки генерации (не на проект)
+  // Режим повествования решает, ЧЕМ собирать запрос: у новеллы и текстового РП
+  // разные пресеты (см. presetForMode) и разный контракт ответа.
+  const mode = normalizeNarrativeMode(project.mode);
   const ctx: MacroContext = { project, state };
   const onScreenIds = state.onScreen.map((s) => s.characterId);
 
@@ -873,12 +899,15 @@ export async function buildRequest(
     plot: () =>
       project.lore.plotOutline ? `== PLOT ARC ==\n${expandMacros(project.lore.plotOutline, ctx)}` : '',
     lorebook: () => `== ACTIVE LOREBOOK ENTRIES ==\n${lorebookText}`,
-    characters: () => `== WHO'S WHO (single roster: identity + card + current state) ==\n${whoIsWhoBlock(project, state, onScreenIds, ctx)}`,
+    characters: () => `== WHO'S WHO (single roster: identity + card + current state) ==\n${whoIsWhoBlock(project, state, onScreenIds, ctx, mode)}`,
     manifest: () => `== ASSET MANIFEST ==\n${assetManifest(project)}`,
     state: () =>
-      `== CURRENT STATE ==\nStats:\n${statsState(project, state.statValues)}\nCurrent background: ${currentBg} (${
-        state.currentBackgroundId ?? 'null'
-      })\nMusic mood: ${state.currentMusicMood ?? 'none'}`,
+      mode === 'rp'
+        ? // В текстовом РП фона и музыки нет — остаются только статы проекта.
+          `== CURRENT STATE ==\nStats:\n${statsState(project, state.statValues)}`
+        : `== CURRENT STATE ==\nStats:\n${statsState(project, state.statValues)}\nCurrent background: ${currentBg} (${
+            state.currentBackgroundId ?? 'null'
+          })\nMusic mood: ${state.currentMusicMood ?? 'none'}`,
     memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
     gamemaster: () => gameMasterBlock(state, state.turnCount),
     // История вставляется как СООБЩЕНИЯ, а не текст: обработчик выше перехватывает
@@ -890,7 +919,7 @@ export async function buildRequest(
   // включённые блоки; статичные — их текст (с макросами), динамические — от движка.
   // Роль блока (как в Таверне): 'system' идёт в системный промпт; 'user'/'assistant'
   // становятся отдельными сообщениями ПЕРЕД живой историей.
-  const preset = ps.preset;
+  const preset = presetForMode(ps, mode);
   const systemParts: string[] = [];
   const presetMessages: LlmMessage[] = [];
   const renderedDynamics = new Set<DynamicSource>();
@@ -1019,9 +1048,19 @@ export async function buildRequest(
   const K = Math.max(2, ps.liveWindow);
   const everyN = Math.max(4, project.memoryConfig.summaryEveryN);
   const histCap = (everyN + K + 6) * 2; // сообщений (2 на ход)
+  // Ходы ассистента едут в контекст сжатыми: в новелле — прозой, вынутой из JSON;
+  // в РП проза и так лежит в истории, но со служебной сводкой <state> на хвосте —
+  // её вырезаем. Пересылать модели её собственную сводку незачем: актуальная версия
+  // приезжает динамическим блоком Game Master, а старая с ним ещё и спорит.
   let window: LlmMessage[] = state.history.slice(-histCap).map((m) =>
     m.role === 'assistant'
-      ? { role: 'assistant' as const, content: condenseAssistantTurn(m.content, project, state) ?? m.content }
+      ? {
+          role: 'assistant' as const,
+          content:
+            mode === 'rp'
+              ? stripStateBlock(m.content)
+              : condenseAssistantTurn(m.content, project, state) ?? m.content,
+        }
       : m
   );
 
@@ -1174,28 +1213,43 @@ export async function buildRequest(
 
   // Напоминания по включённым блокам поведения — перед директивами хода, но уже
   // после всей истории: это последнее, что модель читает про то, КАК себя вести.
-  const depth = DEPTH_REMINDERS.filter((r) => enabledBuiltins.has(r.key)).map((r) => r.text);
+  const depth = DEPTH_REMINDERS.filter((r) => r.keys.some((k) => enabledBuiltins.has(k))).map((r) => r.text);
   if (depth.length) tail.push(depth.join('\n'));
 
   // Скрытая директива случайного события/СМС/реролла — игрок её не видит и она НЕ
   // сохраняется в истории (buildRequest собирает сообщения заново каждый ход).
   if (opts?.extraDirective?.trim()) tail.push(opts.extraDirective.trim());
 
-  // Ремайндер формата + длины — последним в блоке.
-  const lengthReminder = `Stay WITHIN ~${tl.min}–${tl.max} words (do not overshoot) as medium beats of 1–3 sentences each — mix dialogue (with the speaking character's characterId, so their sprite shows) and narration. No walls of text, no bare one-liners.`;
+  // Ремайндер формата + длины — последним в блоке. В РП он другой: там нет ни
+  // JSON, ни битов, ни characterId, и старый текст прямо просил бы модель писать
+  // служебную разметку в прозу.
+  const stateOn = mode === 'rp' && enabledBuiltins.has(RP_STATE_BLOCK_KEY);
+  const lengthReminder =
+    mode === 'rp'
+      ? `Stay WITHIN ~${tl.min}–${tl.max} words of story (do not overshoot). Prose in paragraphs, no walls of text, no bare one-liners.`
+      : `Stay WITHIN ~${tl.min}–${tl.max} words (do not overshoot) as medium beats of 1–3 sentences each — mix dialogue (with the speaking character's characterId, so their sprite shows) and narration. No walls of text, no bare one-liners.`;
+  const formatReminder =
+    mode === 'rp'
+      ? 'Reminder: reply with the story only — plain prose, no JSON, no headers, no out-of-character text, and NOTHING written for the player.' +
+        (stateOn ? ` End with exactly one ${RP_STATE_OPEN}…${RP_STATE_CLOSE} block and nothing after it.` : '')
+      : FORMAT_REMINDER;
 
   // Управляемое размышление: короткий план в <thinking> вместо медленной родной
   // «думалки». Префилл открывает тег, инструкция задаёт короткий шаблон плана,
-  // после закрытия тега — только JSON. Парсер вырезает <thinking>…</thinking>.
+  // после закрытия тега — только ответ. Парсер вырезает <thinking>…</thinking>.
   let prefill = ps.prefill?.trim() || undefined;
   if (ps.guidedThinking) {
     const plan = (ps.thinkingPlan?.trim() || DEFAULT_THINKING_PLAN);
+    const after =
+      mode === 'rp'
+        ? 'Then immediately close </thinking> and write the scene itself and nothing else.'
+        : 'Then immediately close </thinking> and output the ONE JSON object per the schema and nothing after it.';
     tail.push(
-      `REASONING PROTOCOL: Do ALL planning ONLY inside a single <thinking></thinking> block at the very start of your reply, and keep it SHORT — a brief bullet per line following this template, nothing more:\n${plan}\nThen immediately close </thinking> and output the ONE JSON object per the schema and nothing after it.\n${lengthReminder}\n${FORMAT_REMINDER}`
+      `REASONING PROTOCOL: Do ALL planning ONLY inside a single <thinking></thinking> block at the very start of your reply, and keep it SHORT — a brief bullet per line following this template, nothing more:\n${plan}\n${after}\n${lengthReminder}\n${formatReminder}`
     );
     prefill = '<thinking>\n';
   } else {
-    tail.push(`${FORMAT_REMINDER}\n${lengthReminder}`);
+    tail.push(`${formatReminder}\n${lengthReminder}`);
   }
 
   withMove.push({
@@ -1205,7 +1259,16 @@ export async function buildRequest(
       tail.join('\n\n'),
   });
 
-  return { system, messages: withMove, prefill, droppedUnfolded: dropped, fixedTokens, systemOverBudget: overloaded };
+  return {
+    system,
+    messages: withMove,
+    prefill,
+    droppedUnfolded: dropped,
+    fixedTokens,
+    systemOverBudget: overloaded,
+    mode,
+    expectStateBlock: stateOn,
+  };
 }
 
 // Живой счётчик токенов/контекста (см. CR v2 §J) — считает по РЕАЛЬНО собранному

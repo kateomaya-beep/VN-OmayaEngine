@@ -1,6 +1,6 @@
 import { useProjectStore } from '../projectStore';
 import { AssetImage, Field } from '../../../shared/ui';
-import { defaultFinanceConfig } from '../../../shared/types';
+import { defaultFinanceConfig, normalizeNarrativeMode } from '../../../shared/types';
 
 export function ProjectSettings() {
   const { project, update } = useProjectStore();
@@ -23,6 +23,21 @@ export function ProjectSettings() {
         </Field>
         <p className="text-xs text-gray-500 mb-3">
           Жанр и тон истории задаются на вкладке «ИИ / Промпт» (стиль/пресет).
+        </p>
+        <Field label="Режим повествования">
+          <select
+            className="input"
+            value={project.mode ?? 'vn'}
+            onChange={(e) => update((p) => (p.mode = normalizeNarrativeMode(e.target.value)))}
+          >
+            <option value="vn">Визуальная новелла — спрайты, сцены, выборы</option>
+            <option value="rp">Классический РП — только текст, игрок пишет сам</option>
+          </select>
+        </Field>
+        <p className="text-xs text-gray-500 mb-3">
+          Сеттинг, персонажи, лорбук и память общие для обоих режимов — меняется только то,
+          как идёт ход: в РП модель пишет обычную прозу, не пишет за героя и не предлагает
+          выборов. Свой набор блоков промпта у каждого режима — см. пресет (🎚).
         </p>
         <Field label="Рейтинг контента">
           <select
@@ -88,6 +103,75 @@ export function ProjectSettings() {
             </div>
           )}
         </Field>
+      </div>
+
+      {/* Свои макросы проекта: {{имя}} → текст. Раскрываются везде, где работают
+          встроенные — в блоках пресета, лорбуке, описаниях мира и персонажей. */}
+      <div className="card md:col-span-2">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h4 className="font-semibold">Свои макросы</h4>
+            <p className="text-xs text-gray-500">
+              Короткое имя вместо длинного куска текста. Пишется как <code>{'{{имя}}'}</code> и
+              подставляется в промпт: в блоках пресета, лорбуке, описании мира и карточках. Внутри
+              значения можно пользоваться встроенными макросами (<code>{'{{user}}'}</code> и
+              остальными), но не другими своими.
+            </p>
+          </div>
+          <button
+            className="btn-ghost !px-3 !py-1 text-xs whitespace-nowrap"
+            onClick={() => update((p) => (p.macros = [...(p.macros || []), { name: '', value: '' }]))}
+          >
+            + Макрос
+          </button>
+        </div>
+        {(project.macros || []).length === 0 ? (
+          <p className="text-xs text-gray-500">Пока ни одного.</p>
+        ) : (
+          <div className="space-y-2">
+            {(project.macros || []).map((mac, i) => {
+              const bad = mac.name.trim() !== '' && !/^[\w.-]+$/.test(mac.name.trim());
+              return (
+                <div key={i} className="flex gap-2 items-start">
+                  <div className="w-40 shrink-0">
+                    <input
+                      className={`input !py-1 text-sm font-mono ${bad ? 'border-red-500/60' : ''}`}
+                      placeholder="имя"
+                      value={mac.name}
+                      onChange={(e) =>
+                        update((p) => {
+                          if (p.macros) p.macros[i].name = e.target.value;
+                        })
+                      }
+                    />
+                    {bad && (
+                      <p className="text-[11px] text-red-400 mt-1">
+                        Только буквы, цифры, точка и дефис — иначе макрос не сработает.
+                      </p>
+                    )}
+                  </div>
+                  <textarea
+                    className="input !py-1 text-sm h-16 flex-1"
+                    placeholder="значение"
+                    value={mac.value}
+                    onChange={(e) =>
+                      update((p) => {
+                        if (p.macros) p.macros[i].value = e.target.value;
+                      })
+                    }
+                  />
+                  <button
+                    className="btn-danger !px-2 !py-1 text-xs"
+                    title="Удалить макрос"
+                    onClick={() => update((p) => (p.macros = (p.macros || []).filter((_, j) => j !== i)))}
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

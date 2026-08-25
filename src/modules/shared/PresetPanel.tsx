@@ -8,12 +8,15 @@ import {
   type PromptBlock,
 } from '../../ai/promptPreset';
 import { usePresetSettings, type PresetSettings } from '../../ai/presetSettings';
+import { defaultRpPreset, defaultRpBlockContent } from '../../ai/rpPreset';
+import { PROMPT_PROCESSING_LABELS, type PromptProcessing } from '../../ai/promptPostProcess';
+import { MACRO_HELP } from '../../ai/macros';
 import { usePlayerStore } from '../player/playerStore';
 import { TokenCounter } from '../player/components/TokenCounter';
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
 import type { AdvancedPromptBlock, LlmRole } from '../../shared/types';
-import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, DEFAULT_THINKING_PLAN } from '../../shared/types';
+import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, DEFAULT_THINKING_PLAN, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
 // отделён от настроек API. Каждый блок: порядок (drag&drop), роль system/user/assistant
@@ -30,12 +33,18 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   // ГЛОБАЛЬНЫЙ пресет — один на все истории, доступен везде и всегда.
   const cfg = usePresetSettings((s) => s.settings);
   const patchStore = usePresetSettings((s) => s.patch);
+  // Какой из двух пресетов правим. По умолчанию — режим открытого проекта, чтобы
+  // из игры панель сразу показывала то, что реально едет в запрос.
+  const projectMode = normalizeNarrativeMode(usePlayerStore((s) => s.project?.mode));
+  const [tab, setTab] = useState<NarrativeMode | null>(null);
   if (!open) return null;
 
-  const preset = cfg.preset;
+  const mode: NarrativeMode = tab ?? projectMode;
+  const isRp = mode === 'rp';
+  const preset = isRp ? cfg.rpPreset : cfg.preset;
 
   const patch = (p: Partial<PresetSettings>) => patchStore(p);
-  const savePreset = (next: PromptPreset) => patchStore({ preset: next });
+  const savePreset = (next: PromptPreset) => patchStore(isRp ? { rpPreset: next } : { preset: next });
   const patchBlock = (id: string, p: Partial<PromptBlock>) =>
     savePreset({ ...preset, blocks: preset.blocks.map((b) => (b.id === id ? { ...b, ...p } : b)) });
   const removeBlock = (id: string) =>
@@ -47,12 +56,12 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
     });
   const resetBlock = (b: PromptBlock) => {
     if (!b.builtinKey) return;
-    const content = defaultBlockContent(b.builtinKey);
+    const content = isRp ? defaultRpBlockContent(b.builtinKey) : defaultBlockContent(b.builtinKey);
     if (content !== null) patchBlock(b.id, { content, enabled: true });
   };
   const resetPreset = () => {
     if (confirm('Вернуть весь пресет к OmayaEngine по умолчанию? Правки блоков будут потеряны.'))
-      savePreset(defaultPreset());
+      savePreset(isRp ? defaultRpPreset() : defaultPreset());
   };
   const reorder = (fromId: string, toId: string) => {
     if (fromId === toId) return;
@@ -82,6 +91,30 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
 
   return (
     <Modal open={open} onClose={onClose} title="Пресет промпта" wide>
+      {/* У каждого режима повествования свой набор блоков: половина блоков новеллы
+          (JSON-контракт, эмоции, музыка) в текстовом РП только мешает, а запрет
+          писать за игрока новелле, наоборот, противопоказан. */}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <span className="text-xs text-gray-500">Режим:</span>
+        <div className="inline-flex rounded-lg overflow-hidden border border-white/10 text-xs">
+          {([
+            { id: 'vn' as const, label: '🎭 Новелла' },
+            { id: 'rp' as const, label: '💬 Классический РП' },
+          ]).map((t) => (
+            <button
+              key={t.id}
+              className={`px-3 py-1.5 ${mode === t.id ? 'bg-accent2 text-white' : 'bg-panel hover:bg-white/10'}`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-gray-500">
+          Какой из них применится, решает настройка проекта («Режим повествования» в настройках).
+          {mode !== projectMode && ' Сейчас вы правите НЕ тот пресет, которым идёт открытая история.'}
+        </span>
+      </div>
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <input
           className="input !py-1 text-sm max-w-xs"
@@ -187,8 +220,9 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
 
             {b.flagged && (
               <p className="text-xs text-amber-400 mt-2">
-                ⚠ Этот блок обеспечивает работу движка (JSON-контракт). Менять можно, но при
-                поломке формата парсер откатится на безопасный разбор.
+                {isRp
+                  ? '⚠ Этот блок кормит движок сводкой мира (часы, досье, память). Выключить можно — история продолжит идти, но Game Master перестанет обновляться сам.'
+                  : '⚠ Этот блок обеспечивает работу движка (JSON-контракт). Менять можно, но при поломке формата парсер откатится на безопасный разбор.'}
               </p>
             )}
 
@@ -215,16 +249,76 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         <h4 className="font-semibold mb-1">Префилл ответа (prefill)</h4>
         <p className="text-xs text-gray-500 mb-2">
           Текст, которым НАЧИНАЕТСЯ ответ ассистента (добавляется как assistant-сообщение
-          в конец). Стабилизирует формат — напр. <code>{'{"scene":'}</code> — и часто
+          в конец). Стабилизирует формат — напр. <code>{isRp ? '*' : '{"scene":'}</code> — и часто
           используется как «затравка» для джейлбрейка. Пусто — не используется.
         </p>
         <textarea
           className="input h-20 font-mono text-sm"
           value={cfg.prefill || ''}
-          placeholder={'{"scene":'}
+          placeholder={isRp ? '*' : '{"scene":'}
           onChange={(e) => patch({ prefill: e.target.value || undefined })}
         />
       </div>
+
+      {/* Совместимость со шлюзом: метод обработки промпта + защита от письма за игрока */}
+      <div className="card !bg-panel2 mt-4">
+        <h4 className="font-semibold mb-1">Обработка промпта</h4>
+        <p className="text-xs text-gray-500 mb-2">
+          Как собранный запрос приводится к форме, которую принимает ваш шлюз. Меняйте, только
+          если провайдер отвечает ошибкой формата: почти всем подходит «Склейка ролей», а Claude
+          и Gemini напрямую иногда требуют «Строгую».
+        </p>
+        <select
+          className="input !py-1"
+          value={cfg.promptProcessing}
+          onChange={(e) => patch({ promptProcessing: e.target.value as PromptProcessing })}
+        >
+          {PROMPT_PROCESSING_LABELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <p className="text-[11px] text-gray-500 mt-1">
+          {PROMPT_PROCESSING_LABELS.find((m) => m.id === cfg.promptProcessing)?.hint}
+        </p>
+
+        {isRp && (
+          <label className="flex items-start gap-2 mt-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={cfg.impersonationGuard}
+              onChange={(e) => patch({ impersonationGuard: e.target.checked })}
+            />
+            <span>
+              Не давать модели писать за героя
+              <span className="block text-[11px] text-gray-500">
+                Стоп-строка на реплику героя плюс срез хвоста, если модель всё же начала за него
+                говорить. Промпт один это не держит — блок «🚫 Не писать за игрока» и эта галочка
+                работают вместе.
+              </span>
+            </span>
+          </label>
+        )}
+      </div>
+
+      {/* Справка по макросам — рядом с блоками, где их и пишут */}
+      <details className="card !bg-panel2 mt-4">
+        <summary className="font-semibold cursor-pointer">Макросы</summary>
+        <p className="text-xs text-gray-500 mt-2 mb-2">
+          Работают в блоках пресета, в лорбуке, в описаниях мира и персонажей. Имена совпадают
+          с Таверной там, где смысл тот же. Свои макросы задаются в проекте.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          {MACRO_HELP.map((m) => (
+            <div key={m.name} className="flex gap-2">
+              <code className="text-accent2 whitespace-nowrap">{m.name}</code>
+              <span className="text-gray-500">— {m.what}</span>
+            </div>
+          ))}
+        </div>
+      </details>
 
       {/* Параметры генерации */}
       <div className="card !bg-panel2 mt-4">

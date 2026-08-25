@@ -358,11 +358,35 @@ export function normalizeTurnLength(v: any): { min: number; max: number } {
   return { min, max };
 }
 
+// РЕЖИМ ПОВЕСТВОВАНИЯ. 'vn' — визуальная новелла: ход приходит структурированным
+// JSON (биты, спрайты, выборы). 'rp' — классический текстовый ролеплей в духе
+// Таверны: модель пишет обычную прозу, движок ничего не разбирает по схеме, а
+// состояние мира (Game Master) при желании едет отдельным служебным блоком.
+// Всё остальное — сеттинг, персонажи, лорбук, память, свёртка — общее для обоих.
+export type NarrativeMode = 'vn' | 'rp';
+
+export const DEFAULT_NARRATIVE_MODE: NarrativeMode = 'vn';
+
+export function normalizeNarrativeMode(v: unknown): NarrativeMode {
+  return v === 'rp' ? 'rp' : 'vn';
+}
+
+// Пользовательский макрос проекта. name — без фигурных скобок, только буквы, цифры,
+// точка и дефис (иначе он не отличим от служебных вставок и ломает разбор).
+export interface ProjectMacro {
+  name: string;
+  value: string;
+}
+
 export interface Project {
   id: string;
   createdAt: number;
   updatedAt: number;
   meta: ProjectMeta;
+  // Режим повествования: новелла (по умолчанию) или текстовый ролеплей. Поле
+  // опциональное — у всех проектов, созданных до режимов, его нет, и они читаются
+  // как 'vn' без миграции.
+  mode?: NarrativeMode;
   lore: Lore;
   lorebook: LorebookEntry[]; // статичный мир (см. CR v2 §E1) — Меморибук отдельно, в RuntimeState.memory
   characters: Character[];
@@ -371,6 +395,9 @@ export interface Project {
   aiConfig: AiConfig;
   memoryConfig: MemoryConfig;
   audioMoods: string[]; // кастомные настроения сверх базовых 8 (см. CR v2 §N.2)
+  // Свои макросы проекта: {{имя}} → произвольный текст. Раскрываются перед
+  // встроенными, поэтому внутри значения можно пользоваться {{user}} и остальными.
+  macros?: ProjectMacro[];
   playerTheme?: PlayerTheme; // пер-проектное оформление плеера (мини-мастерская)
   imageGen?: ImageGenConfig; // CG-студия: генерация кат-сцен через image-API
   randomEvents?: RandomEventConfig; // случайные сюжетные события (Batch 6 §3)

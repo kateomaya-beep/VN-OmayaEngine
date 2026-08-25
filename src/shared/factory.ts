@@ -291,6 +291,12 @@ export function normalizeProject(raw: any): Project {
       coverAssetId: typeof raw?.meta?.coverAssetId === 'string' ? raw.meta.coverAssetId : undefined,
       contentRating: raw?.meta?.contentRating === 'mature' ? 'mature' : 'sfw',
     },
+    // Режим повествования. Не пишем 'vn' явно: у всех проектов, созданных до режимов,
+    // поля нет, и добавлять его в каждую запись только ради дефолта незачем.
+    mode: raw?.mode === 'rp' ? 'rp' : undefined,
+    macros: arr<any>(raw?.macros)
+      .filter((m) => m && typeof m.name === 'string' && typeof m.value === 'string')
+      .map((m) => ({ name: m.name, value: m.value })),
     lore: {
       worldDescription: str(raw?.lore?.worldDescription),
       plotOutline: str(raw?.lore?.plotOutline),

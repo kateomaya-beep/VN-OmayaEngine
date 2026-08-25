@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { defaultPreset, normalizePreset, type PromptPreset } from './promptPreset';
-import type { AdvancedPromptBlock } from '../shared/types';
+import { defaultRpPreset, normalizeRpPreset } from './rpPreset';
+import { isPromptProcessing, type PromptProcessing } from './promptPostProcess';
+import type { AdvancedPromptBlock, NarrativeMode } from '../shared/types';
 import {
   DEFAULT_TURN_LENGTH,
   normalizeTurnLength,
@@ -14,6 +16,14 @@ import {
 // localStorage, как и подключение к ИИ.
 export interface PresetSettings {
   preset: PromptPreset;
+  // Отдельный пресет для режима «классический РП»: там нет JSON-контракта, спрайтов
+  // и выборов, зато есть жёсткий запрет писать за игрока. Держать оба в одном списке
+  // блоков не вышло бы — половина блоков каждого режима мешает другому.
+  rpPreset: PromptPreset;
+  promptProcessing: PromptProcessing;
+  // Страховка от «модель написала за игрока» в РП: стоп-строки провайдеру плюс срез
+  // хвоста ответа, если модель всё же начала реплику героя. Промпт один это не держит.
+  impersonationGuard: boolean;
   // Язык ПОВЕСТВОВАНИЯ (нарратив/реплики/выборы), НЕ язык интерфейса. Влияет на язык,
   // на котором ИИ пишет текст истории. Пока ru/en.
   narrativeLanguage: 'ru' | 'en';
@@ -34,6 +44,9 @@ const LS_KEY = 'nf_preset';
 function defaults(): PresetSettings {
   return {
     preset: defaultPreset(),
+    rpPreset: defaultRpPreset(),
+    promptProcessing: 'merge',
+    impersonationGuard: true,
     narrativeLanguage: 'ru',
     temperature: 0.9,
     liveWindow: 12,
@@ -66,6 +79,9 @@ function load(): PresetSettings {
     const num = (x: unknown, def: number) => (typeof x === 'number' && !Number.isNaN(x) ? x : def);
     return {
       preset: normalizePreset(v.preset),
+      rpPreset: normalizeRpPreset(v.rpPreset),
+      promptProcessing: isPromptProcessing(v.promptProcessing) ? v.promptProcessing : d.promptProcessing,
+      impersonationGuard: typeof v.impersonationGuard === 'boolean' ? v.impersonationGuard : true,
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
       liveWindow: num(v.liveWindow, d.liveWindow),
@@ -101,6 +117,12 @@ let current = load();
 // Не-хук доступ для движка (buildRequest/runTurn/memoryEngine).
 export function getPresetSettings(): PresetSettings {
   return current;
+}
+
+// Пресет, действующий для данного режима повествования. Один и тот же проект можно
+// вести и новеллой, и текстовым РП — блоки при этом берутся разные.
+export function presetForMode(s: PresetSettings, mode: NarrativeMode): PromptPreset {
+  return mode === 'rp' ? s.rpPreset : s.preset;
 }
 
 interface PresetStore {

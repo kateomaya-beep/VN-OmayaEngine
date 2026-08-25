@@ -1,5 +1,5 @@
 import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry, PhoneState, InventoryItem } from '../shared/types';
-import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhoneState, RANDOM_EVENT_LABELS } from '../shared/types';
+import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhoneState, RANDOM_EVENT_LABELS, normalizeNarrativeMode } from '../shared/types';
 import { pushToast } from '../shared/toast';
 import { logEvent } from '../shared/logStore';
 import { resolveEmoji } from '../shared/emojiDict';
@@ -13,6 +13,8 @@ import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThi
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
+import { parseRpResponse, rpStopSequences, rpTurn, stripStateBlock } from './rpResponse';
+import { protagonistName } from './macros';
 import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
 import { uid } from '../shared/utils';
@@ -31,6 +33,11 @@ export interface TurnResult {
 
 const RETRY_HINT =
   '\n\nThe response failed validation. Reply with EXACTLY one JSON object per the schema — no markdown, no text outside the JSON.';
+
+// То же для текстового РП: там схемы нет, и пустой ответ значит либо съеденный
+// reasoning-бюджет, либо срабатывание фильтра — просим просто написать сцену.
+const RP_RETRY_HINT =
+  '\n\nYour previous reply came back empty. Write the scene itself now: plain prose, no planning, no preamble, nothing written for the player.';
 
 // Подбор трека под настроение: ротация среди треков этого настроения; нет треков →
 // пробуем 'calm'; ничего нет → null (тишина). Не крашит.
@@ -132,10 +139,13 @@ export async function applyTurn(
   // ходы не умеет, поэтому решает движок (детерминированно). turn.choices мутируем,
   // чтобы и немедленный рендер, и сохранённый lastTurn отражали троттлинг.
   const choiceGap = getPresetSettings().choiceMinGap ?? 0;
+  // В текстовом РП выборов нет вообще: игрок всегда пишет сам, и подставленный
+  // «запасной набор» был бы не страховкой, а мусором на экране.
+  const rpMode = normalizeNarrativeMode(project.mode) === 'rp';
   // ГАРАНТИЯ ВЫБОРОВ: при дефолтной настройке (gap = 0) ход обязан заканчиваться
   // выборами. Промпт этого требует, но модель иногда всё равно присылает []; тогда
   // подставляем нейтральный набор, чтобы игрок никогда не упирался в пустой экран.
-  if (choiceGap === 0 && turn.choices.length === 0) {
+  if (!rpMode && choiceGap === 0 && turn.choices.length === 0) {
     turn.choices = fallbackChoices(turn);
     logEvent('warn', 'turn', 'ИИ не прислал выборы — подставлен запасной набор');
   }
@@ -682,10 +692,13 @@ export async function runTurn(
   // Отклонённый игроком вариант хода (реролл): просим ДРУГОЕ продолжение.
   rejectedTurn?: string
 ): Promise<TurnResult> {
+  const mode = normalizeNarrativeMode(project.mode);
   // Случайное событие (Batch 6 §3) и случайное СМС (Batch 8-fix) — независимые роллы.
   // Обе скрытые директивы могут прийти в один ход (событие + отдельное входящее СМС).
   const evt = rollRandomEvent(project, state);
-  const sms = rollRandomSms(project, state);
+  // Входящие СМС требуют управляющих битов, которых в текстовом РП нет: там ответ —
+  // проза, и «пришлите sms_incoming» модель выполнить не может. Роллим только в новелле.
+  const sms = mode === 'rp' ? { fired: false, directive: '' } : rollRandomSms(project, state);
   // Небольшой поп-ап, чтобы игрок понимал, что сейчас триггернулось (по просьбе).
   if (evt.fired && evt.type) pushToast('info', `🎲 Случайное событие: ${RANDOM_EVENT_LABELS[evt.type].ru}`);
   if (sms.fired) pushToast('info', '📱 Сейчас придёт входящее сообщение…');
@@ -693,7 +706,9 @@ export async function runTurn(
   // заново приходила к тому же повороту — особенно если событие «запланировано»
   // адженда/крючками. Показываем отклонённый вариант и требуем другой.
   const rejectedText = rejectedTurn?.trim()
-    ? condenseAssistantTurn(rejectedTurn, project, state) ?? rejectedTurn
+    ? mode === 'rp'
+      ? stripStateBlock(rejectedTurn)
+      : condenseAssistantTurn(rejectedTurn, project, state) ?? rejectedTurn
     : '';
   const rerollDirective = rejectedText
     ? [
@@ -726,6 +741,52 @@ export async function runTurn(
   // с нашим планом и станет только медленнее.
   const reasoningEffort = ps.guidedThinking ? 'none' : ps.reasoningEffort;
 
+  // Имена — для метода обработки промпта «одним сообщением» (там реплики надо
+  // подписывать) и для стоп-строк в РП.
+  const userName = protagonistName(project, state);
+  const names = { userName, charName: project.characters.find((c) => c.role !== 'protagonist')?.name };
+
+  // ── РЕЖИМ ТЕКСТОВОГО РП ──────────────────────────────────────────────────────
+  // Ответ — обычная проза, разбирать по схеме нечего. Дальше по конвейеру он идёт
+  // ровно так же, как ход новеллы: одной narration-битой (см. rpTurn), поэтому
+  // история, память, свёртка и Game Master работают без единой правки.
+  if (req.mode === 'rp') {
+    const stop = ps.impersonationGuard ? rpStopSequences(userName) : undefined;
+    const ask = (extra?: string) =>
+      runCompletion({
+        system: req.system,
+        messages: extra ? [...req.messages, { role: 'user' as const, content: extra }] : req.messages,
+        prefill: req.prefill,
+        temperature: extra ? Math.min(ps.temperature, 0.7) : ps.temperature,
+        maxTokens,
+        reasoningEffort,
+        stop,
+        names,
+        signal,
+      });
+
+    let rawRp = await ask();
+    let rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard });
+    // Пустой текст — единственная настоящая ошибка этого режима: обычно весь бюджет
+    // ушёл в reasoning или сработал фильтр. Один повтор, дальше честная ошибка.
+    if (!rp.prose.trim()) {
+      logEvent('warn', 'llm', 'Ответ пустой — повторяю запрос с явным напоминанием формата');
+      rawRp = await ask(RP_RETRY_HINT);
+      rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard });
+    }
+    if (!rp.prose.trim()) throw new Error('Модель вернула пустой ответ');
+    if (rp.plan) logEvent('info', 'think', `План хода ${state.turnCount + 1}`, rp.plan);
+
+    const turn = rpTurn(state, rp.prose, rp.worldState);
+    // В историю кладём ТОЛЬКО прозу: служебная сводка уже смержена в Game Master,
+    // и её место — там, а не второй копией в контексте каждого следующего хода.
+    const applied = await applyTurn(project, state, playerMove, turn, rp.prose, {
+      eventFired: evt.fired,
+      forceCompress: (req.droppedUnfolded ?? 0) > 0 && !req.systemOverBudget,
+    });
+    return { turn, state: applied.state, compressDue: applied.compressDue };
+  }
+
   let raw = await runCompletion({
     system: req.system,
     messages: req.messages,
@@ -733,6 +794,7 @@ export async function runTurn(
     temperature: ps.temperature,
     maxTokens,
     reasoningEffort,
+    names,
     signal,
   });
 
@@ -759,6 +821,7 @@ export async function runTurn(
       temperature: Math.min(ps.temperature, 0.5),
       maxTokens,
       reasoningEffort,
+      names,
       signal,
     });
     parsed = parseAiResponse(raw, project, state.currentBackgroundId, state.currentMusicMood, state);

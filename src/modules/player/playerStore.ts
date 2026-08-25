@@ -74,6 +74,10 @@ interface PlayerStore {
   queue: Beat[];
   visibleBeats: Beat[]; // beats revealed so far this turn
   phase: 'beats' | 'choices'; // beats still playing vs. choices revealed
+  // Ход игрока, который сейчас в полёте. В новелле он не нужен (экран занят
+  // спиннером), а в чате РП без него отправленное сообщение исчезало бы с экрана
+  // до конца генерации: в историю оно попадает только вместе с ответом.
+  pendingMove: string | null;
   choices: Choice[];
   cg: string | null; // active cutscene CG assetId
   chapterTitle: string | null;
@@ -184,6 +188,12 @@ interface PlayerStore {
   restoreArchivedPeriod: (archiveIndex: number) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
   setAuthorNotes: (notes: AuthorNote[]) => void;
+
+  // Правка ленты переписки (режим классического РП). Игрок редактирует и удаляет
+  // сообщения прямо в чате — в новелле для этого нет места, там ход показывается
+  // битами. Обе операции меняют state.history и сразу автосохраняются.
+  editHistoryMessage: (index: number, text: string) => void;
+  deleteHistoryMessage: (index: number) => void;
 }
 
 // Сколько последних автосейвов хранить в кольце (история для отката, если прогресс
@@ -279,6 +289,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   queue: [],
   visibleBeats: [],
   phase: 'beats',
+  pendingMove: null,
   choices: [],
   cg: null,
   chapterTitle: null,
@@ -307,7 +318,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // Оптимистично: возвращаем прошлый вид сцены СРАЗУ (не ждём обрыва сети/раскрутки
     // промиса). Помечаем ход обработанным, чтобы его catch не перезаписал UI повторно.
     cur.handled = true;
-    set({ thinking: false, error: null, ...cur.prevView });
+    set({ thinking: false, error: null, pendingMove: null, ...cur.prevView });
     // Реальный обрыв сетевого запроса — в фоне.
     cur.controller.abort();
   },
@@ -551,6 +562,28 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       ? JSON.parse(JSON.stringify(snap))
       : { ...state, history: hist.slice(0, -2) };
     await runAndApply(set, get, project, rolledBack, lastMove.content, rejected);
+  },
+
+  editHistoryMessage(index, text) {
+    const st = get().state;
+    if (!st || index < 0 || index >= st.history.length) return;
+    const history = st.history.map((m, i) => (i === index ? { ...m, content: text } : m));
+    set({ state: { ...st, history } });
+    void get().autosave();
+  },
+
+  deleteHistoryMessage(index) {
+    const st = get().state;
+    if (!st || index < 0 || index >= st.history.length) return;
+    const history = st.history.filter((_, i) => i !== index);
+    // Счётчик «сколько сообщений накопилось с прошлой свёртки» считает ровно эти
+    // сообщения. Не уменьшить его — и свёртка сработает раньше срока, на воздухе.
+    const memory = {
+      ...st.memory,
+      messagesSinceSummary: Math.max(0, st.memory.messagesSinceSummary - 1),
+    };
+    set({ state: { ...st, history, memory } });
+    void get().autosave();
   },
 
   clearError() {
@@ -1487,7 +1520,7 @@ async function runAndApply(
   inFlight = self;
   // База для будущего реролла: состояние ровно перед этим ходом.
   const turnBase: RuntimeState = JSON.parse(JSON.stringify(baseState));
-  set({ thinking: true, error: null, choices: [], statFlash: [], queue: [], visibleBeats: [] });
+  set({ thinking: true, error: null, choices: [], statFlash: [], queue: [], visibleBeats: [], pendingMove: playerMove });
   logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
   try {
     // Обычная (нестриминговая) генерация — один ход целиком, затем показ.
@@ -1523,6 +1556,7 @@ async function runAndApply(
       phase: turn.beats.length ? 'beats' : 'choices',
       choices: turn.choices,
       thinking: false,
+      pendingMove: null,
       cg: turn.scene.cutsceneCgId,
       statFlash: flash,
       chapterTitle: turn.chapterEvent === 'chapter_end' ? 'Сюжетная веха' : null,
@@ -1559,11 +1593,11 @@ async function runAndApply(
     if (aborted) {
       // Отмена: возвращаем прошлый вид сцены; ошибку не показываем.
       logEvent('info', 'turn', 'Генерация отменена — возвращён прошлый ход');
-      set({ thinking: false, error: null, ...prevView });
+      set({ thinking: false, error: null, pendingMove: null, ...prevView });
     } else {
       // Ошибка: тоже возвращаем прошлый вид (сцена не пустеет), показываем тост.
       logEvent('error', 'turn', 'Не удалось выполнить ход: ' + (e as Error).message, (e as Error).stack);
-      set({ thinking: false, error: (e as Error).message, ...prevView });
+      set({ thinking: false, error: (e as Error).message, pendingMove: null, ...prevView });
     }
     return false;
   } finally {

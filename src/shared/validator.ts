@@ -1,4 +1,5 @@
 import type { Project } from './types';
+import { normalizeNarrativeMode } from './types';
 
 export interface ValidationIssue {
   level: 'error' | 'warning';
@@ -8,8 +9,12 @@ export interface ValidationIssue {
 // Project validator run before play (see ТЗ §5.6).
 // Sprites are optional for every role now (единое правило отрисовки: нет спрайта →
 // имя+текст), so missing sprites are warnings, never errors.
+// В режиме классического РП половина проверок бессмысленна: там нет ни сцены со
+// спрайтами, ни фонов, ни музыки — и «нет ни одного фона» блокировало бы запуск
+// текстовой истории, которой фон не нужен вовсе.
 export function validateProject(project: Project): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  const rp = normalizeNarrativeMode(project.mode) === 'rp';
 
   if (!project.lore.openingScene.trim()) {
     issues.push({ level: 'error', message: 'Не задана стартовая сцена (Лор → Стартовая сцена).' });
@@ -19,12 +24,12 @@ export function validateProject(project: Project): ValidationIssue[] {
   }
 
   const backgrounds = project.assets.filter((a) => a.type === 'background');
-  if (backgrounds.length === 0) {
+  if (!rp && backgrounds.length === 0) {
     issues.push({ level: 'error', message: 'Нет ни одного фона.' });
   }
 
   // Персонаж, у которого есть хоть какие-то спрайты, должен иметь neutral (fallback).
-  for (const c of project.characters) {
+  for (const c of rp ? [] : project.characters) {
     const emotions = Object.keys(c.sprites);
     if (emotions.length > 0 && !c.sprites.neutral) {
       issues.push({
@@ -45,7 +50,7 @@ export function validateProject(project: Project): ValidationIssue[] {
     }
   }
 
-  const loveInterests = project.characters.filter((c) => c.role === 'love_interest');
+  const loveInterests = rp ? [] : project.characters.filter((c) => c.role === 'love_interest');
   for (const li of loveInterests) {
     if (Object.keys(li.sprites).length === 0) {
       issues.push({
@@ -60,9 +65,11 @@ export function validateProject(project: Project): ValidationIssue[] {
   }
 
   // Untagged backgrounds/CG matter (ИИ выбирает их по тегам); музыка — по настроению.
-  const untagged = project.assets.filter(
-    (a) => (a.type === 'background' || a.type === 'cg') && (!a.tags || a.tags.length === 0)
-  );
+  const untagged = rp
+    ? []
+    : project.assets.filter(
+        (a) => (a.type === 'background' || a.type === 'cg') && (!a.tags || a.tags.length === 0)
+      );
   if (untagged.length) {
     issues.push({
       level: 'warning',
@@ -70,7 +77,7 @@ export function validateProject(project: Project): ValidationIssue[] {
     });
   }
 
-  const musicNoMood = project.assets.filter((a) => a.type === 'music' && !a.audioMood);
+  const musicNoMood = rp ? [] : project.assets.filter((a) => a.type === 'music' && !a.audioMood);
   if (musicNoMood.length) {
     issues.push({
       level: 'warning',
@@ -78,7 +85,7 @@ export function validateProject(project: Project): ValidationIssue[] {
     });
   }
 
-  if (project.stats.length === 0) {
+  if (!rp && project.stats.length === 0) {
     issues.push({ level: 'warning', message: 'Нет статов — механики влияния выборов отключены.' });
   }
 

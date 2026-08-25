@@ -1,4 +1,6 @@
 import type { LlmMessage, ApiConnection } from '../../shared/types';
+import { postProcessPrompt, type PromptNames } from '../promptPostProcess';
+import { getPresetSettings } from '../presetSettings';
 import { getApiKey } from '../keys';
 import { getConnection } from '../connection';
 import { logEvent } from '../../shared/logStore';
@@ -22,6 +24,12 @@ export interface CompletionRequest {
   // мессенджере. Модель без поддержки картинок отвечает 400 — тогда провайдер
   // повторяет запрос без вложений, и переписка продолжается по текстовой пометке.
   attachments?: { mime: string; b64: string }[];
+  // Стоп-строки: генерация обрывается, как только модель их написала. В текстовом
+  // РП это вторая линия обороны от «модель пишет за игрока» — промпт первая.
+  stop?: string[];
+  // Имена героя и главного собеседника. Нужны методу обработки промпта «одним
+  // сообщением»: там роли схлопываются, и реплики приходится подписывать.
+  names?: PromptNames;
   // Отмена генерации: сигнал прерывания fetch (кнопка «Отменить» в игре).
   signal?: AbortSignal;
 }
@@ -276,8 +284,11 @@ const openAiCompatible: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
     const model = requireModel(req.model || conn.model);
+    // Пустая системная часть — законный случай: метод обработки «одним сообщением»
+    // складывает её в первое user-сообщение. Слать пустой system нельзя, часть
+    // шлюзов на нём отвечает 400 («content must not be empty»).
     const messages: { role: string; content: unknown }[] = [
-      { role: 'system', content: req.system },
+      ...(req.system.trim() ? [{ role: 'system', content: req.system }] : []),
       ...sanitizeMessages(req.messages),
     ];
     if (req.attachments?.length) attachImagesOpenAi(messages, req.attachments);
@@ -291,6 +302,7 @@ const openAiCompatible: Provider = {
       messages,
       ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
       ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
+      ...(req.stop?.length ? { stop: req.stop } : {}),
     };
     const post = (b: Record<string, unknown>) =>
       apiFetch(`${base}/chat/completions`, {
@@ -465,7 +477,14 @@ const anthropic: Provider = {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model, max_tokens: req.maxTokens || 4096, temperature: req.temperature, system: req.system, messages }),
+      body: JSON.stringify({
+        model,
+        max_tokens: req.maxTokens || 4096,
+        temperature: req.temperature,
+        ...(req.system.trim() ? { system: req.system } : {}),
+        messages,
+        ...(req.stop?.length ? { stop_sequences: req.stop } : {}),
+      }),
     });
     if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => ''));
     const data = await res.json();
@@ -527,15 +546,26 @@ export function getProvider(name: ApiConnection['provider']): Provider {
 }
 
 // Основная игровая генерация — через ГЛОБАЛЬНОЕ подключение (Batch 3 §2).
+//
+// Здесь же, на самой границе провайдера, применяется МЕТОД ОБРАБОТКИ ПРОМПТА
+// (см. promptPostProcess). Именно здесь, а не в сборке: собранный запрос должен
+// оставаться одинаковым для счётчика токенов, предпросмотра и логов, а под
+// конкретный шлюз он подгоняется в последний момент. Дополнительные запросы
+// (саммари, эмбеддинги) через это не идут — у них и так одно user-сообщение.
 export async function runCompletion(req: CompletionRequest): Promise<string> {
   const conn = getConnection();
   const model = req.model || conn.model || '(модель не выбрана)';
+  const method = getPresetSettings().promptProcessing;
+  const shaped = postProcessPrompt(req.system, req.messages, method, req.names || {});
+  req = { ...req, system: shaped.system, messages: shaped.messages };
   // Диагностика: размер запроса + активны ли префилл/reasoning — чтобы по логам
   // сразу понять, не пресет ли мешает (некоторые провайдеры не принимают префилл).
   const reqChars = req.system.length + req.messages.reduce((n, m) => n + m.content.length, 0);
   const flags = [
+    method !== 'none' ? `обработка:${method}` : null,
     req.prefill ? `префилл(${req.prefill.length})` : null,
     req.reasoningEffort ? `reasoning:${req.reasoningEffort}` : null,
+    req.stop?.length ? `стоп(${req.stop.length})` : null,
   ].filter(Boolean).join(', ');
   logEvent('info', 'llm', `Запрос → ${conn.provider} · ${model} · ~${Math.round(reqChars / 4)} ток.${flags ? ` · ${flags}` : ''}`);
   const started = Date.now();
