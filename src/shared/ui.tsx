@@ -93,13 +93,15 @@ export function Field({
   label,
   children,
   hint,
+  className,
 }: {
   label: string;
   children: ReactNode;
   hint?: string;
+  className?: string;
 }) {
   return (
-    <div className="mb-3">
+    <div className={`mb-3 ${className ?? ''}`}>
       <label className="label">{label}</label>
       {children}
       {hint && <p className="text-xs text-gray-500 mt-1">{hint}</p>}

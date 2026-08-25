@@ -94,6 +94,24 @@ function handleProxy(req, res) {
       // разные записи, а не одна общая.
       out['vary'] = 'x-target-url';
       out['x-vn-proxy'] = '1';
+      // ПОТОКОВЫЙ ОТВЕТ ПРОПУСКАЕМ КАК ЕСТЬ. Раньше здесь всегда стоял
+      // arrayBuffer(): весь ответ собирался целиком и уходил браузеру одним
+      // куском. Для обычной генерации это незаметно, но стриминг через такой
+      // прокси переставал быть стримингом — текст «печатался» разом в конце.
+      const ctype = String(upstream.headers.get('content-type') || '');
+      if (upstream.body && /text\/event-stream/i.test(ctype)) {
+        // Буферизация по пути к браузеру убила бы поток так же надёжно.
+        out['cache-control'] = 'no-cache, no-transform';
+        out['x-accel-buffering'] = 'no';
+        res.writeHead(upstream.status, out);
+        const reader = upstream.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(Buffer.from(value));
+        }
+        return res.end();
+      }
       const buf = Buffer.from(await upstream.arrayBuffer());
       res.writeHead(upstream.status, out);
       res.end(buf);

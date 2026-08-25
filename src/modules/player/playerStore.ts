@@ -1,9 +1,12 @@
 import { create } from 'zustand';
 import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneContact, PhoneChat, AssetMeta, InventoryItem, CharacterRole, RelationshipStats } from '../../shared/types';
-import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRelationship } from '../../shared/types';
+import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRelationship, normalizeNarrativeMode } from '../../shared/types';
 import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState } from '../../shared/factory';
-import { runTurn, pickTrackForMood } from '../../ai/gameEngine';
+import { runTurn, pickTrackForMood, applyTurn } from '../../ai/gameEngine';
+import { parseRpResponse, rpTurn } from '../../ai/rpResponse';
+import { protagonistName } from '../../ai/macros';
+import { getPresetSettings } from '../../ai/presetSettings';
 import { generateChatReplies, findContact, nameOfContact, heroNameOf, alreadyInChat, type ChatTurn } from '../../ai/phoneChat';
 import { generateContactPhoto, generateAvatarImage, generateGroupAvatarImage } from '../../ai/phonePhoto';
 import { generateImage } from '../../ai/imageProvider';
@@ -78,6 +81,9 @@ interface PlayerStore {
   // спиннером), а в чате РП без него отправленное сообщение исчезало бы с экрана
   // до конца генерации: в историю оно попадает только вместе с ответом.
   pendingMove: string | null;
+  // Текст, который печатается прямо сейчас (потоковая генерация, режим РП).
+  // null — потока нет: либо он не поддерживается шлюзом, либо ход уже применён.
+  streamingText: string | null;
   choices: Choice[];
   cg: string | null; // active cutscene CG assetId
   chapterTitle: string | null;
@@ -194,6 +200,10 @@ interface PlayerStore {
   // битами. Обе операции меняют state.history и сразу автосохраняются.
   editHistoryMessage: (index: number, text: string) => void;
   deleteHistoryMessage: (index: number) => void;
+  // Свайпы: сгенерировать ЕЩЁ один вариант последнего ответа, не выбрасывая
+  // предыдущие, и переключаться между уже сгенерированными.
+  addSwipe: () => Promise<void>;
+  setSwipe: (index: number) => Promise<void>;
 }
 
 // Сколько последних автосейвов хранить в кольце (история для отката, если прогресс
@@ -290,6 +300,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   visibleBeats: [],
   phase: 'beats',
   pendingMove: null,
+  streamingText: null,
   choices: [],
   cg: null,
   chapterTitle: null,
@@ -318,7 +329,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // Оптимистично: возвращаем прошлый вид сцены СРАЗУ (не ждём обрыва сети/раскрутки
     // промиса). Помечаем ход обработанным, чтобы его catch не перезаписал UI повторно.
     cur.handled = true;
-    set({ thinking: false, error: null, pendingMove: null, ...cur.prevView });
+    set({ thinking: false, error: null, pendingMove: null, streamingText: null, ...cur.prevView });
     // Реальный обрыв сетевого запроса — в фоне.
     cur.controller.abort();
   },
@@ -583,6 +594,97 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       messagesSinceSummary: Math.max(0, st.memory.messagesSinceSummary - 1),
     };
     set({ state: { ...st, history, memory } });
+    void get().autosave();
+  },
+
+  // ЕЩЁ ОДИН ВАРИАНТ последнего ответа. От реролла отличается ровно тем, что
+  // предыдущий вариант не выбрасывается: оба остаются, между ними можно ходить.
+  async addSwipe() {
+    const { project } = get();
+    const state = get().state;
+    if (!project || !state) return;
+    // В новелле свайпов нет: там ход — это биты, спрайты и выборы, и «пролистать»
+    // его как реплику в чате не выйдет. Обычный реролл работает как работал.
+    if (normalizeNarrativeMode(project.mode) !== 'rp') {
+      await get().regenerate();
+      return;
+    }
+    const hist = state.history;
+    if (hist.length < 2) return;
+    const last = hist[hist.length - 1];
+    const lastMove = hist[hist.length - 2];
+    if (last.role !== 'assistant') return;
+    // Копим варианты. У ответа, сгенерированного до появления свайпов, списка нет —
+    // тогда первым вариантом считаем его самого.
+    const keep = last.swipes?.length ? [...last.swipes] : [last.content];
+    const snap = preTurnState && preTurnState.move === lastMove.content ? preTurnState.state : null;
+    if (!snap) {
+      logEvent(
+        'warn',
+        'turn',
+        'Новый вариант без снимка состояния (вкладку перезагружали): откатываю только историю — ' +
+          'часы и досье от прошлого варианта могли остаться применёнными.'
+      );
+    }
+    const rolledBack: RuntimeState = snap
+      ? JSON.parse(JSON.stringify(snap))
+      : { ...state, history: hist.slice(0, -2) };
+    await runAndApply(set, get, project, rolledBack, lastMove.content, last.content, keep);
+  },
+
+  // Переключение на уже сгенерированный вариант. Не просто подмена текста: вариант
+  // хранится сырым, вместе со своей сводкой мира, поэтому состояние пересобирается
+  // из дохода снимка — иначе часы и досье остались бы от соседнего варианта.
+  async setSwipe(index) {
+    const { project } = get();
+    const state = get().state;
+    if (!project || !state) return;
+    const hist = state.history;
+    const li = hist.length - 1;
+    const last = hist[li];
+    if (!last || last.role !== 'assistant' || !last.swipes?.length) return;
+    if (index < 0 || index >= last.swipes.length || index === (last.swipe ?? 0)) return;
+
+    const ps = getPresetSettings();
+    const rp = parseRpResponse(last.swipes[index], {
+      userName: protagonistName(project, state),
+      guard: ps.impersonationGuard,
+    });
+    if (!rp.prose.trim()) return;
+    const move = hist[li - 1]?.content ?? '';
+    const snap = preTurnState && preTurnState.move === move ? preTurnState.state : null;
+
+    if (!snap) {
+      // Снимка нет (перезагружали вкладку) — честно меняем только текст и говорим
+      // об этом в лог. Подделывать откат состояния хуже, чем не делать его.
+      logEvent(
+        'warn',
+        'turn',
+        'Переключение варианта без снимка состояния: меняю только текст ответа, ' +
+          'часы и досье остаются от текущего варианта.'
+      );
+      const h = [...hist];
+      h[li] = { ...last, content: last.swipes[index], swipe: index };
+      set({ state: { ...state, history: h } });
+      void get().autosave();
+      return;
+    }
+
+    const base: RuntimeState = JSON.parse(JSON.stringify(snap));
+    const turn = rpTurn(base, rp.prose, rp.worldState);
+    const applied = await applyTurn(project, base, move, turn, last.swipes[index], {});
+    const next = applied.state;
+    const h = [...next.history];
+    h[h.length - 1] = { ...h[h.length - 1], swipes: last.swipes, swipe: index };
+    const [first, ...rest] = turn.beats;
+    set({
+      state: { ...next, history: h },
+      queue: rest,
+      visibleBeats: first ? [first] : [],
+      phase: 'beats',
+      choices: [],
+      error: null,
+    });
     void get().autosave();
   },
 
@@ -1496,7 +1598,9 @@ async function runAndApply(
   project: Project,
   baseState: RuntimeState,
   playerMove: string,
-  rejectedTurn?: string
+  rejectedTurn?: string,
+  // Варианты ответа, накопленные до этого хода (свайпы). Пусто — обычный ход.
+  keepSwipes?: string[]
 ): Promise<boolean> {
   // Новый ход вытесняет предыдущий: если что-то ещё в полёте (напр. регенерация
   // поверх текущей генерации) — сразу абортим его, не дожидаясь завершения. Помечаем
@@ -1520,12 +1624,40 @@ async function runAndApply(
   inFlight = self;
   // База для будущего реролла: состояние ровно перед этим ходом.
   const turnBase: RuntimeState = JSON.parse(JSON.stringify(baseState));
-  set({ thinking: true, error: null, choices: [], statFlash: [], queue: [], visibleBeats: [], pendingMove: playerMove });
+  set({
+    thinking: true,
+    error: null,
+    choices: [],
+    statFlash: [],
+    queue: [],
+    visibleBeats: [],
+    pendingMove: playerMove,
+    streamingText: null,
+  });
+  // Потоковый показ — только для текстового РП: там ответ и есть проза, её видно
+  // по мере набора. В новелле ход приезжает одним JSON-объектом, и «печатать» его
+  // нечем — показывать сырую схему игроку бессмысленно.
+  const streaming = normalizeNarrativeMode(project.mode) === 'rp';
+  const onStream = streaming
+    ? (text: string) => {
+        // Вытесненный ход (отмена/новая генерация) не должен дорисовывать свой
+        // текст поверх уже перерисованного экрана.
+        if (self.handled) return;
+        set({ streamingText: text });
+      }
+    : undefined;
   logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
   try {
     // Обычная (нестриминговая) генерация — один ход целиком, затем показ.
     const askedAt = Date.now();
-    const { turn, state, compressDue } = await runTurn(project, baseState, playerMove, controller.signal, rejectedTurn);
+    const { turn, raw, state, compressDue } = await runTurn(
+      project,
+      baseState,
+      playerMove,
+      controller.signal,
+      rejectedTurn,
+      onStream
+    );
     const waited = Math.round((Date.now() - askedAt) / 1000);
 
     // Ход вытеснен (отмена/регенерация) пока ждали ответ — результат игнорируем,
@@ -1548,15 +1680,30 @@ async function runAndApply(
     switchMood(project, openMood);
     if (turn.scene.sfxId) void playSfx(trackBlobKey(project, turn.scene.sfxId));
 
+    // Свайпы: приписываем новый вариант к накопленным и делаем его активным.
+    // Список живёт на самом сообщении, поэтому переживает и свёртку памяти, и
+    // загрузку сейва — в отличие от параллельного хранилища по индексам.
+    let applied = state;
+    if (keepSwipes?.length) {
+      const h = [...state.history];
+      const li = h.length - 1;
+      if (h[li]?.role === 'assistant') {
+        const swipes = [...keepSwipes, raw];
+        h[li] = { ...h[li], swipes, swipe: swipes.length - 1 };
+        applied = { ...state, history: h };
+      }
+    }
+
     const [first, ...rest] = turn.beats;
     set({
-      state,
+      state: applied,
       queue: rest,
       visibleBeats: first ? [first] : [],
       phase: turn.beats.length ? 'beats' : 'choices',
       choices: turn.choices,
       thinking: false,
       pendingMove: null,
+      streamingText: null,
       cg: turn.scene.cutsceneCgId,
       statFlash: flash,
       chapterTitle: turn.chapterEvent === 'chapter_end' ? 'Сюжетная веха' : null,
@@ -1593,11 +1740,11 @@ async function runAndApply(
     if (aborted) {
       // Отмена: возвращаем прошлый вид сцены; ошибку не показываем.
       logEvent('info', 'turn', 'Генерация отменена — возвращён прошлый ход');
-      set({ thinking: false, error: null, pendingMove: null, ...prevView });
+      set({ thinking: false, error: null, pendingMove: null, streamingText: null, ...prevView });
     } else {
       // Ошибка: тоже возвращаем прошлый вид (сцена не пустеет), показываем тост.
       logEvent('error', 'turn', 'Не удалось выполнить ход: ' + (e as Error).message, (e as Error).stack);
-      set({ thinking: false, error: (e as Error).message, pendingMove: null, ...prevView });
+      set({ thinking: false, error: (e as Error).message, pendingMove: null, streamingText: null, ...prevView });
     }
     return false;
   } finally {

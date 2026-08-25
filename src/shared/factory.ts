@@ -198,6 +198,7 @@ export function normalizeProject(raw: any): Project {
         ? c.defaultOutfit.trim()
         : undefined,
       spriteDisplay: normSpriteDisplay(c?.spriteDisplay),
+      avatarAssetId: typeof c?.avatarAssetId === 'string' ? c.avatarAssetId : undefined,
       relationship: normRelationship(c?.relationship),
       relationshipHidden: bool(c?.relationshipHidden, false) || undefined,
       linkedStatId: typeof c?.linkedStatId === 'string' ? c.linkedStatId : undefined,
@@ -485,6 +486,8 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
 
   return {
     protagonistName: str(raw.protagonistName, fresh.protagonistName),
+    protagonistAvatarAssetId:
+      typeof raw.protagonistAvatarAssetId === 'string' ? raw.protagonistAvatarAssetId : undefined,
     statValues,
     relationship,
     currentBackgroundId: typeof raw.currentBackgroundId === 'string' ? raw.currentBackgroundId : null,
@@ -492,9 +495,21 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
     currentMusicAssetId:
       typeof raw.currentMusicAssetId === 'string' ? raw.currentMusicAssetId : null,
     onScreen: arr<any>(raw.onScreen),
-    history: arr<any>(raw.history).filter(
-      (m: any) => m && typeof m.role === 'string' && typeof m.content === 'string'
-    ),
+    history: arr<any>(raw.history)
+      .filter((m: any) => m && typeof m.role === 'string' && typeof m.content === 'string')
+      .map((m: any) => {
+        // Свайпы приходят из сейва как есть — валидируем, иначе битая запись
+        // отправила бы переключатель вариантов в несуществующий индекс.
+        const swipes = arr<any>(m.swipes).filter((x: any): x is string => typeof x === 'string');
+        if (!swipes.length) return { role: m.role, content: m.content };
+        const idx = num(m.swipe, 0);
+        return {
+          role: m.role,
+          content: m.content,
+          swipes,
+          swipe: idx >= 0 && idx < swipes.length ? idx : swipes.length - 1,
+        };
+      }),
     memory: normalizeMemory(raw.memory, str, num, arr),
     gm: normalizeGameMaster(raw.gm, fresh.gm, str, num, arr),
     lastTurn: raw.lastTurn && typeof raw.lastTurn === 'object' ? raw.lastTurn : null,

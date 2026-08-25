@@ -4,6 +4,7 @@ import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { stripStateBlock } from './rpResponse';
+import { applyRegexRules } from './regexRules';
 import { getPresetSettings, presetForMode } from './presetSettings';
 import { matchLorebook } from './lorebookEngine';
 import { logEvent } from '../shared/logStore';
@@ -1052,16 +1053,22 @@ export async function buildRequest(
   // в РП проза и так лежит в истории, но со служебной сводкой <state> на хвосте —
   // её вырезаем. Пересылать модели её собственную сводку незачем: актуальная версия
   // приезжает динамическим блоком Game Master, а старая с ним ещё и спорит.
+  // Правила-регэкспы со scope 'prompt' правят ровно то, что уезжает модели, и
+  // ничего больше: на экране игрока текст остаётся исходным.
+  const rx = (text: string, role: 'ai' | 'user') =>
+    applyRegexRules(text, ps.regexRules, { role, scope: 'prompt' });
   let window: LlmMessage[] = state.history.slice(-histCap).map((m) =>
     m.role === 'assistant'
       ? {
           role: 'assistant' as const,
-          content:
+          content: rx(
             mode === 'rp'
               ? stripStateBlock(m.content)
               : condenseAssistantTurn(m.content, project, state) ?? m.content,
+            'ai'
+          ),
         }
-      : m
+      : { role: m.role, content: rx(m.content, 'user') }
   );
 
   // ЖЁСТКИЙ БЮДЖЕТ КОНТЕКСТА. «Бюджет контекста» из пресета раньше был только
@@ -1143,7 +1150,7 @@ export async function buildRequest(
 
   // Продвинутые кастомные вставки на заданной глубине от конца (author's note style).
   const blocks = (ps.advancedBlocks || []).filter((b) => b.content.trim());
-  const withMove: LlmMessage[] = [...messages, { role: 'user', content: playerMove }];
+  const withMove: LlmMessage[] = [...messages, { role: 'user', content: rx(playerMove, 'user') }];
   for (const b of blocks) {
     const depth = Math.max(0, Math.floor(b.depth));
     const insertAt = Math.max(0, withMove.length - depth);

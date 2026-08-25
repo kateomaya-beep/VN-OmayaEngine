@@ -30,13 +30,55 @@ export interface CompletionRequest {
   // Имена героя и главного собеседника. Нужны методу обработки промпта «одним
   // сообщением»: там роли схлопываются, и реплики приходится подписывать.
   names?: PromptNames;
+  // Потоковый вывод: движок отдаёт колбэк, провайдер зовёт его на каждый кусок
+  // текста. Отсутствует — обычная генерация одним ответом.
+  onDelta?: (chunk: string) => void;
   // Отмена генерации: сигнал прерывания fetch (кнопка «Отменить» в игре).
   signal?: AbortSignal;
 }
 
 export interface Provider {
   complete(conn: ApiConnection, apiKey: string, req: CompletionRequest): Promise<string>;
+  // Потоковая генерация. НАМЕРЕННО отдельным методом, а не флагом внутри complete:
+  // там живут все починки капризов шлюзов (400 на reasoning_effort, на префилл, на
+  // картинки), и вплетать в них поток значило бы рисковать рабочим путём ради
+  // необязательной фичи. Здесь — только счастливый путь; на любой ошибке ДО первого
+  // куска текста движок откатывается на обычный complete со всеми его починками.
+  completeStream?(
+    conn: ApiConnection,
+    apiKey: string,
+    req: CompletionRequest,
+    onDelta: (chunk: string) => void
+  ): Promise<string>;
   listModels(conn: ApiConnection, apiKey: string): Promise<string[]>;
+}
+
+// Ошибка потока, случившаяся ДО первого куска текста: можно молча переиграть
+// обычным запросом. После первого куска откат уже виден игроку, и мы его не делаем.
+export class StreamNotStarted extends Error {}
+
+// Читает SSE-поток построчно. Кадры разделяются пустой строкой; нас интересуют
+// только строки data:. \r\n нормализуем — их шлют некоторые шлюзы, и без этого
+// разделитель кадра не находится вовсе.
+async function readSse(res: Response, onData: (data: string) => void): Promise<void> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new StreamNotStarted('Поток недоступен: у ответа нет тела');
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf = (buf + dec.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+    let at: number;
+    while ((at = buf.indexOf('\n\n')) !== -1) {
+      const frame = buf.slice(0, at);
+      buf = buf.slice(at + 2);
+      for (const line of frame.split('\n')) {
+        const t = line.trimStart();
+        if (t.startsWith('data:')) onData(t.slice(5).trim());
+      }
+    }
+  }
 }
 
 // Текст ответа: строка ИЛИ массив частей ([{type:'text',text:'…'}]) — так отдают
@@ -431,6 +473,66 @@ const openAiCompatible: Provider = {
     }
     return prefill ? prefill + content : content;
   },
+  async completeStream(conn, apiKey, req, onDelta) {
+    const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
+    const model = requireModel(req.model || conn.model);
+    const messages: { role: string; content: unknown }[] = [
+      ...(req.system.trim() ? [{ role: 'system', content: req.system }] : []),
+      ...sanitizeMessages(req.messages),
+    ];
+    if (req.attachments?.length) attachImagesOpenAi(messages, req.attachments);
+    const prefill = req.prefill?.trim() && !noPrefillTargets.has(targetKey(base, model)) ? req.prefill : '';
+    if (prefill) messages.push({ role: 'assistant', content: prefill });
+    const res = await apiFetch(`${base}/chat/completions`, {
+      method: 'POST',
+      signal: req.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        temperature: req.temperature,
+        messages,
+        stream: true,
+        ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+        ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
+        ...(req.stop?.length ? { stop: req.stop } : {}),
+      }),
+    });
+    if (!res.ok) {
+      // Ошибку НЕ разбираем и не показываем: обычный путь умеет чинить половину
+      // причин 400 сам, поэтому просто просим движок переиграть без потока.
+      throw new StreamNotStarted(`Поток не открылся: HTTP ${res.status}`);
+    }
+    let out = '';
+    let started = false;
+    try {
+      await readSse(res, (data) => {
+        if (data === '[DONE]') return;
+        let ev: any;
+        try {
+          ev = JSON.parse(data);
+        } catch {
+          return; // мусорная строка в потоке — пропускаем, ход из-за неё не теряем
+        }
+        const piece = normalizeContent(ev?.choices?.[0]?.delta?.content);
+        if (!piece) return;
+        started = true;
+        out += piece;
+        onDelta(piece);
+      });
+    } catch (e) {
+      if ((e as Error)?.name === 'AbortError') throw e;
+      if (!started) throw new StreamNotStarted((e as Error).message);
+      // Поток оборвался на середине: то, что уже пришло, — настоящий текст, и
+      // выбрасывать его хуже, чем отдать короткий ход.
+      logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти');
+    }
+    if (!started) throw new StreamNotStarted('Поток закрылся, не прислав ни одного куска текста');
+    return prefill ? prefill + out : out;
+  },
   async listModels(conn, apiKey) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
     const res = await netFetch(`${base}/models`, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
@@ -501,6 +603,66 @@ const anthropic: Provider = {
   },
 };
 
+// Потоковая генерация Anthropic. Формат событий свой: нас интересует
+// content_block_delta с text_delta; всё остальное (старт блока, usage, ping) —
+// служебное и в текст не идёт.
+anthropic.completeStream = async function completeStream(conn, apiKey, req, onDelta) {
+  const base = (conn.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
+  const model = requireModel(req.model || conn.model);
+  const messages: { role: string; content: unknown }[] = sanitizeMessages(req.messages).map((m) => ({
+    role: m.role === 'assistant' ? 'assistant' : 'user',
+    content: m.content,
+  }));
+  // Хвостовой пробел в префилле Anthropic отклоняет — так же, как в обычном пути.
+  const pf = req.prefill ? req.prefill.replace(/\s+$/, '') : '';
+  if (pf) messages.push({ role: 'assistant', content: pf });
+  const res = await apiFetch(`${base}/messages`, {
+    method: 'POST',
+    signal: req.signal,
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: req.maxTokens || 4096,
+      temperature: req.temperature,
+      stream: true,
+      ...(req.system.trim() ? { system: req.system } : {}),
+      messages,
+      ...(req.stop?.length ? { stop_sequences: req.stop } : {}),
+    }),
+  });
+  if (!res.ok) throw new StreamNotStarted(`Поток не открылся: HTTP ${res.status}`);
+  let out = '';
+  let started = false;
+  try {
+    await readSse(res, (data) => {
+      let ev: any;
+      try {
+        ev = JSON.parse(data);
+      } catch {
+        return;
+      }
+      if (ev?.type !== 'content_block_delta') return;
+      const piece = typeof ev?.delta?.text === 'string' ? ev.delta.text : '';
+      if (!piece) return;
+      started = true;
+      out += piece;
+      onDelta(piece);
+    });
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') throw e;
+    if (!started) throw new StreamNotStarted((e as Error).message);
+    logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти');
+  }
+  if (!started) throw new StreamNotStarted('Поток закрылся, не прислав ни одного куска текста');
+  return pf ? pf + out : out;
+};
+
 // Терпимый разбор ответа /models: разные обёртки (data / models / result / сам массив)
 // и разные поля идентификатора (id / name / model / slug / строка). Дедуп + сортировка.
 // Так список не «теряет» модели из-за нестандартной формы ответа провайдера.
@@ -566,11 +728,28 @@ export async function runCompletion(req: CompletionRequest): Promise<string> {
     req.prefill ? `префилл(${req.prefill.length})` : null,
     req.reasoningEffort ? `reasoning:${req.reasoningEffort}` : null,
     req.stop?.length ? `стоп(${req.stop.length})` : null,
+    req.onDelta ? 'поток' : null,
   ].filter(Boolean).join(', ');
   logEvent('info', 'llm', `Запрос → ${conn.provider} · ${model} · ~${Math.round(reqChars / 4)} ток.${flags ? ` · ${flags}` : ''}`);
   const started = Date.now();
   try {
-    const out = await getProvider(conn.provider).complete(conn, getApiKey(conn.provider), req);
+    const provider = getProvider(conn.provider);
+    const apiKey = getApiKey(conn.provider);
+    let out: string;
+    if (req.onDelta && provider.completeStream) {
+      try {
+        out = await provider.completeStream(conn, apiKey, req, req.onDelta);
+      } catch (e) {
+        if (!(e instanceof StreamNotStarted)) throw e;
+        // Поток не завёлся, а игрок ещё ничего не увидел — тихо переигрываем
+        // обычным запросом. Там живут все починки капризов шлюзов; часть из них
+        // (и сам отказ от stream) как раз и лечит эту ситуацию.
+        logEvent('info', 'llm', `Стриминг недоступен (${(e as Error).message}) — обычный запрос`);
+        out = await provider.complete(conn, apiKey, req);
+      }
+    } else {
+      out = await provider.complete(conn, apiKey, req);
+    }
     logEvent('info', 'llm', `Ответ получен за ${Date.now() - started} мс (${out.length} симв.)`);
     return out;
   } catch (e) {

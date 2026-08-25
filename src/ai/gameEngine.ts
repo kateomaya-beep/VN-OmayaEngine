@@ -13,7 +13,7 @@ import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThi
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
-import { parseRpResponse, rpStopSequences, rpTurn, stripStateBlock } from './rpResponse';
+import { parseRpResponse, rpStopSequences, rpTurn, streamingProse, stripStateBlock } from './rpResponse';
 import { protagonistName } from './macros';
 import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
@@ -25,6 +25,10 @@ const NOTABLE_RELATIONSHIP_DELTA = 5;
 
 export interface TurnResult {
   turn: AiTurn;
+  // Сырой ответ модели — как пришёл, до разбора и до вырезания служебных блоков.
+  // Нужен свайпам: вариант хранится целиком, чтобы при возврате к нему можно было
+  // восстановить и текст, и состояние мира из его собственной сводки.
+  raw: string;
   state: RuntimeState;
   // Подошёл срок свёртки памяти. Сама свёртка НЕ выполняется внутри хода: это
   // отдельный запрос к модели, и ждать его игроку незачем (см. applyTurn).
@@ -690,7 +694,11 @@ export async function runTurn(
   playerMove: string,
   signal?: AbortSignal,
   // Отклонённый игроком вариант хода (реролл): просим ДРУГОЕ продолжение.
-  rejectedTurn?: string
+  rejectedTurn?: string,
+  // Потоковый показ (только текстовый РП): зовётся с НАКОПЛЕННЫМ текстом ответа,
+  // уже очищенным от служебных тегов. В новелле смысла не имеет — там ход
+  // приезжает одним JSON-объектом, показывать по кускам нечего.
+  onStream?: (text: string) => void
 ): Promise<TurnResult> {
   const mode = normalizeNarrativeMode(project.mode);
   // Случайное событие (Batch 6 §3) и случайное СМС (Batch 8-fix) — независимые роллы.
@@ -752,8 +760,22 @@ export async function runTurn(
   // история, память, свёртка и Game Master работают без единой правки.
   if (req.mode === 'rp') {
     const stop = ps.impersonationGuard ? rpStopSequences(userName) : undefined;
-    const ask = (extra?: string) =>
-      runCompletion({
+    const ask = (extra?: string) => {
+      // Накопитель для показа: провайдер отдаёт куски, а экрану нужен весь текст
+      // целиком — иначе каждый кусок пришлось бы склеивать ещё и там.
+      //
+      // Начинаем НЕ с пустой строки, а с префилла. Куски приходят без него (модель
+      // его «продолжает», а не повторяет), и при управляемом размышлении префилл —
+      // это как раз открывающий <thinking>. Без него накопленный текст выглядел бы
+      // как обычная проза, и план размышления утекал бы игроку на экран.
+      let acc = req.prefill ?? '';
+      const onDelta = onStream
+        ? (chunk: string) => {
+            acc += chunk;
+            onStream(streamingProse(acc));
+          }
+        : undefined;
+      return runCompletion({
         system: req.system,
         messages: extra ? [...req.messages, { role: 'user' as const, content: extra }] : req.messages,
         prefill: req.prefill,
@@ -762,8 +784,10 @@ export async function runTurn(
         reasoningEffort,
         stop,
         names,
+        onDelta,
         signal,
       });
+    };
 
     let rawRp = await ask();
     let rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard });
@@ -778,13 +802,15 @@ export async function runTurn(
     if (rp.plan) logEvent('info', 'think', `План хода ${state.turnCount + 1}`, rp.plan);
 
     const turn = rpTurn(state, rp.prose, rp.worldState);
-    // В историю кладём ТОЛЬКО прозу: служебная сводка уже смержена в Game Master,
-    // и её место — там, а не второй копией в контексте каждого следующего хода.
-    const applied = await applyTurn(project, state, playerMove, turn, rp.prose, {
+    // В историю кладём СЫРОЙ ответ, вместе со служебной сводкой. В контекст она не
+    // попадает — её вырезают и сборка промпта, и свёртка памяти, — зато остаётся
+    // при сообщении: из неё рисуется инфобокс под ответом, и по ней же
+    // восстанавливается состояние мира при возврате к этому варианту (свайпы).
+    const applied = await applyTurn(project, state, playerMove, turn, rawRp, {
       eventFired: evt.fired,
       forceCompress: (req.droppedUnfolded ?? 0) > 0 && !req.systemOverBudget,
     });
-    return { turn, state: applied.state, compressDue: applied.compressDue };
+    return { turn, raw: rawRp, state: applied.state, compressDue: applied.compressDue };
   }
 
   let raw = await runCompletion({
@@ -860,7 +886,7 @@ export async function runTurn(
   if (sms.fired && !modelSentSms) {
     await deliverFallbackSms(project, nextState, signal);
   }
-  return { turn, state: nextState, compressDue: applied.compressDue };
+  return { turn, raw, state: nextState, compressDue: applied.compressDue };
 }
 
 // Догенерация входящего СМС от случайного контакта прямо в состояние телефона.

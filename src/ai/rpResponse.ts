@@ -66,6 +66,23 @@ export function rpStopSequences(userName: string): string[] {
   return name ? [`\n${name}:`, `\n**${name}**:`] : [];
 }
 
+// Текст для показа ПОКА ОТВЕТ ЕЩЁ ИДЁТ. Отличается от разбора готового ответа
+// тем, что теги здесь заведомо недописаны: <thinking> ещё не закрыт, <state> начат
+// на середине. Показывать игроку служебные потроха нельзя ни секунды, поэтому всё
+// от незакрытого тега и до конца просто отрезается.
+export function streamingProse(raw: string): string {
+  let t = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '');
+  // Незакрытая думалка — значит текста истории ещё нет вовсе.
+  if (/<think(?:ing)?>/i.test(t)) return '';
+  t = t.replace(STATE_RE, '');
+  // Сводка началась — история на этом закончилась, дальше только служебное.
+  const at = t.search(new RegExp(RP_STATE_OPEN.replace(/[<>]/g, (c) => '\\' + c), 'i'));
+  if (at !== -1) t = t.slice(0, at);
+  // Хвост вида «<sta» — начало тега, приехавшее по кусочкам.
+  t = t.replace(/<[a-z]*$/i, '');
+  return t.trimStart();
+}
+
 export function parseRpResponse(raw: string, opts?: { userName?: string; guard?: boolean }): RpResponse {
   const plan = extractThinking(raw);
   // Блок размышления вырезаем тем же способом, что и в новелле, чтобы план не

@@ -3,6 +3,9 @@ import { runCompletionWith } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { SUMMARIZER_PROMPT } from './directorPrompt';
 import { condenseAssistantTurn, lastFixedContextTokens } from './promptBuilder';
+// Свёртке служебная сводка мира не нужна: в РП она едет хвостом каждого ответа, и
+// без этого саммарайзер пересказывал бы JSON вместо сцены.
+import { stripStateBlock } from './rpResponse';
 import { estimateTokens, uid } from '../shared/utils';
 import { pushToast, updateToast } from '../shared/toast';
 import { useLang } from '../shared/i18n';
@@ -69,7 +72,7 @@ function keepWithinTokens(
   for (let i = state.history.length - 1; i >= 0 && keep < maxMessages; i--) {
     const m = state.history[i];
     const text =
-      m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content;
+      m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? stripStateBlock(m.content) : m.content;
     const t = estimateTokens(text);
     if (keep >= 4 && used + t > budgetTokens) break;
     used += t;
@@ -86,7 +89,7 @@ function keepWithinTokens(
 export function liveHistoryTokens(project: Project, state: RuntimeState): number {
   return state.history.reduce((sum, m) => {
     const text =
-      m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content;
+      m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? stripStateBlock(m.content) : m.content;
     return sum + estimateTokens(text);
   }, 0);
 }
@@ -383,7 +386,7 @@ export async function maybeCompress(
   // свёртка едва уходила под лимит и через несколько ходов запускалась снова
   // («саммари каждые шесть сообщений»).
   const asText = (m: LlmMessage): string =>
-    m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? m.content : m.content;
+    m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? stripStateBlock(m.content) : m.content;
   const staleText = stale.map(asText);
   let chars = 0;
   let fits = 0;

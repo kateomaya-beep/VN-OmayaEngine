@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { defaultPreset, normalizePreset, type PromptPreset } from './promptPreset';
 import { defaultRpPreset, normalizeRpPreset } from './rpPreset';
 import { isPromptProcessing, type PromptProcessing } from './promptPostProcess';
+import { normalizeRegexRules, type RegexRule } from './regexRules';
 import type { AdvancedPromptBlock, NarrativeMode } from '../shared/types';
 import {
   DEFAULT_TURN_LENGTH,
@@ -24,6 +25,11 @@ export interface PresetSettings {
   // Страховка от «модель написала за игрока» в РП: стоп-строки провайдеру плюс срез
   // хвоста ответа, если модель всё же начала реплику героя. Промпт один это не держит.
   impersonationGuard: boolean;
+  // Правила-регэкспы: правка текста между моделью и экраном (и/или запросом).
+  regexRules: RegexRule[];
+  // Инфобокс состояния под ответом в режиме РП (в духе Horae). Данные для него
+  // приезжают служебным блоком <state>; выключать имеет смысл, если блок отключён.
+  showStateInfobox: boolean;
   // Язык ПОВЕСТВОВАНИЯ (нарратив/реплики/выборы), НЕ язык интерфейса. Влияет на язык,
   // на котором ИИ пишет текст истории. Пока ru/en.
   narrativeLanguage: 'ru' | 'en';
@@ -47,6 +53,8 @@ function defaults(): PresetSettings {
     rpPreset: defaultRpPreset(),
     promptProcessing: 'merge',
     impersonationGuard: true,
+    regexRules: [],
+    showStateInfobox: true,
     narrativeLanguage: 'ru',
     temperature: 0.9,
     liveWindow: 12,
@@ -82,6 +90,8 @@ function load(): PresetSettings {
       rpPreset: normalizeRpPreset(v.rpPreset),
       promptProcessing: isPromptProcessing(v.promptProcessing) ? v.promptProcessing : d.promptProcessing,
       impersonationGuard: typeof v.impersonationGuard === 'boolean' ? v.impersonationGuard : true,
+      regexRules: normalizeRegexRules(v.regexRules),
+      showStateInfobox: typeof v.showStateInfobox === 'boolean' ? v.showStateInfobox : true,
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
       liveWindow: num(v.liveWindow, d.liveWindow),

@@ -128,7 +128,13 @@ export function PlayerPage() {
                   {!rp && <MenuItem icon="📱" label="Телефон" onClick={() => setPhoneOpen(true)} />}
                   {!rp && <MenuItem icon="🖼" label="Генерация фонов" onClick={() => setGenOpen((v) => !v)} />}
                   <MenuItem icon="✎" label="Правка в игре" onClick={() => setPanel('edit')} />
-                  <MenuItem icon="↻" label={t('player.regen')} onClick={() => s.regenerate()} />
+                  {/* В РП перегенерация не выбрасывает прошлый ответ, а добавляет
+                      вариант — прошлый остаётся, между ними можно ходить стрелками. */}
+                  <MenuItem
+                    icon="↻"
+                    label={rp ? 'Ещё вариант ответа' : t('player.regen')}
+                    onClick={() => (rp ? s.addSwipe() : s.regenerate())}
+                  />
                 </div>
               </>
             )}

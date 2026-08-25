@@ -11,12 +11,13 @@ import { usePresetSettings, type PresetSettings } from '../../ai/presetSettings'
 import { defaultRpPreset, defaultRpBlockContent } from '../../ai/rpPreset';
 import { PROMPT_PROCESSING_LABELS, type PromptProcessing } from '../../ai/promptPostProcess';
 import { MACRO_HELP } from '../../ai/macros';
+import { RegexRulesEditor } from './RegexRulesEditor';
 import { usePlayerStore } from '../player/playerStore';
 import { TokenCounter } from '../player/components/TokenCounter';
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
 import type { AdvancedPromptBlock, LlmRole } from '../../shared/types';
-import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, DEFAULT_THINKING_PLAN, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
+import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, TURN_LENGTH_PRESETS, DEFAULT_THINKING_PLAN, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
 // отделён от настроек API. Каждый блок: порядок (drag&drop), роль system/user/assistant
@@ -288,6 +289,25 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
             <input
               type="checkbox"
               className="mt-1"
+              checked={cfg.showStateInfobox}
+              onChange={(e) => patch({ showStateInfobox: e.target.checked })}
+            />
+            <span>
+              Показывать инфобокс состояния под ответом
+              <span className="block text-[11px] text-gray-500">
+                Часы, место, кто в сцене и что с ними — из служебной сводки, которую модель
+                дописывает в конец ответа. Выключите блок «🗂 Служебная сводка состояния» выше —
+                показывать станет нечего.
+              </span>
+            </span>
+          </label>
+        )}
+
+        {isRp && (
+          <label className="flex items-start gap-2 mt-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
               checked={cfg.impersonationGuard}
               onChange={(e) => patch({ impersonationGuard: e.target.checked })}
             />
@@ -302,6 +322,8 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
           </label>
         )}
       </div>
+
+      <RegexRulesEditor rules={cfg.regexRules} onChange={(next) => patch({ regexRules: next })} />
 
       {/* Справка по макросам — рядом с блоками, где их и пишут */}
       <details className="card !bg-panel2 mt-4">
@@ -328,7 +350,8 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         </div>
         <div className="grid sm:grid-cols-2 gap-3">
           <TurnLengthField cfg={cfg} patch={patch} />
-          <ChoiceFrequencyField cfg={cfg} patch={patch} />
+          {/* Выборов в текстовом РП нет вовсе — настраивать их частоту незачем. */}
+          {!isRp && <ChoiceFrequencyField cfg={cfg} patch={patch} />}
           <div className="sm:col-span-2">
             <label className="label">Глубина размышления модели (reasoning)</label>
             <select
@@ -629,6 +652,22 @@ function TurnLengthField({
   return (
     <div className="sm:col-span-2">
       <label className="label">Длина хода (слов истории за ход): {tl.min}–{tl.max}</label>
+      {/* Пресеты размера. Ползунки ниже никуда не делись — просто «сколько слов»
+          проще выбрать примером, чем числом. */}
+      <div className="flex gap-1.5 flex-wrap mb-2">
+        {TURN_LENGTH_PRESETS.map((pr) => (
+          <button
+            key={pr.id}
+            title={pr.hint}
+            className={`chip !px-2.5 !py-1 text-xs ${
+              tl.min === pr.min && tl.max === pr.max ? 'bg-accent2 text-white' : ''
+            }`}
+            onClick={() => patch({ turnLength: { min: pr.min, max: pr.max } })}
+          >
+            {pr.name}
+          </button>
+        ))}
+      </div>
       <div className="flex items-center gap-2 mb-2">
         <input
           type="number"
