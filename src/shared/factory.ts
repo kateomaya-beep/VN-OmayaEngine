@@ -298,6 +298,11 @@ export function normalizeProject(raw: any): Project {
     macros: arr<any>(raw?.macros)
       .filter((m) => m && typeof m.name === 'string' && typeof m.value === 'string')
       .map((m) => ({ name: m.name, value: m.value })),
+    // Переписка с ассистентом. Режем хвост: это вспомогательный разговор, и
+    // разрастаться до размеров проекта ему незачем.
+    assistantChat: arr<any>(raw?.assistantChat)
+      .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+      .slice(-120),
     lore: {
       worldDescription: str(raw?.lore?.worldDescription),
       plotOutline: str(raw?.lore?.plotOutline),

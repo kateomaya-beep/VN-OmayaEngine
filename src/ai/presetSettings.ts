@@ -30,6 +30,9 @@ export interface PresetSettings {
   // Инфобокс состояния под ответом в режиме РП (в духе Horae). Данные для него
   // приезжают служебным блоком <state>; выключать имеет смысл, если блок отключён.
   showStateInfobox: boolean;
+  // Личность ассистента-соавтора — ГЛОБАЛЬНАЯ: это ваш помощник, а не свойство
+  // отдельного проекта. Пусто — берётся дефолтная.
+  assistantPersona: string;
   // Язык ПОВЕСТВОВАНИЯ (нарратив/реплики/выборы), НЕ язык интерфейса. Влияет на язык,
   // на котором ИИ пишет текст истории. Пока ru/en.
   narrativeLanguage: 'ru' | 'en';
@@ -55,6 +58,7 @@ function defaults(): PresetSettings {
     impersonationGuard: true,
     regexRules: [],
     showStateInfobox: true,
+    assistantPersona: '',
     narrativeLanguage: 'ru',
     temperature: 0.9,
     liveWindow: 12,
@@ -92,6 +96,7 @@ function load(): PresetSettings {
       impersonationGuard: typeof v.impersonationGuard === 'boolean' ? v.impersonationGuard : true,
       regexRules: normalizeRegexRules(v.regexRules),
       showStateInfobox: typeof v.showStateInfobox === 'boolean' ? v.showStateInfobox : true,
+      assistantPersona: typeof v.assistantPersona === 'string' ? v.assistantPersona : '',
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
       liveWindow: num(v.liveWindow, d.liveWindow),

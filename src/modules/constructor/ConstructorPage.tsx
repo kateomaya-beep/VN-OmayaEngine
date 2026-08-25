@@ -11,6 +11,7 @@ import { CharacterEditor } from './editors/CharacterEditor';
 import { StatsEditor } from './editors/StatsEditor';
 import { AssetManager } from './editors/AssetManager';
 import { LorebookEditor } from './editors/LorebookEditor';
+import { AssistantChat } from './editors/AssistantChat';
 
 // vnOnly — вкладка нужна только визуальной новелле. В текстовом РП спрайтов, фонов
 // и музыки не существует, и целая вкладка «Ассеты» там просит загрузить то, чему
@@ -22,6 +23,7 @@ const TABS = [
   { id: 'stats', label: 'tab.stats', el: StatsEditor },
   { id: 'assets', label: 'tab.assets', el: AssetManager, vnOnly: true },
   { id: 'lorebook', label: 'tab.lorebook', el: LorebookEditor },
+  { id: 'assistant', label: 'tab.assistant', el: AssistantChat },
 ] as const;
 
 export function ConstructorPage() {

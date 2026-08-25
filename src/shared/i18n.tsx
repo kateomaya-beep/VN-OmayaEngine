@@ -34,6 +34,7 @@ const RU: Dict = {
   'nav.library': 'Библиотека',
 
   'library.title': 'Библиотека проектов',
+  'tab.assistant': '🤝 Ассистент',
   'library.subtitle': 'Ваши визуальные новеллы. Всё хранится локально на устройстве.',
   'library.lastSave': 'сохранено',
   'library.import': 'Импорт .zip',
@@ -100,6 +101,7 @@ const EN: Dict = {
   'nav.library': 'Library',
 
   'library.title': 'Project library',
+  'tab.assistant': '🤝 Assistant',
   'library.subtitle': 'Your visual novels. Everything is stored locally on your device.',
   'library.lastSave': 'last save',
   'library.import': 'Import .zip',
