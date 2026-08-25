@@ -85,6 +85,7 @@ function makeDefaults(): PromptBlock[] {
       '⚙ Пометки хода игрока',
       `The player's move arrives with a tag. It is engine plumbing, never part of the story — do not quote it, do not answer it, do not mention it.
 - "[VERBATIM] ..." — what {{user}} actually said or did, in their own words. Take it as given: do NOT rewrite it, do not improve it, do not have them say something else. React with the world.
+- Inside that move, {{user}}'s OWN formatting follows a looser, different convention from yours: plain text is spoken aloud; *italicized* text is an unspoken thought or a private, unstated intention. Never treat anything {{user}} wrote in italics as something anyone could have heard or seen — it did not happen in the world, it happened in their head. See the information-hygiene rule: unspoken thoughts are never audible.
 - "[CONTINUE]" — {{user}} is just watching. Move the scene yourself: let other characters act and time pass, and still write nothing for {{user}}.
 - "[OOC] ..." — an out-of-story note from the player, addressed to you as the author. Follow it as a directorial instruction; never answer it inside the fiction.
 - "[AUTHOR NOTE] ..." — a standing instruction for this and following turns.
@@ -174,7 +175,12 @@ This is NOT permission to make everyone hostile. Gratuitous cruelty is as false 
       'rp_format',
       '⚙ Формат ответа',
       `Reply with the story itself and nothing else — no headers, no labels, no "Turn 12:", no summary of what just happened, no questions to the player.
-- Plain prose in Markdown: *italics* for actions and description, "quotation marks" for spoken lines, **bold** only for real emphasis.
+
+FORMATTING is a strict contract, not a style choice — every reply follows it exactly:
+- Spoken dialogue: ALWAYS in "straight quotation marks", every single line, no exceptions. Never a bare unquoted line of speech, and never introduced with a dash the way some prose traditions format dialogue (— Line.) — that convention is banned here; quotes only.
+- Plain narrative — action, description, what is physically happening: plain text. No italics, no special marking.
+- **Bold**: reserved for real emphasis, a word actually stressed in the moment — never decoration, never used for anything else.
+- *Italics*: reserved for a character's unspoken thought, when you choose to surface one. Nothing else in your prose gets italicized — not actions, not description, not sound effects.
 - Write in paragraphs, not in a bullet list, and not as a script with "Name:" prefixes — a name prefix is only for a line that is genuinely formatted as a transcript in this story.
 - Never write out-of-character text, never explain your choices, never break the fiction to check in.
 - Never open with a restatement of {{user}}'s move. Start where the world responds.`
@@ -219,6 +225,40 @@ export const RP_STATE_BLOCK_KEY = 'rp_state';
 // был сохранён (иначе новый блок никогда бы не доехал до существующих установок).
 const RP_BUILTIN_ORDER = makeDefaults().map((b) => b.builtinKey as string);
 
+// Сигнатуры УСТАРЕВШИХ дефолтов встроенных блоков РП-пресета (см. тот же приём в
+// promptPreset.ts): если блок всё ещё содержит старый дефолтный текст (значит,
+// пользователь его не редактировал), подменяем на актуальный. Так поздние правки
+// движка доезжают и до пресетов, уже сохранённых в localStorage со старой версией.
+const RP_OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
+  // Формат без жёсткого запрета тире в прямой речи и без разделения «курсив только
+  // для мыслей» — старый текст разрешал курсив и для действий/описаний тоже, из-за
+  // чего модель путала «акцент» с «мысль» и не соблюдала кавычки строго.
+  { key: 'rp_format', signature: '*italics* for actions and description' },
+  // Пометки хода без явного разбора форматирования ВВОДА игрока (обычный текст —
+  // речь, курсив — мысль/действие) и без прямой отсылки к тому, что мысли игрока
+  // персонажам не слышны.
+  { key: 'rp_moves', signature: '"[CONTINUE]" — {{user}} is just watching' },
+];
+
+function refreshOutdatedRpBuiltins(preset: PromptPreset): PromptPreset {
+  let changed = false;
+  const blocks = preset.blocks.map((b) => {
+    if (!b.builtinKey || b.dynamic) return b;
+    const outdated = RP_OUTDATED_SIGNATURES.some(
+      (s) => s.key === b.builtinKey && b.content.includes(s.signature)
+    );
+    if (outdated) {
+      const fresh = defaultRpBlockContent(b.builtinKey);
+      if (fresh !== null && fresh !== b.content) {
+        changed = true;
+        return { ...b, content: fresh };
+      }
+    }
+    return b;
+  });
+  return changed ? { ...preset, blocks } : preset;
+}
+
 export function normalizeRpPreset(raw: unknown): PromptPreset {
   const parsed = raw && typeof raw === 'object' && Array.isArray((raw as any).blocks)
     ? parsePresetJson(raw)
@@ -226,22 +266,25 @@ export function normalizeRpPreset(raw: unknown): PromptPreset {
   if (!parsed) return defaultRpPreset();
   const have = new Set(parsed.blocks.map((b) => b.builtinKey).filter(Boolean) as string[]);
   const missing = makeDefaults().filter((b) => b.builtinKey && !have.has(b.builtinKey));
-  if (!missing.length) return parsed;
-  // Вставляем каждый недостающий блок на его штатное место по порядку дефолта, а не
-  // в конец: блок, оказавшийся ниже истории переписки, читается моделью как более
-  // свежий, и «формат ответа» внизу вёл бы себя иначе, чем задумано.
-  const blocks = [...parsed.blocks];
-  for (const block of missing) {
-    const want = RP_BUILTIN_ORDER.indexOf(block.builtinKey as string);
-    let at = blocks.length;
-    for (let i = 0; i < blocks.length; i++) {
-      const idx = blocks[i].builtinKey ? RP_BUILTIN_ORDER.indexOf(blocks[i].builtinKey as string) : -1;
-      if (idx > want) {
-        at = i;
-        break;
+  let withMissing = parsed;
+  if (missing.length) {
+    // Вставляем каждый недостающий блок на его штатное место по порядку дефолта, а
+    // не в конец: блок, оказавшийся ниже истории переписки, читается моделью как
+    // более свежий, и «формат ответа» внизу вёл бы себя иначе, чем задумано.
+    const blocks = [...parsed.blocks];
+    for (const block of missing) {
+      const want = RP_BUILTIN_ORDER.indexOf(block.builtinKey as string);
+      let at = blocks.length;
+      for (let i = 0; i < blocks.length; i++) {
+        const idx = blocks[i].builtinKey ? RP_BUILTIN_ORDER.indexOf(blocks[i].builtinKey as string) : -1;
+        if (idx > want) {
+          at = i;
+          break;
+        }
       }
+      blocks.splice(at, 0, { ...block, id: uid('blk') });
     }
-    blocks.splice(at, 0, { ...block, id: uid('blk') });
+    withMissing = { ...parsed, blocks };
   }
-  return { ...parsed, blocks };
+  return refreshOutdatedRpBuiltins(withMissing);
 }

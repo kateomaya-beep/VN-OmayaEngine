@@ -198,7 +198,6 @@ export function normalizeProject(raw: any): Project {
         ? c.defaultOutfit.trim()
         : undefined,
       spriteDisplay: normSpriteDisplay(c?.spriteDisplay),
-      avatarAssetId: typeof c?.avatarAssetId === 'string' ? c.avatarAssetId : undefined,
       relationship: normRelationship(c?.relationship),
       relationshipHidden: bool(c?.relationshipHidden, false) || undefined,
       linkedStatId: typeof c?.linkedStatId === 'string' ? c.linkedStatId : undefined,
@@ -491,8 +490,6 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
 
   return {
     protagonistName: str(raw.protagonistName, fresh.protagonistName),
-    protagonistAvatarAssetId:
-      typeof raw.protagonistAvatarAssetId === 'string' ? raw.protagonistAvatarAssetId : undefined,
     statValues,
     relationship,
     currentBackgroundId: typeof raw.currentBackgroundId === 'string' ? raw.currentBackgroundId : null,

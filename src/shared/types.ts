@@ -148,10 +148,6 @@ export interface Character {
   // подогнал одного, разъехались остальные. Множится с общей: итог = общее ×
   // личное. Пусто ⇒ персонаж рисуется ровно по общим настройкам.
   spriteDisplay?: SpriteDisplay;
-  // Аватарка персонажа — лицо для ленты переписки и телефона. Спрайты для этого не
-  // годятся: они в полный рост и рассчитаны на сцену, а не на кружок 40×40.
-  // Пусто → neutral-спрайт, а нет и его → первая буква имени.
-  avatarAssetId?: string;
   relationship: RelationshipStats; // стартовые значения (правятся в конструкторе)
   relationshipHidden?: boolean; // скрыть в инфобоксе
   /** @deprecated Связь стат↔персонаж переехала на StatDefinition.linkedCharacterId
@@ -340,6 +336,16 @@ export const DEFAULT_THINKING_PLAN = `- Scene: where we are, who is actually her
 - Tone: does the mood of the scene turn this turn? (1 line, or "same")
 - Any stat/relationship change? (1 line, or "none")
 - Offer a choice? (only at a real fork, else "no")`;
+
+// РП-вариант того же чек-листа — БЕЗ пунктов про стат/выбор: в РП нет ни JSON-статов,
+// ни кнопок выбора, и строка «Offer a choice?» в плане размышления была ровно тем,
+// из-за чего модель начинала предлагать выбор в конце обычной прозы (сама мысль
+// «а не предложить ли выбор» просачивалась из скрытого плана в видимый текст).
+export const DEFAULT_RP_THINKING_PLAN = `- Scene: where we are, who is actually here, what each of them wants, what they are wearing — carried over from last turn; name only what CHANGES now (1 line)
+- Focus: what shifts this turn — does the story move, or circle what already happened? (1 line)
+- Friction: who here does NOT simply go along with {{user}} right now, and why? (1 line, or "nobody, and here is why that is earned")
+- Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")
+- Tone: does the mood of the scene turn this turn? (1 line, or "same")`;
 
 // Прежние дефолты плана. Если у проекта лежит ровно такой текст — автор его не
 // правил, просто он сохранился при первом открытии панели, и его надо обновить.
@@ -973,6 +979,26 @@ export interface PlayerTheme {
   spriteScale: number; // множитель размера спрайта персонажа (0.5–1.6)
   spriteOffsetX: number; // смещение спрайта по X, % (влево−/вправо+)
   spriteOffsetY: number; // смещение спрайта по Y, % (вниз−/вверх+)
+  // Номер сообщения (#N) рядом с именем в ленте переписки — как в Таверне. Смысл
+  // есть только у режима РП (там есть лента); в новелле поле просто не читается.
+  showMessageNumbers: boolean;
+  // --- Ниже — поля, которые читает только лента РП (RpChat). В новелле у них нет
+  // экрана, где применяться: там свой DialogueBox и своя «Окна/панели» поверхность. ---
+  // Фон ленты переписки — под сообщениями, не путать с фоном сцены новеллы.
+  chatBgColor: string;
+  // Бабл рассказчика — отдельно от общей поверхности «окна/панели» (та же
+  // поверхность ещё красит панель ввода и HUD, трогать её ради одного бабла нельзя).
+  narratorBubbleColor: string;
+  narratorBubbleOpacity: number; // 0..1
+  // Бабл игрока — отдельно от акцента: акцент используется много где ещё (кнопки,
+  // подсветки), а бабл игрока должен настраиваться независимо.
+  userBubbleColor: string;
+  userBubbleOpacity: number; // 0..1
+  // Настройки набора текста «как в читалке»: межстрочный интервал, расстояние
+  // между сообщениями в ленте, отступ между абзацами внутри одного сообщения.
+  lineHeight: number; // 1.2–2.4
+  messageSpacing: number; // множитель отступа между сообщениями (0.4–3)
+  paragraphSpacing: number; // множитель отступа между абзацами внутри сообщения (0–3)
 }
 
 export const DEFAULT_PLAYER_THEME: PlayerTheme = {
@@ -995,6 +1021,15 @@ export const DEFAULT_PLAYER_THEME: PlayerTheme = {
   spriteScale: 1,
   spriteOffsetX: 0,
   spriteOffsetY: 0,
+  showMessageNumbers: false,
+  chatBgColor: '#000000',
+  narratorBubbleColor: '#100d18',
+  narratorBubbleOpacity: 0.72,
+  userBubbleColor: '#b18cff',
+  userBubbleOpacity: 0.16,
+  lineHeight: 1.6,
+  messageSpacing: 1,
+  paragraphSpacing: 1,
 };
 
 // Санитизация частичной/битой темы (импорт проекта, старый глобальный конфиг) → полная.
@@ -1024,6 +1059,15 @@ export function normalizePlayerTheme(p: unknown): PlayerTheme {
     spriteScale: numIn(o.spriteScale, 1, 0.3, 2),
     spriteOffsetX: numIn(o.spriteOffsetX, 0, -100, 100),
     spriteOffsetY: numIn(o.spriteOffsetY, 0, -100, 100),
+    showMessageNumbers: typeof o.showMessageNumbers === 'boolean' ? o.showMessageNumbers : D.showMessageNumbers,
+    chatBgColor: strOr(o.chatBgColor, D.chatBgColor),
+    narratorBubbleColor: strOr(o.narratorBubbleColor, D.narratorBubbleColor),
+    narratorBubbleOpacity: numIn(o.narratorBubbleOpacity, D.narratorBubbleOpacity, 0, 1),
+    userBubbleColor: strOr(o.userBubbleColor, D.userBubbleColor),
+    userBubbleOpacity: numIn(o.userBubbleOpacity, D.userBubbleOpacity, 0, 1),
+    lineHeight: numIn(o.lineHeight, D.lineHeight, 1.2, 2.4),
+    messageSpacing: numIn(o.messageSpacing, D.messageSpacing, 0.4, 3),
+    paragraphSpacing: numIn(o.paragraphSpacing, D.paragraphSpacing, 0, 3),
   };
 }
 
@@ -1341,10 +1385,6 @@ export interface OnScreenSprite {
 
 export interface RuntimeState {
   protagonistName: string; // имя героя (из карточки протагониста в конструкторе)
-  // Аватарка героя ИМЕННО ЭТОГО прохождения. Одну и ту же историю можно вести
-  // разными персонажами, поэтому лицо игрока живёт в прохождении, а не в проекте;
-  // пусто — берётся аватарка карточки протагониста, а нет и её — буква имени.
-  protagonistAvatarAssetId?: string;
   statValues: Record<string, number>;
   // Живые значения статов отношений per персонаж (charId -> RelationshipStats).
   relationship: Record<string, RelationshipStats>;

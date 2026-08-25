@@ -165,23 +165,13 @@ export function CharacterEditor() {
         <div className="space-y-4">
           <div className="card">
             <div className="grid md:grid-cols-2 gap-3">
-              <div className="flex gap-3 items-start">
-                {/* Аватарка — лицо для ленты переписки и телефона. Спрайты для
-                    этого не годятся: они в полный рост и под сцену. */}
-                <CharacterAvatarField
-                  name={selected.name}
-                  assetId={selected.avatarAssetId}
-                  fallbackAssetId={selected.sprites?.neutral}
-                  onPick={(assetId) => patchChar(selected.id, (c) => (c.avatarAssetId = assetId))}
+              <Field label="Имя">
+                <input
+                  className="input"
+                  value={selected.name}
+                  onChange={(e) => patchChar(selected.id, (c) => (c.name = e.target.value))}
                 />
-                <Field label="Имя" className="flex-1">
-                  <input
-                    className="input"
-                    value={selected.name}
-                    onChange={(e) => patchChar(selected.id, (c) => (c.name = e.target.value))}
-                  />
-                </Field>
-              </div>
+              </Field>
               <div>
                 <label className="label">Роль</label>
                 <div className="flex flex-wrap gap-2">
@@ -802,80 +792,6 @@ function SpriteBinder({ characterId }: { characterId: string }) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-
-// Аватарка персонажа: залить своё изображение или снять. Кладём как ассет типа
-// 'icon' — тот же путь, что у иконок статов, поэтому она едет с проектом при
-// экспорте и копировании без отдельной ветки в хранилище.
-function CharacterAvatarField({
-  name,
-  assetId,
-  fallbackAssetId,
-  onPick,
-}: {
-  name: string;
-  assetId?: string;
-  fallbackAssetId?: string;
-  onPick: (assetId: string | undefined) => void;
-}) {
-  const { project, update } = useProjectStore();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const shown = assetId || fallbackAssetId;
-  const blobKey = project?.assets.find((a) => a.id === shown)?.blobKey;
-
-  async function pick(file: File) {
-    setBusy(true);
-    try {
-      const asset = await uploadAsset(file, 'icon');
-      update((p) => {
-        p.assets = [...p.assets, asset];
-      });
-      onPick(asset.id);
-    } catch (e) {
-      pushToast('error', 'Не удалось загрузить аватарку: ' + (e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="shrink-0">
-      <label className="label">Аватарка</label>
-      <button
-        className="w-16 h-16 rounded-full overflow-hidden border border-white/15 hover:border-accent2 bg-panel2 flex items-center justify-center text-xl"
-        title={assetId ? 'Сменить аватарку' : 'Загрузить аватарку'}
-        disabled={busy}
-        onClick={() => fileRef.current?.click()}
-      >
-        {busy ? '…' : blobKey ? (
-          <AssetImage blobKey={blobKey} className="w-full h-full object-cover" />
-        ) : (
-          (name.trim()[0] || '?').toUpperCase()
-        )}
-      </button>
-      {assetId && (
-        <button className="btn-ghost !px-2 !py-0.5 text-[11px] mt-1 w-16" onClick={() => onPick(undefined)}>
-          сбросить
-        </button>
-      )}
-      {!assetId && fallbackAssetId && (
-        <p className="text-[10px] text-gray-500 mt-1 w-16 leading-tight">пока спрайт</p>
-      )}
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        hidden
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) void pick(f);
-          e.target.value = '';
-        }}
-      />
     </div>
   );
 }

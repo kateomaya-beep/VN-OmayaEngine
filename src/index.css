@@ -116,7 +116,7 @@ body {
 
 /* Безопасный markdown в тексте новеллы (см. Batch 3 §7-bis). */
 .md-content p {
-  margin: 0 0 0.6em;
+  margin: 0 0 calc(0.6em * var(--pl-p-spacing, 1));
 }
 .md-content p:last-child {
   margin-bottom: 0;

@@ -1,10 +1,13 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
+import type { Project } from '../../../shared/types';
 import { Markdown } from '../../../shared/markdown';
 import { runCompletion } from '../../../ai/providers';
 import { usePresetSettings } from '../../../ai/presetSettings';
 import { pushToast } from '../../../shared/toast';
 import { logEvent } from '../../../shared/logStore';
+import { MessageMenu, type MessageMenuItem } from '../../../shared/MessageMenu';
+import { copyToClipboard } from '../../../shared/utils';
 import {
   applyAssistantOps,
   buildAssistantSystem,
@@ -33,8 +36,16 @@ const QUICK: { label: string; text: string }[] = [
   { label: 'Стартовая сцена', text: 'Предложи стартовую сцену: где герой, что только что произошло, с чего начинается первый ход.' },
 ];
 
-export function AssistantChat() {
-  const { project, update } = useProjectStore();
+// Компонент используется и в конструкторе (без пропсов — берёт проект из
+// projectStore), и в плеере во время игры (Task 15): там своё хранилище
+// (playerStore), поэтому проект и мутатор можно передать явно.
+export function AssistantChat(props?: {
+  project?: Project | null;
+  update?: (mutator: (p: Project) => void) => void;
+}) {
+  const store = useProjectStore();
+  const project = props?.project !== undefined ? props.project : store.project;
+  const update = props?.update ?? store.update;
   const cfg = usePresetSettings((s) => s.settings);
   const patchCfg = usePresetSettings((s) => s.patch);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -42,6 +53,8 @@ export function AssistantChat() {
   const [busy, setBusy] = useState(false);
   const [stream, setStream] = useState('');
   const [personaOpen, setPersonaOpen] = useState(false);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
   const chat = (project?.assistantChat as AssistantMessage[] | undefined) ?? [];
@@ -51,6 +64,13 @@ export function AssistantChat() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [chat.length, stream, busy]);
 
+  // Правка закрывается сама, если сообщение исчезло (удаление, перегенерация,
+  // очистка переписки) — иначе открытая форма правила бы чужой текст под тем же
+  // индексом.
+  useEffect(() => {
+    if (editing !== null && editing >= chat.length) setEditing(null);
+  }, [chat.length, editing]);
+
   if (!project) return null;
 
   const setChat = (next: AssistantMessage[]) =>
@@ -58,12 +78,11 @@ export function AssistantChat() {
       p.assistantChat = next;
     });
 
-  async function send(text: string) {
-    const body = text.trim();
-    if (!body || busy || !project) return;
-    const history: AssistantMessage[] = [...chat, { role: 'user', content: body }];
-    setChat(history);
-    setDraft('');
+  // Общий вызов модели: принимает переписку, ЗАКАНЧИВАЮЩУЮСЯ вопросом игрока, и
+  // дописывает в неё ответ ассистента. Отдельная функция — чтобы обычная отправка
+  // и перегенерация (тот же запрос, без нового сообщения игрока) не расходились.
+  async function ask(history: AssistantMessage[]) {
+    if (!project) return;
     setBusy(true);
     setStream('');
     const controller = new AbortController();
@@ -115,6 +134,51 @@ export function AssistantChat() {
     }
   }
 
+  async function send(text: string) {
+    const body = text.trim();
+    if (!body || busy || !project) return;
+    const history: AssistantMessage[] = [...chat, { role: 'user', content: body }];
+    setChat(history);
+    setDraft('');
+    await ask(history);
+  }
+
+  // Перегенерация — только для последнего ответа ассистента: откатить правки,
+  // применённые прежним ответом (иначе они осядут в проекте без сообщения, к
+  // которому привязана кнопка отмены), убрать его из переписки и спросить заново.
+  async function regenerate(index: number) {
+    const msg = chat[index];
+    if (busy || !project || msg?.role !== 'assistant' || index !== chat.length - 1) return;
+    if (msg.changes?.length && !msg.reverted) {
+      update((p) => revertAssistantChanges(p, msg.changes!));
+    }
+    const history = chat.slice(0, index);
+    setChat(history);
+    await ask(history);
+  }
+
+  function deleteMessage(index: number) {
+    const msg = chat[index];
+    if (!msg) return;
+    if (!confirm('Удалить это сообщение из переписки?')) return;
+    if (msg.changes?.length && !msg.reverted) {
+      update((p) => revertAssistantChanges(p, msg.changes!));
+    }
+    setChat(chat.filter((_, i) => i !== index));
+    if (editing === index) setEditing(null);
+  }
+
+  function startEdit(index: number) {
+    setEditing(index);
+    setEditText(chat[index]?.content ?? '');
+  }
+
+  function commitEdit() {
+    if (editing === null) return;
+    setChat(chat.map((m, i) => (i === editing ? { ...m, content: editText } : m)));
+    setEditing(null);
+  }
+
   function undo(index: number) {
     const msg = chat[index];
     if (!msg?.changes?.length || msg.reverted) return;
@@ -139,22 +203,57 @@ export function AssistantChat() {
             </div>
           )}
 
-          {chat.map((m, i) => (
+          {chat.map((m, i) => {
+            const displayText = m.role === 'assistant' ? stripApplyBlock(m.content) : m.content;
+            const menuItems: MessageMenuItem[] = [
+              { label: 'Редактировать', icon: '✎', onClick: () => startEdit(i) },
+              { label: 'Копировать', icon: '⧉', onClick: () => copyToClipboard(displayText) },
+            ];
+            if (m.role === 'assistant' && i === chat.length - 1) {
+              menuItems.push({ label: 'Перегенерировать', icon: '↻', onClick: () => void regenerate(i) });
+            }
+            menuItems.push({ label: 'Удалить', icon: '✕', onClick: () => deleteMessage(i), danger: true });
+            return (
             <div
               key={i}
-              className={`rounded-xl px-3.5 py-2.5 border ${
+              className={`group relative rounded-xl px-3.5 py-2.5 border ${
                 m.role === 'user'
                   ? 'bg-accent2/10 border-accent2/25'
                   : 'bg-panel2 border-white/10'
               }`}
             >
-              <div className="text-[11px] font-semibold tracking-wide mb-1 text-gray-400">
-                {m.role === 'user' ? 'Вы' : 'Ассистент'}
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-[11px] font-semibold tracking-wide text-gray-400">
+                  {m.role === 'user' ? 'Вы' : 'Ассистент'}
+                </div>
+                {editing !== i && (
+                  <div className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <MessageMenu items={menuItems} disabled={busy} />
+                  </div>
+                )}
               </div>
+              {editing === i ? (
+                <div>
+                  <textarea
+                    className="input w-full h-32 text-sm font-mono"
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                  />
+                  <div className="flex gap-2 justify-end mt-2">
+                    <button className="btn-ghost !py-1 !px-3 text-xs" onClick={() => setEditing(null)}>
+                      Отмена
+                    </button>
+                    <button className="btn-primary !py-1 !px-3 text-xs" onClick={commitEdit}>
+                      Сохранить
+                    </button>
+                  </div>
+                </div>
+              ) : (
               <Markdown
-                text={m.role === 'assistant' ? stripApplyBlock(m.content) : m.content}
+                text={displayText}
                 className="block text-sm leading-relaxed whitespace-pre-wrap"
               />
+              )}
               {!!m.changes?.length && (
                 <div
                   className={`mt-2.5 rounded-lg border p-2.5 ${
@@ -179,7 +278,8 @@ export function AssistantChat() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
 
           {busy && (
             <div className="rounded-xl px-3.5 py-2.5 border bg-panel2 border-white/10">

@@ -6,6 +6,7 @@ import {
   DEFAULT_PLAYER_THEME,
   spriteDisplayOf,
   isDefaultSpriteDisplay,
+  normalizeNarrativeMode,
   type PlayerTheme,
   type Project,
   type SpriteDisplay,
@@ -186,6 +187,9 @@ export function WorkshopPanel({
   const { lang } = useLang();
   const L = (ru: string, en: string) => (lang === 'en' ? en : ru);
   const set = onChange;
+  // РП — лента переписки без спрайтов и выборов: там свои поверхности (баблы
+  // рассказчика/игрока, фон чата) и «читалочные» настройки текста вместо них.
+  const isRp = normalizeNarrativeMode(project?.mode) === 'rp';
 
   const activeFont = FONT_PRESETS.find((f) => f.family === theme.fontFamily);
   const custom = L('Свой цвет', 'Custom color');
@@ -230,9 +234,14 @@ export function WorkshopPanel({
           />
         </div>
 
-        {/* Поверхности: окна/панели, кнопки выбора, премиум-выборы */}
+        {/* Поверхности: в новелле — реплика/ввод/HUD и выборы; в РП выборов нет
+            вовсе, зато есть своя лента с фоном и раздельными баблами. */}
         <SurfaceControl
-          label={L('Окна и панели (реплика, ввод, HUD)', 'Windows & panels (dialogue, input, HUD)')}
+          label={
+            isRp
+              ? L('Панель ввода и HUD', 'Input bar & HUD')
+              : L('Окна и панели (реплика, ввод, HUD)', 'Windows & panels (dialogue, input, HUD)')
+          }
           color={theme.bubbleColor}
           opacity={theme.bubbleOpacity}
           presets={DARK_PRESETS}
@@ -241,26 +250,61 @@ export function WorkshopPanel({
           onColor={(bubbleColor) => set({ bubbleColor })}
           onOpacity={(bubbleOpacity) => set({ bubbleOpacity })}
         />
-        <SurfaceControl
-          label={L('Кнопки выбора', 'Choice buttons')}
-          color={theme.choiceColor}
-          opacity={theme.choiceOpacity}
-          presets={DARK_PRESETS}
-          customLabel={custom}
-          densityLabel={density}
-          onColor={(choiceColor) => set({ choiceColor })}
-          onOpacity={(choiceOpacity) => set({ choiceOpacity })}
-        />
-        <SurfaceControl
-          label={L('Премиум-выборы (за очки)', 'Premium choices (cost points)')}
-          color={theme.premiumColor}
-          opacity={theme.premiumOpacity}
-          presets={PREMIUM_PRESETS}
-          customLabel={custom}
-          densityLabel={density}
-          onColor={(premiumColor) => set({ premiumColor })}
-          onOpacity={(premiumOpacity) => set({ premiumOpacity })}
-        />
+        {isRp ? (
+          <>
+            <div className="mt-5">
+              <label className="label">{L('Фон ленты чата', 'Chat feed background')}</label>
+              <ColorField
+                label={L('Цвет фона', 'Background color')}
+                value={theme.chatBgColor}
+                onChange={(chatBgColor) => set({ chatBgColor })}
+              />
+            </div>
+            <SurfaceControl
+              label={L('Бабл рассказчика', 'Narrator bubble')}
+              color={theme.narratorBubbleColor}
+              opacity={theme.narratorBubbleOpacity}
+              presets={DARK_PRESETS}
+              customLabel={custom}
+              densityLabel={density}
+              onColor={(narratorBubbleColor) => set({ narratorBubbleColor })}
+              onOpacity={(narratorBubbleOpacity) => set({ narratorBubbleOpacity })}
+            />
+            <SurfaceControl
+              label={L('Бабл игрока', 'Player bubble')}
+              color={theme.userBubbleColor}
+              opacity={theme.userBubbleOpacity}
+              presets={ACCENT_PRESETS}
+              customLabel={custom}
+              densityLabel={density}
+              onColor={(userBubbleColor) => set({ userBubbleColor })}
+              onOpacity={(userBubbleOpacity) => set({ userBubbleOpacity })}
+            />
+          </>
+        ) : (
+          <>
+            <SurfaceControl
+              label={L('Кнопки выбора', 'Choice buttons')}
+              color={theme.choiceColor}
+              opacity={theme.choiceOpacity}
+              presets={DARK_PRESETS}
+              customLabel={custom}
+              densityLabel={density}
+              onColor={(choiceColor) => set({ choiceColor })}
+              onOpacity={(choiceOpacity) => set({ choiceOpacity })}
+            />
+            <SurfaceControl
+              label={L('Премиум-выборы (за очки)', 'Premium choices (cost points)')}
+              color={theme.premiumColor}
+              opacity={theme.premiumOpacity}
+              presets={PREMIUM_PRESETS}
+              customLabel={custom}
+              densityLabel={density}
+              onColor={(premiumColor) => set({ premiumColor })}
+              onOpacity={(premiumOpacity) => set({ premiumOpacity })}
+            />
+          </>
+        )}
 
         {/* Цвета текста */}
         <label className="label mt-5">{L('Цвета текста', 'Text colors')}</label>
@@ -361,61 +405,138 @@ export function WorkshopPanel({
           className="w-full accent-[var(--pl-accent,#b18cff)]"
         />
 
-        {/* Спрайты персонажей: размер + положение */}
-        <label className="label mt-5">{L('Спрайты персонажей', 'Character sprites')}</label>
-        <div className="space-y-2">
-          <div>
-            <div className="text-xs text-gray-400 mb-1">
-              {L('Размер', 'Size')}: {Math.round(theme.spriteScale * 100)}%
-            </div>
-            <input
-              type="range"
-              min={0.5}
-              max={1.6}
-              step={0.02}
-              value={theme.spriteScale}
-              onChange={(e) => set({ spriteScale: Number(e.target.value) })}
-              className="w-full accent-[var(--pl-accent,#b18cff)]"
-            />
-          </div>
-          <div>
-            <div className="text-xs text-gray-400 mb-1">
-              {L('По горизонтали', 'Horizontal')}: {theme.spriteOffsetX > 0 ? '+' : ''}
-              {theme.spriteOffsetX}%
-            </div>
-            <input
-              type="range"
-              min={-50}
-              max={50}
-              step={1}
-              value={theme.spriteOffsetX}
-              onChange={(e) => set({ spriteOffsetX: Number(e.target.value) })}
-              className="w-full accent-[var(--pl-accent,#b18cff)]"
-            />
-          </div>
-          <div>
-            <div className="text-xs text-gray-400 mb-1">
-              {L('По вертикали (выше +)', 'Vertical (up +)')}: {theme.spriteOffsetY > 0 ? '+' : ''}
-              {theme.spriteOffsetY}%
-            </div>
-            <input
-              type="range"
-              min={-50}
-              max={50}
-              step={1}
-              value={theme.spriteOffsetY}
-              onChange={(e) => set({ spriteOffsetY: Number(e.target.value) })}
-              className="w-full accent-[var(--pl-accent,#b18cff)]"
-            />
-          </div>
-        </div>
+        {isRp && (
+          <>
+            {/* Разное */}
+            <label className="label mt-5">{L('Разное', 'Misc')}</label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={theme.showMessageNumbers}
+                onChange={(e) => set({ showMessageNumbers: e.target.checked })}
+              />
+              {L('Счётчик сообщений', 'Message counter')}
+            </label>
+            <p className="text-[11px] text-gray-500 mt-1 mb-1">
+              {L(
+                'Номер сообщения рядом с именем в ленте переписки — как в Таверне.',
+                'A message number next to the name in the chat feed — like in Tavern.'
+              )}
+            </p>
 
-        {project && onPatchCharacter && (
-          <PerCharacterSprites project={project} onPatch={onPatchCharacter} L={L} />
+            {/* Настройки чтения: интервалы — как в хорошей читалке */}
+            <label className="label mt-5">{L('Настройки чтения', 'Reading settings')}</label>
+            <div className="space-y-3">
+              <div>
+                <div className="text-xs text-gray-400 mb-1">
+                  {L('Межстрочный интервал', 'Line height')}: {theme.lineHeight.toFixed(2)}
+                </div>
+                <input
+                  type="range"
+                  min={1.2}
+                  max={2.4}
+                  step={0.05}
+                  value={theme.lineHeight}
+                  onChange={(e) => set({ lineHeight: Number(e.target.value) })}
+                  className="w-full accent-[var(--pl-accent,#b18cff)]"
+                />
+              </div>
+              <div>
+                <div className="text-xs text-gray-400 mb-1">
+                  {L('Расстояние между сообщениями', 'Spacing between messages')}:{' '}
+                  {theme.messageSpacing.toFixed(2)}
+                </div>
+                <input
+                  type="range"
+                  min={0.4}
+                  max={3}
+                  step={0.1}
+                  value={theme.messageSpacing}
+                  onChange={(e) => set({ messageSpacing: Number(e.target.value) })}
+                  className="w-full accent-[var(--pl-accent,#b18cff)]"
+                />
+              </div>
+              <div>
+                <div className="text-xs text-gray-400 mb-1">
+                  {L('Отступ между абзацами', 'Spacing between paragraphs')}:{' '}
+                  {theme.paragraphSpacing.toFixed(2)}
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={3}
+                  step={0.1}
+                  value={theme.paragraphSpacing}
+                  onChange={(e) => set({ paragraphSpacing: Number(e.target.value) })}
+                  className="w-full accent-[var(--pl-accent,#b18cff)]"
+                />
+              </div>
+            </div>
+          </>
         )}
 
-        {/* Живой предпросмотр (реплика + обычный и премиум выборы) */}
+        {!isRp && (
+          <>
+            {/* Спрайты персонажей: размер + положение */}
+            <label className="label mt-5">{L('Спрайты персонажей', 'Character sprites')}</label>
+            <div className="space-y-2">
+              <div>
+                <div className="text-xs text-gray-400 mb-1">
+                  {L('Размер', 'Size')}: {Math.round(theme.spriteScale * 100)}%
+                </div>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={1.6}
+                  step={0.02}
+                  value={theme.spriteScale}
+                  onChange={(e) => set({ spriteScale: Number(e.target.value) })}
+                  className="w-full accent-[var(--pl-accent,#b18cff)]"
+                />
+              </div>
+              <div>
+                <div className="text-xs text-gray-400 mb-1">
+                  {L('По горизонтали', 'Horizontal')}: {theme.spriteOffsetX > 0 ? '+' : ''}
+                  {theme.spriteOffsetX}%
+                </div>
+                <input
+                  type="range"
+                  min={-50}
+                  max={50}
+                  step={1}
+                  value={theme.spriteOffsetX}
+                  onChange={(e) => set({ spriteOffsetX: Number(e.target.value) })}
+                  className="w-full accent-[var(--pl-accent,#b18cff)]"
+                />
+              </div>
+              <div>
+                <div className="text-xs text-gray-400 mb-1">
+                  {L('По вертикали (выше +)', 'Vertical (up +)')}: {theme.spriteOffsetY > 0 ? '+' : ''}
+                  {theme.spriteOffsetY}%
+                </div>
+                <input
+                  type="range"
+                  min={-50}
+                  max={50}
+                  step={1}
+                  value={theme.spriteOffsetY}
+                  onChange={(e) => set({ spriteOffsetY: Number(e.target.value) })}
+                  className="w-full accent-[var(--pl-accent,#b18cff)]"
+                />
+              </div>
+            </div>
+
+            {project && onPatchCharacter && (
+              <PerCharacterSprites project={project} onPatch={onPatchCharacter} L={L} />
+            )}
+          </>
+        )}
+
+        {/* Живой предпросмотр */}
         <div className="label mt-5">{L('Предпросмотр', 'Preview')}</div>
+        {isRp ? (
+          <RpPreview theme={theme} L={L} />
+        ) : (
         <div className="rounded-xl overflow-hidden border border-white/10">
           <div className="p-4 bg-gradient-to-b from-[#241d33] to-[#0a0912]">
             <div
@@ -448,6 +569,7 @@ export function WorkshopPanel({
             </div>
           </div>
         </div>
+        )}
 
         <div className="flex justify-between items-center mt-5">
           <button className="btn-ghost text-sm" onClick={() => set({ ...DEFAULT_PLAYER_THEME })}>
@@ -462,6 +584,73 @@ export function WorkshopPanel({
   );
 }
 
+// Предпросмотр ленты РП: бабл рассказчика + бабл игрока с текущими цветом/
+// прозрачностью/интервалами — те самые переменные, что и в самой игре (см.
+// themeVars), поэтому подкрутка ползунка сразу видна здесь без захода в игру.
+function RpPreview({
+  theme,
+  L,
+}: {
+  theme: PlayerTheme;
+  L: (ru: string, en: string) => string;
+}) {
+  return (
+    <div
+      className="rounded-xl overflow-hidden border border-white/10 p-4"
+      style={{ background: theme.chatBgColor || '#000000' }}
+    >
+      <div className="flex flex-col" style={{ gap: `${theme.messageSpacing}rem` }}>
+        <div
+          className="relative rounded-2xl px-4 pt-8 pb-3 border border-[rgba(180,150,255,0.14)]"
+          style={{ background: 'var(--pl-narrator-bg)' }}
+        >
+          <div className="absolute top-2 inset-x-0 flex items-center justify-center gap-1.5">
+            <span
+              className="text-xs font-semibold tracking-wide opacity-70"
+              style={{ color: 'var(--pl-text)', fontSize: 'calc(0.75rem * var(--pl-name-scale, 1))' }}
+            >
+              {L('Название проекта', 'Project title')}
+            </span>
+          </div>
+          <p
+            className="m-0 text-[var(--pl-text)] md-content"
+            style={{
+              fontSize: 'calc(15px * var(--pl-font-scale, 1))',
+              lineHeight: theme.lineHeight,
+            }}
+          >
+            {L('Держи нитки для зайца. ', 'Here are the threads. ')}
+            <span className="md-quote">{L('«Не потеряй их снова»', '"Don’t lose them again"')}</span>
+            {L('. ', '. ')}
+            <em>{L('Он украдкой улыбается.', 'He smiles faintly.')}</em>
+          </p>
+        </div>
+        <div
+          className="relative rounded-2xl px-4 pt-8 pb-3 border border-[rgba(180,150,255,0.28)]"
+          style={{ background: 'var(--pl-user-bg)' }}
+        >
+          <div className="absolute top-2 inset-x-0 flex items-center justify-center gap-1.5">
+            <span
+              className="text-xs font-semibold tracking-wide"
+              style={{ color: 'var(--pl-accent-bright)', fontSize: 'calc(0.75rem * var(--pl-name-scale, 1))' }}
+            >
+              {L('Игрок', 'Player')}
+            </span>
+          </div>
+          <p
+            className="m-0 text-[var(--pl-text)] md-content"
+            style={{
+              fontSize: 'calc(15px * var(--pl-font-scale, 1))',
+              lineHeight: theme.lineHeight,
+            }}
+          >
+            {L('«Спасибо, не потеряю».', '"Thanks, I won’t lose them."')}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ЛИЧНАЯ подгонка спрайтов. Общие ползунки выше двигают всех разом, но рисовки
 // приходят в разном масштабе и с разным полем вокруг фигуры: подогнал одного —

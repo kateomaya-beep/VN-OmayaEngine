@@ -88,6 +88,14 @@ export function themeVars(t: PlayerTheme): CSSProperties {
     '--pl-sprite-scale': String(t.spriteScale),
     '--pl-sprite-x': `${t.spriteOffsetX}%`,
     '--pl-sprite-y': `${-t.spriteOffsetY}%`,
+    // Лента РП: фон, баблы рассказчика/игрока отдельно от общей поверхности и
+    // акцента, и «читалочные» интервалы (межстрочный, между сообщениями, абзацы).
+    '--pl-chat-bg': t.chatBgColor,
+    '--pl-narrator-bg': rgba(t.narratorBubbleColor, t.narratorBubbleOpacity, [16, 13, 24]),
+    '--pl-user-bg': rgba(t.userBubbleColor, t.userBubbleOpacity, [177, 140, 255]),
+    '--pl-line-height': String(t.lineHeight),
+    '--pl-msg-gap': `${t.messageSpacing}rem`,
+    '--pl-p-spacing': String(t.paragraphSpacing),
     ...(t.fontFamily ? { fontFamily: `'${t.fontFamily}', 'Inter', system-ui, sans-serif` } : {}),
   } as CSSProperties;
 }

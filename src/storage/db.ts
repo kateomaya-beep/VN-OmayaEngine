@@ -189,8 +189,6 @@ export async function adaptProjectToMode(
       outfits: undefined,
       defaultOutfit: undefined,
       spriteDisplay: undefined,
-      // Аватарка могла указывать на спрайт, который мы только что выбросили.
-      avatarAssetId: c.avatarAssetId && keep.has(c.avatarAssetId) ? c.avatarAssetId : undefined,
     }));
     if (clone.meta.coverAssetId && !keep.has(clone.meta.coverAssetId)) clone.meta.coverAssetId = undefined;
     // Иконки статов — тоже ассеты-иконки, они уцелели; но битую ссылку всё равно чистим.

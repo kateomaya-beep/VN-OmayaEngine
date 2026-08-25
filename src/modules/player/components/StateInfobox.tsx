@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import type { Project, WorldStateUpdate } from '../../../shared/types';
-import { Avatar, characterAvatarKey } from './Avatar';
+import type { WorldStateUpdate } from '../../../shared/types';
 
 // ИНФОБОКС СОСТОЯНИЯ под ответом модели — в духе Horae: короткая сводка «где мы,
 // сколько времени, кто здесь и что с ними» прямо в ленте, а не в отдельной панели.
@@ -13,7 +12,7 @@ import { Avatar, characterAvatarKey } from './Avatar';
 
 const CHIP = 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] bg-white/[0.06] border border-white/10';
 
-export function StateInfobox({ project, state }: { project: Project; state: WorldStateUpdate }) {
+export function StateInfobox({ state }: { state: WorldStateUpdate }) {
   const [open, setOpen] = useState(false);
   const clock = state.clock;
   const chars = state.characters || [];
@@ -41,9 +40,11 @@ export function StateInfobox({ project, state }: { project: Project; state: Worl
           <span className={CHIP}>🗂 сводка</span>
         )}
         {chars.length > 0 && (
-          <span className="flex items-center -space-x-1.5 ml-0.5">
+          <span className="flex items-center gap-1 flex-wrap">
             {chars.slice(0, 4).map((c) => (
-              <Avatar key={c.name} name={c.name} blobKey={characterAvatarKey(project, c.name)} size={20} />
+              <span key={c.name} className={CHIP}>
+                {c.name}
+              </span>
             ))}
           </span>
         )}
@@ -61,21 +62,18 @@ export function StateInfobox({ project, state }: { project: Project; state: Worl
               c.location && `где: ${c.location}`,
             ].filter(Boolean);
             return (
-              <div key={c.name} className="flex gap-2.5">
-                <Avatar name={c.name} blobKey={characterAvatarKey(project, c.name)} size={28} />
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-[color:var(--pl-text)]">{c.name}</div>
-                  {bits.length > 0 && <div className="text-xs text-gray-400">{bits.join(' · ')}</div>}
-                  {!!c.tags?.length && (
-                    <div className="flex gap-1 flex-wrap mt-1">
-                      {c.tags.map((t, i) => (
-                        <span key={i} className={CHIP}>
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+              <div key={c.name}>
+                <div className="text-sm font-semibold text-[color:var(--pl-text)]">{c.name}</div>
+                {bits.length > 0 && <div className="text-xs text-gray-400">{bits.join(' · ')}</div>}
+                {!!c.tags?.length && (
+                  <div className="flex gap-1 flex-wrap mt-1">
+                    {c.tags.map((t, i) => (
+                      <span key={i} className={CHIP}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}

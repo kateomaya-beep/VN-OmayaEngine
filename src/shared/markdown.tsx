@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react';
+
 // Безопасный рендер ограниченного markdown (Batch 3 §7-bis). ОБЯЗАТЕЛЬНАЯ
 // санитизация: сначала экранируем весь HTML, потом применяем markdown-разметку к
 // уже безопасному тексту. Никакого сырого HTML из ответа ИИ не проходит; ссылок/
@@ -103,9 +105,19 @@ export function renderMarkdown(text: string): string {
   return out.join('');
 }
 
-// Компонент: безопасно рендерит markdown-текст. className — на обёртку.
-export function Markdown({ text, className }: { text: string; className?: string }) {
-  return <span className={className} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
+// Компонент: безопасно рендерит markdown-текст. className/style — на обёртку.
+export function Markdown({
+  text,
+  className,
+  style,
+}: {
+  text: string;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <span className={className} style={style} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />
+  );
 }
 
 // Только инлайновая разметка (жирный/курсив/моно), без блочных элементов —

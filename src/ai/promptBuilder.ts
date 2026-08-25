@@ -1,5 +1,5 @@
 import type { NarrativeMode, Project, RuntimeState, LlmMessage } from '../shared/types';
-import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
+import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
@@ -994,24 +994,38 @@ export async function buildRequest(
 
   // Авторитетная длина хода (ползунок/ввод в пресете) — переопределяет любые числа
   // в тексте блоков. Ставим последней в системном промпте, чтобы имела приоритет.
+  // ТОЛЬКО новелла: язык про биты/characterId/спрайты не имеет смысла в РП, где ответ
+  // — обычная проза, а не JSON-массив бит.
   const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
-  systemParts.push(
-    `TURN LENGTH & BEAT SIZE (authoritative — overrides any other length/beat guidance above): land the turn WITHIN ${tl.min}–${tl.max} words TOTAL — that is the target, do NOT overshoot it; once you reach a natural pause inside the range, stop rather than padding. Split the turn into medium beats: each beat a readable 1–3 sentence chunk (a short paragraph) — never a wall of text, never a bare one-liner. Fill the range with the NUMBER of medium beats, not by inflating any single beat. Keep a real mix of dialogue and narration: characters who are present must actually SPEAK — emit "dialogue" beats with that character's characterId (a dialogue beat with a valid characterId is what puts the character's sprite on screen), interleaved with narration/thought.`
-  );
+  if (mode !== 'rp') {
+    systemParts.push(
+      `TURN LENGTH & BEAT SIZE (authoritative — overrides any other length/beat guidance above): land the turn WITHIN ${tl.min}–${tl.max} words TOTAL — that is the target, do NOT overshoot it; once you reach a natural pause inside the range, stop rather than padding. Split the turn into medium beats: each beat a readable 1–3 sentence chunk (a short paragraph) — never a wall of text, never a bare one-liner. Fill the range with the NUMBER of medium beats, not by inflating any single beat. Keep a real mix of dialogue and narration: characters who are present must actually SPEAK — emit "dialogue" beats with that character's characterId (a dialogue beat with a valid characterId is what puts the character's sprite on screen), interleaved with narration/thought.`
+    );
+  }
   // Частота выборов. По умолчанию (gap = 0) выборы обязательны КАЖДЫЙ ход — иначе
   // игрок упирается в экран без вариантов. Ползунок в пресете (gap > 0) — осознанный
   // отказ пользователя от этого: тогда просим модель придерживать выборы.
-  const gap = ps.choiceMinGap ?? 0;
-  systemParts.push(
-    gap > 0
-      ? `CHOICE FREQUENCY (authoritative): offer a choices block at most about once every ${gap} turns. On all other turns return choices: [] and let the player type. Only surface choices at a real decision point.`
-      : `CHOICES (authoritative — overrides any other guidance above): EVERY turn ends with 2–4 choices. Returning an empty choices array is never acceptable, not even on a quiet or transitional turn — there is always something to choose between (speak / stay silent / leave / look closer / change the subject). Write them from the hero's side, meaningfully different in intent or tone, actions in *italics*, no move tags, no bare "Continue".`
-  );
+  //
+  // ТОЛЬКО новелла. В РП выборов нет вовсе — это как раз и была причина, почему
+  // модель писала «выборы» в конце ответа даже при пустом rp_no_impersonation:
+  // здесь стояла БЕЗУСЛОВНАЯ директива «EVERY turn ends with 2–4 choices», да ещё
+  // и помеченная «overrides any other guidance above» — она перебивала весь
+  // РП-пресет и заставляла модель предлагать выбор каждый ход.
+  if (mode !== 'rp') {
+    const gap = ps.choiceMinGap ?? 0;
+    systemParts.push(
+      gap > 0
+        ? `CHOICE FREQUENCY (authoritative): offer a choices block at most about once every ${gap} turns. On all other turns return choices: [] and let the player type. Only surface choices at a real decision point.`
+        : `CHOICES (authoritative — overrides any other guidance above): EVERY turn ends with 2–4 choices. Returning an empty choices array is never acceptable, not even on a quiet or transitional turn — there is always something to choose between (speak / stay silent / leave / look closer / change the subject). Write them from the hero's side, meaningfully different in intent or tone, actions in *italics*, no move tags, no bare "Continue".`
+    );
+  }
   // Язык повествования (пресет). Управляет языком ТЕКСТА истории; ключи JSON и
   // id/настроения ассетов остаются английскими.
   const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
   systemParts.push(
-    `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts, character dialogue and choice texts — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate JSON keys, character ids, emotion keys, outfit tags, music moods or background ids — those stay exactly as given.`
+    mode === 'rp'
+      ? `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts and dialogue — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate character names or in-world proper nouns unless the setting calls for it.`
+      : `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts, character dialogue and choice texts — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate JSON keys, character ids, emotion keys, outfit tags, music moods or background ids — those stay exactly as given.`
   );
   // Реестр персонажей (patch character-registry) — идентичность по id + правило.
   // Единый WORLD STATE (Batch 8) — дата/деньги/долг/инвентарь + правила.
@@ -1246,7 +1260,7 @@ export async function buildRequest(
   // после закрытия тега — только ответ. Парсер вырезает <thinking>…</thinking>.
   let prefill = ps.prefill?.trim() || undefined;
   if (ps.guidedThinking) {
-    const plan = (ps.thinkingPlan?.trim() || DEFAULT_THINKING_PLAN);
+    const plan = (ps.thinkingPlan?.trim() || (mode === 'rp' ? DEFAULT_RP_THINKING_PLAN : DEFAULT_THINKING_PLAN));
     const after =
       mode === 'rp'
         ? 'Then immediately close </thinking> and write the scene itself and nothing else.'

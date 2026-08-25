@@ -20,6 +20,7 @@ import { AuthorNotesPanel } from './components/AuthorNotesPanel';
 import { SaveLoadPanel } from './components/Panels';
 import { WorkshopPanel } from './components/WorkshopPanel';
 import { WardrobePanel } from './components/WardrobePanel';
+import { AssistantPanel } from './components/AssistantPanel';
 import { themeVars, ensureFontLink, loadGlobalTheme } from './playerTheme';
 import { useT } from '../../shared/i18n';
 import { useGlobalNotes } from '../../shared/globalNotes';
@@ -44,6 +45,7 @@ export function PlayerPage() {
   const [notesOpen, setNotesOpen] = useState(false);
   const [workshopOpen, setWorkshopOpen] = useState(false);
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   // Экран запуска (Batch 5.2): Продолжить / Загрузить / Новая история.
   const [setup, setSetup] = useState<Setup>('launch');
   // Оформление плеера (мини-мастерская) — ПЕР-ПРОЕКТНОЕ: тема живёт в project.playerTheme.
@@ -134,6 +136,7 @@ export function PlayerPage() {
                       режиме их попросту некуда показать. */}
                   {!rp && <MenuItem icon="👗" label="Гардероб" onClick={() => setWardrobeOpen(true)} />}
                   <MenuItem icon="🎨" label="Оформление" onClick={() => setWorkshopOpen(true)} />
+                  <MenuItem icon="🪄" label="Ассистент" onClick={() => setAssistantOpen(true)} />
                   {!rp && <MenuItem icon="🎬" label="CG-студия" onClick={() => setCgStudioOpen(true)} />}
                   {!rp && <MenuItem icon="📱" label="Телефон" onClick={() => setPhoneOpen(true)} />}
                   {!rp && <MenuItem icon="🖼" label="Генерация фонов" onClick={() => setGenOpen((v) => !v)} />}
@@ -256,6 +259,7 @@ export function PlayerPage() {
       {!rp && <PhoneFloatingIcon onOpen={() => setPhoneOpen(true)} />}
       <PhoneWindow open={phoneOpen} onClose={() => setPhoneOpen(false)} />
       <WardrobePanel open={wardrobeOpen} onClose={() => setWardrobeOpen(false)} />
+      <AssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
       <WorkshopPanel
         open={workshopOpen}
         onClose={() => setWorkshopOpen(false)}

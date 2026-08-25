@@ -13,7 +13,7 @@ import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThi
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
-import { parseRpResponse, rpStopSequences, rpTurn, streamingProse, stripStateBlock } from './rpResponse';
+import { parseRpResponse, rpTurn, streamingProse, stripStateBlock } from './rpResponse';
 import { protagonistName } from './macros';
 import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
@@ -516,11 +516,19 @@ export async function applyTurn(
       ? state.currentMusicAssetId
       : pickTrackForMood(project, nextMood, state.currentMusicAssetId);
 
-  const history = [
-    ...state.history,
-    { role: 'user' as const, content: playerMove },
-    { role: 'assistant' as const, content: raw },
-  ];
+  // Стартовая сцена ([GAME START]) — не реплика героя, а директива режиссёра: в РП,
+  // где history показывается как есть (лента переписки), она не должна лечь в
+  // бабл игрока. Первым сообщением остаётся только ответ рассказчика; игрок
+  // отвечает на него уже своим первым настоящим ходом.
+  const isGameStart = playerMove.trimStart().startsWith('[GAME START]');
+  const history =
+    rpMode && isGameStart
+      ? [...state.history, { role: 'assistant' as const, content: raw }]
+      : [
+          ...state.history,
+          { role: 'user' as const, content: playerMove },
+          { role: 'assistant' as const, content: raw },
+        ];
 
   if (turn.chapterEvent === 'chapter_end') {
     facts.push({ turn: nextTurnNumber, kind: 'event', text: 'сюжетная веха' });
@@ -750,7 +758,7 @@ export async function runTurn(
   const reasoningEffort = ps.guidedThinking ? 'none' : ps.reasoningEffort;
 
   // Имена — для метода обработки промпта «одним сообщением» (там реплики надо
-  // подписывать) и для стоп-строк в РП.
+  // подписывать).
   const userName = protagonistName(project, state);
   const names = { userName, charName: project.characters.find((c) => c.role !== 'protagonist')?.name };
 
@@ -759,7 +767,11 @@ export async function runTurn(
   // ровно так же, как ход новеллы: одной narration-битой (см. rpTurn), поэтому
   // история, память, свёртка и Game Master работают без единой правки.
   if (req.mode === 'rp') {
-    const stop = ps.impersonationGuard ? rpStopSequences(userName) : undefined;
+    // Стоп-строки на провайдере НЕ шлём: это жёсткий обрыв всего запроса, который
+    // нельзя отменить, если он сработал по ложному поводу (имя героя мелькнуло в
+    // прозе не как попытка выдать его реплику). Страховка от «модель пишет за
+    // игрока» остаётся клиентской — trimImpersonation в parseRpResponse — она режет
+    // только хвост, а не теряет весь ход целиком.
     const ask = (extra?: string) => {
       // Накопитель для показа: провайдер отдаёт куски, а экрану нужен весь текст
       // целиком — иначе каждый кусок пришлось бы склеивать ещё и там.
@@ -782,7 +794,6 @@ export async function runTurn(
         temperature: extra ? Math.min(ps.temperature, 0.7) : ps.temperature,
         maxTokens,
         reasoningEffort,
-        stop,
         names,
         onDelta,
         signal,

@@ -60,13 +60,46 @@ export class StreamNotStarted extends Error {}
 // Читает SSE-поток построчно. Кадры разделяются пустой строкой; нас интересуют
 // только строки data:. \r\n нормализуем — их шлют некоторые шлюзы, и без этого
 // разделитель кадра не находится вовсе.
-async function readSse(res: Response, onData: (data: string) => void): Promise<void> {
+//
+// СТОРОЖЕВОЙ ТАЙМЕР: если провайдер молчит дольше staleMs между кусками (включая
+// самый первый), считаем соединение зависшим и обрываем его сами — иначе «вечная
+// загрузка» медленной/перегруженной модели ничем не отличима от честно работающего
+// запроса, и ждать пришлось бы буквально бесконечно. Ошибка тут не теряет уже
+// пришедший текст: вызывающий код (completeStream) при обрыве ПОСЛЕ первого куска
+// просто возвращает то, что успело прийти, а до первого куска — молча переигрывает
+// обычным (нестриминговым) запросом.
+async function readSse(
+  res: Response,
+  onData: (data: string) => void,
+  staleMs = 45000
+): Promise<void> {
   const reader = res.body?.getReader();
   if (!reader) throw new StreamNotStarted('Поток недоступен: у ответа нет тела');
   const dec = new TextDecoder();
   let buf = '';
   for (;;) {
-    const { done, value } = await reader.read();
+    let settled = false;
+    let timer!: ReturnType<typeof setTimeout>;
+    const chunk = await new Promise<{ done: boolean; value?: Uint8Array }>((resolve, reject) => {
+      timer = setTimeout(() => {
+        settled = true;
+        reject(new Error(`Провайдер не прислал ни байта дольше ${Math.round(staleMs / 1000)} с — похоже, завис`));
+      }, staleMs);
+      reader.read().then(
+        (r) => {
+          clearTimeout(timer);
+          if (!settled) resolve(r);
+        },
+        (e) => {
+          clearTimeout(timer);
+          if (!settled) reject(e);
+        }
+      );
+    }).catch((e) => {
+      reader.cancel().catch(() => {});
+      throw e;
+    });
+    const { done, value } = chunk;
     if (done) break;
     buf = (buf + dec.decode(value, { stream: true })).replace(/\r\n/g, '\n');
     let at: number;
@@ -508,6 +541,7 @@ const openAiCompatible: Provider = {
     }
     let out = '';
     let started = false;
+    let finishReason: string | undefined;
     try {
       await readSse(res, (data) => {
         if (data === '[DONE]') return;
@@ -517,6 +551,8 @@ const openAiCompatible: Provider = {
         } catch {
           return; // мусорная строка в потоке — пропускаем, ход из-за неё не теряем
         }
+        const fr = ev?.choices?.[0]?.finish_reason;
+        if (typeof fr === 'string') finishReason = fr;
         const piece = normalizeContent(ev?.choices?.[0]?.delta?.content);
         if (!piece) return;
         started = true;
@@ -528,9 +564,21 @@ const openAiCompatible: Provider = {
       if (!started) throw new StreamNotStarted((e as Error).message);
       // Поток оборвался на середине: то, что уже пришло, — настоящий текст, и
       // выбрасывать его хуже, чем отдать короткий ход.
-      logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти');
+      logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти: ' + (e as Error).message);
     }
     if (!started) throw new StreamNotStarted('Поток закрылся, не прислав ни одного куска текста');
+    // Диагностика для «модель обрывает ответ»: finish_reason из последнего кадра
+    // прямо называет причину, а не оставляет гадать. length/max_tokens — упёрлись
+    // в потолок ответа (лечится длиной хода в пресете), остальное — как есть.
+    if (finishReason && finishReason !== 'stop') {
+      logEvent(
+        'warn',
+        'llm',
+        finishReason === 'length' || finishReason === 'max_tokens'
+          ? `Ответ обрезан по лимиту токенов (finish_reason: ${finishReason}) — уменьшите длину хода в пресете или возьмите модель с бо́льшим max_tokens.`
+          : `Поток завершился с finish_reason: ${finishReason}`
+      );
+    }
     return prefill ? prefill + out : out;
   },
   async listModels(conn, apiKey) {
@@ -639,6 +687,7 @@ anthropic.completeStream = async function completeStream(conn, apiKey, req, onDe
   if (!res.ok) throw new StreamNotStarted(`Поток не открылся: HTTP ${res.status}`);
   let out = '';
   let started = false;
+  let stopReason: string | undefined;
   try {
     await readSse(res, (data) => {
       let ev: any;
@@ -646,6 +695,11 @@ anthropic.completeStream = async function completeStream(conn, apiKey, req, onDe
         ev = JSON.parse(data);
       } catch {
         return;
+      }
+      // message_delta несёт итоговый stop_reason (end_turn/max_tokens/stop_sequence/…)
+      // отдельным событием — не в том же кадре, что текст, поэтому ловим его особо.
+      if (ev?.type === 'message_delta' && typeof ev?.delta?.stop_reason === 'string') {
+        stopReason = ev.delta.stop_reason;
       }
       if (ev?.type !== 'content_block_delta') return;
       const piece = typeof ev?.delta?.text === 'string' ? ev.delta.text : '';
@@ -657,9 +711,18 @@ anthropic.completeStream = async function completeStream(conn, apiKey, req, onDe
   } catch (e) {
     if ((e as Error)?.name === 'AbortError') throw e;
     if (!started) throw new StreamNotStarted((e as Error).message);
-    logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти');
+    logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти: ' + (e as Error).message);
   }
   if (!started) throw new StreamNotStarted('Поток закрылся, не прислав ни одного куска текста');
+  if (stopReason && stopReason !== 'end_turn' && stopReason !== 'stop_sequence') {
+    logEvent(
+      'warn',
+      'llm',
+      stopReason === 'max_tokens'
+        ? `Ответ обрезан по лимиту токенов (stop_reason: max_tokens) — уменьшите длину хода в пресете или возьмите модель с бо́льшим max_tokens.`
+        : `Поток завершился с stop_reason: ${stopReason}`
+    );
+  }
   return pf ? pf + out : out;
 };
 

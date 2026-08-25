@@ -18,7 +18,7 @@ import { TokenCounter } from '../player/components/TokenCounter';
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
 import type { AdvancedPromptBlock, LlmRole } from '../../shared/types';
-import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, TURN_LENGTH_PRESETS, DEFAULT_THINKING_PLAN, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
+import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, TURN_LENGTH_PRESETS, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
 // отделён от настроек API. Каждый блок: порядок (drag&drop), роль system/user/assistant
@@ -297,15 +297,35 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
             <input
               type="checkbox"
               className="mt-1"
+              checked={cfg.streamingEnabled}
+              onChange={(e) => patch({ streamingEnabled: e.target.checked })}
+            />
+            <span>
+              Стриминг ответа
+              <span className="block text-[11px] text-gray-500">
+                Текст появляется по мере генерации, а не целиком в конце. Выключите, если конкретный
+                шлюз на потоке ведёт себя хуже (чаще рвётся, режет ответ) — тогда ход придёт обычным
+                запросом, как в новелле.
+              </span>
+            </span>
+          </label>
+        )}
+
+        {isRp && (
+          <label className="flex items-start gap-2 mt-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
               checked={cfg.impersonationGuard}
               onChange={(e) => patch({ impersonationGuard: e.target.checked })}
             />
             <span>
               Не давать модели писать за героя
               <span className="block text-[11px] text-gray-500">
-                Стоп-строка на реплику героя плюс срез хвоста, если модель всё же начала за него
-                говорить. Промпт один это не держит — блок «🚫 Не писать за игрока» и эта галочка
-                работают вместе.
+                Срез хвоста ответа, если модель всё же начала говорить за него. Промпт один это не
+                держит — блок «🚫 Не писать за игрока» и эта галочка работают вместе. Обрыв ответа
+                на провайдере намеренно не используется — он необратим, если сработает по ложному
+                поводу.
               </span>
             </span>
           </label>
@@ -362,7 +382,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
               thinking-моделей это медленно). Если провайдер не понимает параметр — оставьте «Авто».
             </p>
           </div>
-          <GuidedThinkingField cfg={cfg} patch={patch} />
+          <GuidedThinkingField cfg={cfg} patch={patch} isRp={isRp} />
           <Field label="Язык повествования (язык текста истории, не интерфейса)">
             <div className="flex gap-2">
               {(['ru', 'en'] as const).map((lg) => (
@@ -525,11 +545,16 @@ const BUDGET_PRESETS = [
 function GuidedThinkingField({
   cfg,
   patch,
+  isRp,
 }: {
   cfg: PresetSettings;
   patch: (p: Partial<PresetSettings>) => void;
+  /** План размышления один на все режимы (глобальная настройка), но дефолт и кнопка
+   * сброса должны предлагать вариант БЕЗ пункта про выбор — его в РП не существует. */
+  isRp: boolean;
 }) {
   const on = !!cfg.guidedThinking;
+  const modeDefault = isRp ? DEFAULT_RP_THINKING_PLAN : DEFAULT_THINKING_PLAN;
   return (
     <div className="sm:col-span-2 rounded-lg border border-white/10 p-3">
       <label className="flex items-center gap-2 cursor-pointer">
@@ -549,7 +574,7 @@ function GuidedThinkingField({
         <>
           <textarea
             className="input h-40 mt-2 text-sm font-mono"
-            value={cfg.thinkingPlan ?? DEFAULT_THINKING_PLAN}
+            value={cfg.thinkingPlan ?? modeDefault}
             onChange={(e) => patch({ thinkingPlan: e.target.value })}
           />
           <p className="text-xs text-gray-500 mt-1">
@@ -564,8 +589,8 @@ function GuidedThinkingField({
           </p>
           <button
             className="btn-ghost !px-3 !py-1 text-xs mt-2"
-            onClick={() => patch({ thinkingPlan: DEFAULT_THINKING_PLAN })}
-            disabled={(cfg.thinkingPlan ?? DEFAULT_THINKING_PLAN) === DEFAULT_THINKING_PLAN}
+            onClick={() => patch({ thinkingPlan: modeDefault })}
+            disabled={(cfg.thinkingPlan ?? modeDefault) === modeDefault}
           >
             Вернуть стандартный план
           </button>

@@ -610,14 +610,23 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       return;
     }
     const hist = state.history;
-    if (hist.length < 2) return;
+    if (!hist.length) return;
     const last = hist[hist.length - 1];
-    const lastMove = hist[hist.length - 2];
     if (last.role !== 'assistant') return;
+    // Стартовая сцена — особый случай: единственное сообщение в истории, и хода
+    // игрока ПЕРЕД ним нет вовсе (see applyTurn — [GAME START] не кладётся в
+    // history отдельной репликой, чтобы не показывать её в бабле героя).
+    // Директиву открытия восстанавливаем из preTurnState, а нет его (вкладку
+    // перезагружали) — пересобираем из стартовой сцены проекта заново.
+    const isOpening = hist.length === 1;
+    const lastMove = isOpening
+      ? preTurnState?.move ?? `[GAME START] ${expandMacros(project.lore.openingScene, { project, state })}`.trim()
+      : hist[hist.length - 2]?.content;
+    if (lastMove === undefined) return;
     // Копим варианты. У ответа, сгенерированного до появления свайпов, списка нет —
     // тогда первым вариантом считаем его самого.
     const keep = last.swipes?.length ? [...last.swipes] : [last.content];
-    const snap = preTurnState && preTurnState.move === lastMove.content ? preTurnState.state : null;
+    const snap = preTurnState && preTurnState.move === lastMove ? preTurnState.state : null;
     if (!snap) {
       logEvent(
         'warn',
@@ -629,7 +638,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const rolledBack: RuntimeState = snap
       ? JSON.parse(JSON.stringify(snap))
       : { ...state, history: hist.slice(0, -2) };
-    await runAndApply(set, get, project, rolledBack, lastMove.content, last.content, keep);
+    await runAndApply(set, get, project, rolledBack, lastMove, last.content, keep);
   },
 
   // Переключение на уже сгенерированный вариант. Не просто подмена текста: вариант
@@ -651,7 +660,12 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       guard: ps.impersonationGuard,
     });
     if (!rp.prose.trim()) return;
-    const move = hist[li - 1]?.content ?? '';
+    // Стартовая сцена — та же особенность, что и в addSwipe: хода ПЕРЕД единственным
+    // сообщением истории нет, директиву открытия восстанавливаем так же.
+    const move =
+      li === 0
+        ? preTurnState?.move ?? `[GAME START] ${expandMacros(project.lore.openingScene, { project, state })}`.trim()
+        : hist[li - 1]?.content ?? '';
     const snap = preTurnState && preTurnState.move === move ? preTurnState.state : null;
 
     if (!snap) {
@@ -1637,7 +1651,7 @@ async function runAndApply(
   // Потоковый показ — только для текстового РП: там ответ и есть проза, её видно
   // по мере набора. В новелле ход приезжает одним JSON-объектом, и «печатать» его
   // нечем — показывать сырую схему игроку бессмысленно.
-  const streaming = normalizeNarrativeMode(project.mode) === 'rp';
+  const streaming = normalizeNarrativeMode(project.mode) === 'rp' && getPresetSettings().streamingEnabled;
   const onStream = streaming
     ? (text: string) => {
         // Вытесненный ход (отмена/новая генерация) не должен дорисовывать свой

@@ -22,9 +22,12 @@ export interface PresetSettings {
   // блоков не вышло бы — половина блоков каждого режима мешает другому.
   rpPreset: PromptPreset;
   promptProcessing: PromptProcessing;
-  // Страховка от «модель написала за игрока» в РП: стоп-строки провайдеру плюс срез
-  // хвоста ответа, если модель всё же начала реплику героя. Промпт один это не держит.
+  // Страховка от «модель написала за игрока» в РП: срез хвоста ответа, если модель
+  // всё же начала реплику героя. Промпт один это не держит.
   impersonationGuard: boolean;
+  // Стриминг ответа в РП (по мере генерации, а не целиком в конце). Выключатель на
+  // случай шлюза, который на потоке ведёт себя хуже, чем на обычном запросе.
+  streamingEnabled: boolean;
   // Правила-регэкспы: правка текста между моделью и экраном (и/или запросом).
   regexRules: RegexRule[];
   // Инфобокс состояния под ответом в режиме РП (в духе Horae). Данные для него
@@ -56,6 +59,7 @@ function defaults(): PresetSettings {
     rpPreset: defaultRpPreset(),
     promptProcessing: 'merge',
     impersonationGuard: true,
+    streamingEnabled: true,
     regexRules: [],
     showStateInfobox: true,
     assistantPersona: '',
@@ -94,6 +98,7 @@ function load(): PresetSettings {
       rpPreset: normalizeRpPreset(v.rpPreset),
       promptProcessing: isPromptProcessing(v.promptProcessing) ? v.promptProcessing : d.promptProcessing,
       impersonationGuard: typeof v.impersonationGuard === 'boolean' ? v.impersonationGuard : true,
+      streamingEnabled: typeof v.streamingEnabled === 'boolean' ? v.streamingEnabled : true,
       regexRules: normalizeRegexRules(v.regexRules),
       showStateInfobox: typeof v.showStateInfobox === 'boolean' ? v.showStateInfobox : true,
       assistantPersona: typeof v.assistantPersona === 'string' ? v.assistantPersona : '',
