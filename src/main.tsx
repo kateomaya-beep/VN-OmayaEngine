@@ -6,6 +6,10 @@ import { logEvent } from './shared/logStore';
 import { syncStorage } from './storage/db';
 import './index.css';
 
+// Заставка загрузки (index.html) ждёт от нас отметок о реальных шагах. Модуль
+// исполняется — значит код уже скачан и разобран, это первая честная отметка.
+window.__boot?.stage('code');
+
 // Build stamp — makes it unambiguous which code is actually running in the tab.
 console.info(`[NovelForge] v${__APP_VERSION__}`);
 logEvent('info', 'app', `VN Studio v${__APP_VERSION__} запущен`);
@@ -45,15 +49,20 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 // локальный сервер): прогреваем/мигрируем IndexedDB из файлов. Так библиотека сразу
 // показывает актуальный набор, а прогресс переживает очистку данных браузера.
 async function boot() {
+  window.__boot?.stage('storage');
   try {
     await syncStorage();
   } catch (e) {
     logEvent('warn', 'disk', 'Синхронизация с диском не удалась: ' + (e as Error).message);
   }
+  window.__boot?.stage('ui');
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <RouterProvider router={router} />
     </React.StrictMode>
   );
+  // Прячем заставку не по таймеру, а после того, как React отработал первый кадр:
+  // иначе она уходила бы за миг до появления интерфейса и открывала пустоту.
+  requestAnimationFrame(() => requestAnimationFrame(() => window.__boot?.done()));
 }
 boot();

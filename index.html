@@ -16,13 +16,230 @@
     <!-- Шрифты дизайна (Manrope — бренд/заголовки, Inter — текст). Офлайн-фолбэк на систему. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Шрифты грузим НЕ блокируя отрисовку. Обычный rel="stylesheet" задерживает
+         первый кадр до ответа Google Fonts, а если сети нет — до таймаута: заставка
+         загрузки, ради которой всё и затевалось, появлялась бы позже всего
+         остального. media="print" снимает блокировку, onload возвращает шрифты в
+         дело, <noscript> оставляет прежнее поведение там, где JS выключен. -->
     <link
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
     <title>VN Studio — конструктор ИИ-новелл</title>
   </head>
   <body>
+    <!-- ЗАСТАВКА ЗАГРУЗКИ. Живёт прямо в index.html, а не в React: её задача —
+         закрыть промежуток МЕЖДУ открытием страницы и запуском приложения, когда
+         никакого React ещё нет и в помине. Раньше в этом промежутке был просто
+         тёмный экран, и на медленном устройстве он выглядел как «зависло».
+         Стили инлайновые по той же причине: внешний css к этому моменту может
+         быть ещё не загружен. -->
+    <style>
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: #0a0912;
+        color: #f5f2fc;
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        transition: opacity 0.35s ease;
+      }
+      #boot.boot-done {
+        opacity: 0;
+        pointer-events: none;
+      }
+      /* Тот же неоновый ореол, что и на главном экране: заставка должна выглядеть
+         частью приложения, а не системной страницей перед ним. */
+      #boot::before {
+        content: '';
+        position: absolute;
+        width: 460px;
+        height: 460px;
+        border-radius: 50%;
+        filter: blur(60px);
+        background: radial-gradient(circle, rgba(168, 120, 255, 0.13) 0%, rgba(168, 120, 255, 0) 70%);
+        pointer-events: none;
+      }
+      #boot .boot-name {
+        position: relative;
+        text-align: center;
+        line-height: 1;
+      }
+      #boot .boot-title {
+        font-family: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+        font-weight: 800;
+        font-size: 26px;
+        letter-spacing: 0.3px;
+      }
+      #boot .boot-sub {
+        margin-top: 7px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 2.4px;
+        color: #b18cff;
+      }
+      #boot .boot-ring {
+        position: relative;
+        width: 108px;
+        height: 108px;
+      }
+      #boot svg {
+        width: 100%;
+        height: 100%;
+        transform: rotate(-90deg);
+      }
+      #boot .boot-track {
+        fill: none;
+        stroke: rgba(180, 150, 255, 0.14);
+        stroke-width: 6;
+      }
+      #boot .boot-arc {
+        fill: none;
+        stroke: #b18cff;
+        stroke-width: 6;
+        stroke-linecap: round;
+        filter: drop-shadow(0 0 6px rgba(177, 140, 255, 0.55));
+      }
+      #boot .boot-pct {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+        font-weight: 700;
+        font-size: 22px;
+        font-variant-numeric: tabular-nums;
+      }
+      #boot .boot-stage {
+        position: relative;
+        font-size: 12px;
+        color: #7a7690;
+        min-height: 16px;
+      }
+      #boot .boot-slow {
+        /* Вне потока: подсказка появляется редко, и занимать место заранее ей
+           незачем — иначе кольцо стояло бы не по центру экрана, а чуть выше. */
+        position: absolute;
+        bottom: 12%;
+        max-width: 320px;
+        text-align: center;
+        font-size: 11px;
+        line-height: 1.45;
+        color: #6d6688;
+        opacity: 0;
+        transition: opacity 0.4s ease;
+      }
+      #boot .boot-slow.on {
+        opacity: 1;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot,
+        #boot .boot-slow {
+          transition: none;
+        }
+      }
+    </style>
+    <div id="boot" role="status" aria-live="polite">
+      <div class="boot-name">
+        <div class="boot-title">VN Studio</div>
+        <div class="boot-sub">NOVEL ENGINE</div>
+      </div>
+      <div class="boot-ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="boot-track" cx="60" cy="60" r="52" />
+          <circle class="boot-arc" id="boot-arc" cx="60" cy="60" r="52" stroke-dasharray="326.7" stroke-dashoffset="326.7" />
+        </svg>
+        <div class="boot-pct" id="boot-pct">0%</div>
+      </div>
+      <div class="boot-stage" id="boot-stage">запуск…</div>
+      <div class="boot-slow" id="boot-slow">
+        Загрузка идёт дольше обычного. Если экран не сменится — откройте консоль браузера,
+        ошибка будет там.
+      </div>
+    </div>
+    <script>
+      // Прогресс СТАДИЙНЫЙ, а не выдуманный. У каждой стадии свой отрезок шкалы:
+      // цифра растёт внутри него, пока стадия идёт, и никогда не заходит за её
+      // потолок, пока следующая реально не началась. Так число всегда чем-то
+      // обеспечено — приложение само сообщает, до какого шага дошло (см. main.tsx).
+      (function () {
+        var STAGES = {
+          start: { from: 0, to: 14, label: 'запуск…' },
+          code: { from: 14, to: 58, label: 'загрузка кода' },
+          storage: { from: 58, to: 84, label: 'хранилище проектов' },
+          ui: { from: 84, to: 97, label: 'интерфейс' },
+          done: { from: 100, to: 100, label: 'готово' },
+        };
+        var arc = document.getElementById('boot-arc');
+        var pct = document.getElementById('boot-pct');
+        var stageEl = document.getElementById('boot-stage');
+        var slowEl = document.getElementById('boot-slow');
+        var root = document.getElementById('boot');
+        if (!arc || !pct || !root) return;
+        var LEN = 2 * Math.PI * 52;
+        var shown = 0;
+        var cur = STAGES.start;
+        var raf = 0;
+
+        function draw() {
+          var v = Math.min(100, Math.max(0, shown));
+          arc.setAttribute('stroke-dashoffset', String(LEN * (1 - v / 100)));
+          pct.textContent = Math.round(v) + '%';
+        }
+        function tick() {
+          // Внутри стадии ползём к её потолку, но всё медленнее по мере приближения:
+          // движение видно, а до потолка шкала не доходит, пока стадия не закрыта.
+          var gap = cur.to - shown;
+          shown += gap > 0 ? Math.max(gap * 0.035, 0.04) : 0;
+          if (shown > cur.to) shown = cur.to;
+          draw();
+          raf = requestAnimationFrame(tick);
+        }
+        raf = requestAnimationFrame(tick);
+
+        // Долгая загрузка — не повод молча крутить кружок: подсказываем, куда смотреть.
+        var slowTimer = setTimeout(function () {
+          if (slowEl) slowEl.className = 'boot-slow on';
+        }, 12000);
+
+        window.__boot = {
+          stage: function (name) {
+            var s = STAGES[name];
+            if (!s) return;
+            cur = s;
+            if (shown < s.from) shown = s.from;
+            if (stageEl) stageEl.textContent = s.label;
+          },
+          done: function () {
+            clearTimeout(slowTimer);
+            cancelAnimationFrame(raf);
+            shown = 100;
+            draw();
+            if (stageEl) stageEl.textContent = STAGES.done.label;
+            root.className = 'boot-done';
+            // Убираем узел после затухания, а не сразу: иначе последний кадр
+            // (100%) промелькнул бы и пропал рывком.
+            setTimeout(function () {
+              if (root.parentNode) root.parentNode.removeChild(root);
+            }, 400);
+          },
+        };
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
