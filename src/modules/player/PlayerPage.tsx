@@ -24,6 +24,7 @@ import { themeVars, ensureFontLink, loadGlobalTheme } from './playerTheme';
 import { useT } from '../../shared/i18n';
 import { useGlobalNotes } from '../../shared/globalNotes';
 import { TopBar } from '../../app/TopBar';
+import { useAppMode } from '../../app/appMode';
 
 type Setup = 'launch' | 'play';
 
@@ -52,6 +53,15 @@ export function PlayerPage() {
   useEffect(() => {
     return () => stopAllMusic();
   }, [projectId]);
+
+  // Запустили историю чужого режима (закладка, «назад») — режим приложения
+  // подстраивается под неё: выйдя из игры, игрок окажется в правильной библиотеке.
+  const appMode = useAppMode((st) => st.mode);
+  const setAppMode = useAppMode((st) => st.setMode);
+  const projectMode = s.project ? normalizeNarrativeMode(s.project.mode) : null;
+  useEffect(() => {
+    if (projectMode && projectMode !== appMode) setAppMode(projectMode);
+  }, [projectMode, appMode, setAppMode]);
 
   // Подгружаем шрифт темы при входе в плеер / смене ссылки.
   useEffect(() => {

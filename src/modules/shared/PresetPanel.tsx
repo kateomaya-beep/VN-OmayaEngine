@@ -13,6 +13,7 @@ import { PROMPT_PROCESSING_LABELS, type PromptProcessing } from '../../ai/prompt
 import { MACRO_HELP } from '../../ai/macros';
 import { RegexRulesEditor } from './RegexRulesEditor';
 import { usePlayerStore } from '../player/playerStore';
+import { useAppMode } from '../../app/appMode';
 import { TokenCounter } from '../player/components/TokenCounter';
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
@@ -34,13 +35,13 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   // ГЛОБАЛЬНЫЙ пресет — один на все истории, доступен везде и всегда.
   const cfg = usePresetSettings((s) => s.settings);
   const patchStore = usePresetSettings((s) => s.patch);
-  // Какой из двух пресетов правим. По умолчанию — режим открытого проекта, чтобы
-  // из игры панель сразу показывала то, что реально едет в запрос.
-  const projectMode = normalizeNarrativeMode(usePlayerStore((s) => s.project?.mode));
-  const [tab, setTab] = useState<NarrativeMode | null>(null);
+  // Пресет ВСЕГДА показывается для текущего режима приложения — того самого, в
+  // котором вы работаете. Раньше здесь была вкладка-переключатель, и она сбивала с
+  // толку: можно было править пресет одного режима, играя в другом, и удивляться,
+  // почему правки ни на что не влияют.
+  const mode: NarrativeMode = useAppMode((s) => s.mode) ?? 'vn';
   if (!open) return null;
 
-  const mode: NarrativeMode = tab ?? projectMode;
   const isRp = mode === 'rp';
   const preset = isRp ? cfg.rpPreset : cfg.preset;
 
@@ -92,28 +93,16 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
 
   return (
     <Modal open={open} onClose={onClose} title="Пресет промпта" wide>
-      {/* У каждого режима повествования свой набор блоков: половина блоков новеллы
-          (JSON-контракт, эмоции, музыка) в текстовом РП только мешает, а запрет
-          писать за игрока новелле, наоборот, противопоказан. */}
+      {/* У каждого режима свой набор блоков: половина блоков новеллы (JSON-контракт,
+          эмоции, музыка) в текстовом РП только мешает, а запрет писать за игрока
+          новелле, наоборот, противопоказан. Показываем пресет текущего режима. */}
       <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <span className="text-xs text-gray-500">Режим:</span>
-        <div className="inline-flex rounded-lg overflow-hidden border border-white/10 text-xs">
-          {([
-            { id: 'vn' as const, label: '🎭 Новелла' },
-            { id: 'rp' as const, label: '💬 Классический РП' },
-          ]).map((t) => (
-            <button
-              key={t.id}
-              className={`px-3 py-1.5 ${mode === t.id ? 'bg-accent2 text-white' : 'bg-panel hover:bg-white/10'}`}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <span className="chip !px-3 !py-1 text-xs bg-accent2 text-white">
+          {isRp ? '💬 Классический РП' : '🎭 Визуальная новелла'}
+        </span>
         <span className="text-xs text-gray-500">
-          Какой из них применится, решает настройка проекта («Режим повествования» в настройках).
-          {mode !== projectMode && ' Сейчас вы правите НЕ тот пресет, которым идёт открытая история.'}
+          У второго режима свой пресет — он откроется здесь же, когда вы переключите режим
+          значком в верхней панели.
         </span>
       </div>
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">

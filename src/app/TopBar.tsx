@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useLang } from '../shared/i18n';
 import { ConnectionPanel } from '../modules/shared/ConnectionPanel';
 import { ExtensionsPanel } from '../modules/shared/ExtensionsPanel';
@@ -8,6 +8,8 @@ import { GameMasterPanel } from '../modules/shared/GameMasterPanel';
 import { LogsPanel } from '../modules/shared/LogsPanel';
 import { ToastHost } from '../shared/ToastHost';
 import { useLogs } from '../shared/logStore';
+import { useAppMode, MODE_META } from './appMode';
+import type { NarrativeMode } from '../shared/types';
 import type { Project } from '../shared/types';
 
 // Единая постоянная верхняя панель. Неоново-стеклянный дизайн (см. импорт дизайна
@@ -195,6 +197,10 @@ export function TopBarControls({
   const [gmOpen, setGmOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   const errorCount = useLogs((s) => s.logs.reduce((n, l) => n + (l.level === 'error' ? 1 : 0), 0));
+  const mode = useAppMode((s) => s.mode);
+  const setMode = useAppMode((s) => s.setMode);
+  const nav = useNavigate();
+  const other: NarrativeMode = mode === 'rp' ? 'vn' : 'rp';
 
   const inPlayer = variant === 'player';
 
@@ -207,8 +213,32 @@ export function TopBarControls({
     </IconBtn>
   );
 
+  // Режим приложения — первым в ряду, потому что от него зависит смысл всего
+  // остального: какая библиотека, какой конструктор, какой пресет уйдёт в запрос.
+  // В плеере не показываем: там режим уже определён открытой историей, и сменить
+  // его на ходу означало бы поменять игру под игроком.
+  const modeBtn =
+    !inPlayer && mode ? (
+      <button
+        className="h-[34px] px-2.5 rounded-[10px] flex items-center gap-1.5 text-[12px] transition-colors bg-white/[0.04] border border-[rgba(180,150,255,0.22)] text-[#e5deF7] hover:bg-[rgba(160,110,255,0.16)] hover:border-[rgba(190,150,255,0.55)]"
+        title={L(
+          `Режим: ${MODE_META[mode].name}. Нажмите, чтобы перейти в «${MODE_META[other].name}» — там своя библиотека проектов.`,
+          `Mode: ${MODE_META[mode].nameEn}. Click to switch to "${MODE_META[other].nameEn}" — it has its own project library.`
+        )}
+        onClick={() => {
+          setMode(other);
+          nav('/library');
+        }}
+      >
+        <span>{MODE_META[mode].icon}</span>
+        <span className="hidden sm:inline">{lang === 'en' ? MODE_META[mode].nameEn : MODE_META[mode].name}</span>
+        <span className="text-[#7a7690]">⇄</span>
+      </button>
+    ) : null;
+
   return (
     <>
+      {modeBtn}
       {/* Порядок app: Пресет · API · Логи · Язык.
           Порядок player: Язык · Пресет · API · GM · Расширения · Логи (бургер идёт
           последним из PlayerPage) — язык и бургер переставлены местами (импорт «VN Player»). */}

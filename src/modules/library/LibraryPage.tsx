@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '../../shared/types';
 import { normalizeNarrativeMode } from '../../shared/types';
-import { listProjects, saveProject, deleteProject, duplicateProject } from '../../storage/db';
+import type { NarrativeMode } from '../../shared/types';
+import { useAppMode, MODE_META } from '../../app/appMode';
+import { pushToast } from '../../shared/toast';
+import { listProjects, saveProject, deleteProject, duplicateProject, adaptProjectToMode } from '../../storage/db';
 import { createEmptyProject } from '../../shared/factory';
 import { exportProjectZip, downloadBlob, importProjectZip, countSaves } from '../../storage/zip';
 import { AssetImage, Modal } from '../../shared/ui';
@@ -14,6 +17,9 @@ export function LibraryPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState('');
+  // Режим нового проекта не спрашиваем: он равен режиму приложения, в котором мы
+  // сейчас находимся. Развилка была на входе, второй раз её задавать незачем.
+  const appMode = useAppMode((s) => s.mode) ?? 'vn';
   const [busy, setBusy] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const nav = useNavigate();
@@ -22,25 +28,55 @@ export function LibraryPage() {
   async function refresh() {
     setProjects(await listProjects());
   }
+
+  // Библиотека показывает проекты ТОЛЬКО текущего режима: у режимов раздельные
+  // конструкторы и пресеты, и проект из чужого режима в этом списке был бы ловушкой —
+  // открылся бы не тем редактором.
+  const visible = projects.filter((p) => normalizeNarrativeMode(p.mode) === appMode);
+  const foreign = projects.length - visible.length;
   useEffect(() => {
     refresh();
   }, []);
 
-  // Режим повествования прямо на карточке: он меняет ВСЁ — и как выглядит игра, и
-  // каким пресетом собирается запрос, — а жил только в настройках проекта, куда за
-  // ним никто не пойдёт. Переключение безобидное и обратимое: данные общие.
-  async function toggleMode(p: Project) {
-    const next: Project = {
-      ...p,
-      mode: normalizeNarrativeMode(p.mode) === 'rp' ? undefined : 'rp',
-      updatedAt: Date.now(),
-    };
-    await saveProject(next);
-    await refresh();
+  // Адаптация — КОПИЯ проекта в другом режиме. Не переключение флажка: копия уходит
+  // в чужую библиотеку, оригинал остаётся здесь нетронутым, у каждого свои сейвы.
+  async function adapt(p: Project) {
+    const target: NarrativeMode = normalizeNarrativeMode(p.mode) === 'rp' ? 'vn' : 'rp';
+    const label = target === 'rp' ? L('классический РП', 'classic RP') : L('визуальную новеллу', 'a visual novel');
+    const warn =
+      target === 'rp'
+        ? L(
+            'Сеттинг, лор, лорбук и персонажи переедут. Спрайты, фоны, музыка и CG — нет: в текстовом режиме им негде показаться.',
+            'Setting, lore, lorebook and characters will move over. Sprites, backgrounds, music and CG will not: there is nowhere to show them in text mode.'
+          )
+        : L(
+            'Сеттинг, лор, лорбук и персонажи переедут. Спрайты и фоны придётся загрузить заново — в текстовом проекте их не было.',
+            'Setting, lore, lorebook and characters will move over. Sprites and backgrounds will need to be uploaded — the text project had none.'
+          );
+    if (!confirm(`${L('Сделать копию проекта под', 'Make a copy of this project as')} ${label}?\n\n${warn}`))
+      return;
+    setBusy(p.id);
+    try {
+      const res = await adaptProjectToMode(p, target);
+      await refresh();
+      pushToast(
+        'success',
+        L(
+          `Готово: «${res.project.meta.title}» ждёт в режиме «${MODE_META[target].name}». Переключите режим значком в верхней панели.`,
+          `Done: "${res.project.meta.title}" is waiting in "${MODE_META[target].nameEn}" mode. Switch modes from the top bar.`
+        )
+      );
+    } catch (e) {
+      pushToast('error', L('Не удалось адаптировать: ', 'Adaptation failed: ') + (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function create() {
     const p = createEmptyProject(title.trim() || 'Без названия');
+    // 'vn' не пишем: это дефолт, и поле в записи ни к чему.
+    if (appMode === 'rp') p.mode = 'rp';
     await saveProject(p);
     setCreating(false);
     setTitle('');
@@ -179,7 +215,16 @@ export function LibraryPage() {
         <div className="font-brand font-extrabold text-[20px] sm:text-[22px] tracking-[0.5px] text-[#f7f4ff] [text-shadow:0_0_18px_rgba(170,120,255,0.35)]">
           {t('library.title')}
         </div>
-        <div className="text-[12.5px] text-[#a8a4bd] mt-2 leading-relaxed">{t('library.subtitle')}</div>
+        {/* Подпись под заголовком зависит от режима: «ваши визуальные новеллы» в
+            текстовом РП было бы прямой неправдой. */}
+        <div className="text-[12.5px] text-[#a8a4bd] mt-2 leading-relaxed">
+          {appMode === 'rp'
+            ? L(
+                'Ваши текстовые ролеплеи. Всё хранится локально на устройстве.',
+                'Your text roleplays. Everything is stored locally on your device.'
+              )
+            : t('library.subtitle')}
+        </div>
         <div className="flex gap-3 mt-5 max-w-md mx-auto">
           <button
             onClick={() => setCreating(true)}
@@ -215,13 +260,25 @@ export function LibraryPage() {
         }}
       />
 
-      {projects.length === 0 ? (
-        <div className="rounded-[20px] text-center py-16 text-[#7a7690] bg-white/[0.03] border border-[rgba(180,150,255,0.12)]">
-          {t('library.empty')}
+      {visible.length === 0 ? (
+        <div className="rounded-[20px] text-center py-16 px-6 text-[#7a7690] bg-white/[0.03] border border-[rgba(180,150,255,0.12)]">
+          <div className="mb-1">{t('library.empty')}</div>
+          <div className="text-xs">
+            {L(
+              `Вы в режиме «${MODE_META[appMode].name}».`,
+              `You are in "${MODE_META[appMode].nameEn}" mode.`
+            )}
+            {foreign > 0 &&
+              ' ' +
+                L(
+                  `В другом режиме лежит проектов: ${foreign}. Переключите режим значком в верхней панели или адаптируйте проект копией.`,
+                  `The other mode has ${foreign} project(s). Switch modes from the top bar, or adapt a project as a copy.`
+                )}
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-          {projects.map((p) => {
+          {visible.map((p) => {
             const coverKey = p.assets.find((a) => a.id === p.meta.coverAssetId)?.blobKey;
             return (
               <div
@@ -235,22 +292,6 @@ export function LibraryPage() {
                   <div className="text-[10.5px] text-[#7a7690] mt-1">
                     {t('library.lastSave')} · {formatDate(p.updatedAt)}
                   </div>
-                  <button
-                    className={`mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10.5px] border transition-colors ${
-                      normalizeNarrativeMode(p.mode) === 'rp'
-                        ? 'bg-[rgba(160,110,255,0.18)] border-[rgba(190,150,255,0.5)] text-[#e5deF7]'
-                        : 'bg-white/[0.05] border-[rgba(180,150,255,0.2)] text-[#a8a2c0]'
-                    }`}
-                    title={L(
-                      'Режим повествования. Нажмите, чтобы переключить: новелла — спрайты, сцены и выборы; РП — только текст, вы пишете сами. Сеттинг, персонажи и память общие.',
-                      'Narrative mode. Click to switch: visual novel — sprites, scenes and choices; RP — text only, you write your own moves. Setting, characters and memory are shared.'
-                    )}
-                    onClick={() => toggleMode(p)}
-                  >
-                    {normalizeNarrativeMode(p.mode) === 'rp'
-                      ? `💬 ${L('Классический РП', 'Classic RP')}`
-                      : `🎭 ${L('Визуальная новелла', 'Visual novel')}`}
-                  </button>
                 </div>
 
                 <div
@@ -283,6 +324,15 @@ export function LibraryPage() {
                     onClick={() => setCopyTarget(p)}
                     icon="copy"
                   />
+                  <CardIconBtn
+                    title={
+                      normalizeNarrativeMode(p.mode) === 'rp'
+                        ? L('Адаптировать в визуальную новеллу (копией)', 'Adapt as a visual novel (a copy)')
+                        : L('Адаптировать в классический РП (копией)', 'Adapt as classic RP (a copy)')
+                    }
+                    onClick={() => adapt(p)}
+                    icon="adapt"
+                  />
                   <CardIconBtn title={t('library.play')} onClick={() => nav(`/play/${p.id}`)} icon="play" primary />
                   <CardIconBtn
                     title={L('Ассеты и целостность', 'Assets & integrity')}
@@ -306,6 +356,14 @@ export function LibraryPage() {
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && create()}
         />
+
+        <p className="text-xs text-gray-500 mb-4">
+          {L(
+            `Проект создаётся в режиме «${MODE_META[appMode].name}» — том, в котором вы сейчас. Другой режим — своя библиотека, переключается значком в верхней панели.`,
+            `The project is created in "${MODE_META[appMode].nameEn}" mode — the one you are in. The other mode has its own library; switch it from the top bar.`
+          )}
+        </p>
+
         <div className="flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setCreating(false)}>
             {t('library.cancel')}
@@ -629,6 +687,19 @@ function ProjectDetails({ project, L }: { project: Project; L: (ru: string, en: 
 // Иконки действий карточки проекта (импорт дизайна): редактор · экспорт · играть
 // (большая неоновая) · удалить. Подсказка — через title на выбранном языке.
 const CARD_ICONS: Record<string, JSX.Element> = {
+  // «Адаптировать в другой режим» — две стрелки навстречу: перенос, а не копия
+  // в тот же список.
+  adapt: (
+    <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M3 7h11l-2.5-2.5M17 13H6l2.5 2.5"
+        stroke="#c8b8ee"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
   edit: (
     <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
       <path
@@ -699,7 +770,7 @@ function CardIconBtn({
 }: {
   title: string;
   onClick: () => void;
-  icon: 'edit' | 'export' | 'copy' | 'play' | 'trash' | 'info';
+  icon: 'edit' | 'export' | 'copy' | 'adapt' | 'play' | 'trash' | 'info';
   primary?: boolean;
 }) {
   const size = primary ? 46 : 34;

@@ -8,6 +8,7 @@ import {
   RELATIONSHIP_FIELDS,
   RELATIONSHIP_META,
   emptyRelationship,
+  normalizeNarrativeMode,
 } from '../../../shared/types';
 import type {
   Character,
@@ -48,6 +49,7 @@ export function CharacterEditor() {
   const importRef = useRef<HTMLInputElement>(null);
   if (!project) return null;
 
+  const rp = normalizeNarrativeMode(project.mode) === 'rp';
   const selected = project.characters.find((c) => c.id === selId) || project.characters[0] || null;
 
   function addChar() {
@@ -320,7 +322,9 @@ export function CharacterEditor() {
             </div>
           )}
 
-          <SpriteBinder characterId={selected.id} />
+          {/* Спрайты и наряды — только для новеллы: в текстовом режиме их негде
+              показать, а аватарка персонажа живёт кружком у имени выше. */}
+          {!rp && <SpriteBinder characterId={selected.id} />}
         </div>
       ) : (
         <div className="card text-center text-gray-500 py-16">Создайте персонажа.</div>

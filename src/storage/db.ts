@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { Project, SaveSlot, Character, AssetMeta } from '../shared/types';
+import type { Project, SaveSlot, Character, AssetMeta, NarrativeMode } from '../shared/types';
 import { normalizeProject, normalizeRuntimeState } from '../shared/factory';
 import { uid } from '../shared/utils';
 import {
@@ -158,6 +158,60 @@ export async function duplicateProject(
   }
 
   return { project: clone, savesCopied, assetsMissing };
+}
+
+// АДАПТАЦИЯ ПРОЕКТА В ДРУГОЙ РЕЖИМ. Делает КОПИЮ, а не переключает флажок: у
+// режимов раздельные библиотеки, свои сейвы и своя судьба, и молчаливый переезд
+// проекта из одной в другую выглядел бы как пропажа.
+//
+// Что переезжает: сеттинг, лор, лорбук, персонажи с карточками и статами, свои
+// макросы, финансы. Что НЕ переезжает в текстовый РП: спрайты, фоны, музыка, звуки
+// и CG — им там негде показаться, и тащить за собой мегабайты картинок незачем.
+// Аватарки (ассеты-иконки) остаются: они как раз для ленты переписки.
+export async function adaptProjectToMode(
+  source: Project,
+  mode: NarrativeMode,
+  newTitle?: string
+): Promise<DuplicateResult> {
+  const clone: Project = JSON.parse(JSON.stringify(source));
+  clone.id = uid('proj');
+  clone.createdAt = Date.now();
+  clone.updatedAt = Date.now();
+  clone.mode = mode === 'rp' ? 'rp' : undefined;
+  clone.meta.title = (newTitle || `${source.meta.title || 'Проект'} — ${mode === 'rp' ? 'РП' : 'новелла'}`).slice(0, 200);
+
+  if (mode === 'rp') {
+    clone.assets = clone.assets.filter((a) => a.type === 'icon');
+    const keep = new Set(clone.assets.map((a) => a.id));
+    clone.characters = clone.characters.map((c) => ({
+      ...c,
+      sprites: {},
+      outfits: undefined,
+      defaultOutfit: undefined,
+      spriteDisplay: undefined,
+      // Аватарка могла указывать на спрайт, который мы только что выбросили.
+      avatarAssetId: c.avatarAssetId && keep.has(c.avatarAssetId) ? c.avatarAssetId : undefined,
+    }));
+    if (clone.meta.coverAssetId && !keep.has(clone.meta.coverAssetId)) clone.meta.coverAssetId = undefined;
+    // Иконки статов — тоже ассеты-иконки, они уцелели; но битую ссылку всё равно чистим.
+    clone.stats = clone.stats.map((st) =>
+      st.iconAssetId && !keep.has(st.iconAssetId) ? { ...st, iconAssetId: undefined } : st
+    );
+  }
+
+  let assetsMissing = 0;
+  for (const a of clone.assets) {
+    const newBlobKey = uid('blob');
+    const blob = await getAssetBlob(a.blobKey);
+    if (blob) await putAsset(newBlobKey, blob);
+    else assetsMissing++;
+    a.blobKey = newBlobKey;
+  }
+
+  await saveProject(clone);
+  // Прогресс не копируем никогда: история новеллы состоит из JSON-ходов со
+  // спрайтами и выборами, и в ленте переписки она читалась бы как мусор (и наоборот).
+  return { project: clone, savesCopied: 0, assetsMissing };
 }
 
 // Перенос персонажа в другой проект. Спрайты копируются как НОВЫЕ blob'ы + ассеты

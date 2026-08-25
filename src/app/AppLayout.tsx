@@ -1,11 +1,18 @@
 import { Outlet } from 'react-router-dom';
 import { useProjectStore } from '../modules/constructor/projectStore';
 import { TopBar } from './TopBar';
+import { useAppMode } from './appMode';
+import { ModePicker } from './ModePicker';
 
 // Каркас главного экрана: постоянная верхняя панель (общая с плеером) + контент.
 // Расширения панели действуют на открытый в конструкторе проект (если есть).
 export function AppLayout() {
   const { project, update } = useProjectStore();
+  const mode = useAppMode((s) => s.mode);
+
+  // Режим ещё не выбран — до библиотеки не доходим вовсе: без него непонятно, что
+  // в ней показывать и что означает кнопка «новый проект».
+  if (!mode) return <ModePicker />;
 
   return (
     <div className="min-h-full flex flex-col relative bg-[#0a0912]">
