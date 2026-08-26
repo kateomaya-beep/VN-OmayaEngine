@@ -272,6 +272,11 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         <p className="text-[11px] text-gray-500 mt-1">
           {PROMPT_PROCESSING_LABELS.find((m) => m.id === cfg.promptProcessing)?.hint}
         </p>
+        <p className="text-[11px] text-gray-500 mt-1">
+          Для семейства GLM (z-ai) в РП обычно советуют «Полустрогую» — это то же, что
+          «Semi-strict (alternating roles)» в Таверне: на ней китайские шлюзы стабильнее держат
+          инструкции.
+        </p>
 
         {isRp && (
           <label className="flex items-start gap-2 mt-3 text-sm">
@@ -375,11 +380,19 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
               <option value="low">Низкая — быстро</option>
               <option value="medium">Средняя</option>
               <option value="high">Высокая — вдумчиво, медленно</option>
+              <option value="max">Максимальная — очень медленно</option>
             </select>
             <p className="text-xs text-gray-500 mt-1">
               Для «думающих» моделей (Gemini 3 Pro, o-серия): меньше — заметно быстрее ответ. Именно
               скрытое «размышление» даёт задержку в десятки секунд. «Авто» = как у провайдера (у
               thinking-моделей это медленно). Если провайдер не понимает параметр — оставьте «Авто».
+            </p>
+            <p className="text-xs text-amber-300/80 mt-1">
+              Модели, которые думают ВСЕГДА (GLM-5.3 и подобные), «Выкл» и «Средняя» не принимают —
+              там допустимы только низкая / высокая / максимальная. Движок это распознаёт по отказу
+              и сам переключает такую модель на «низкую», но выбрать её сразу — на один запрос быстрее.
+              «Авто» на них означает МАКСИМАЛЬНУЮ глубину: ответ идёт очень долго, а на большом
+              контексте шлюз успевает отвалиться по таймауту (502/504).
             </p>
           </div>
           <GuidedThinkingField cfg={cfg} patch={patch} isRp={isRp} />

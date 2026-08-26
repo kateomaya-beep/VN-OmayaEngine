@@ -270,7 +270,7 @@ export interface AiConfig {
   // «Глубина размышления» reasoning-моделей (Gemini 3 pro, o-series и т.п.):
   // отправляется как reasoning_effort. Меньше = быстрее ответ. undefined = не
   // отправлять (поведение провайдера по умолчанию — у thinking-моделей медленное).
-  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'max';
   // Управляемое размышление: вместо медленной родной «думалки» модель пишет
   // короткий план в <thinking> (через префилл) — быстрее. thinkingPlan — шаблон
   // плана (редактируемый). При включении родной reasoning форсится в none.

@@ -44,7 +44,7 @@ export interface PresetSettings {
   contextBudget: number;
   turnLength: { min: number; max: number };
   choiceMinGap: number; // 0 = без ограничения
-  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'max';
   guidedThinking: boolean;
   thinkingPlan?: string;
   prefill?: string;
@@ -112,7 +112,7 @@ function load(): PresetSettings {
         : num(v.contextBudget, d.contextBudget),
       turnLength: v.turnLength ? normalizeTurnLength(v.turnLength) : d.turnLength,
       choiceMinGap: Math.max(0, Math.min(20, Math.round(num(v.choiceMinGap, 0)))),
-      reasoningEffort: ['none', 'low', 'medium', 'high'].includes(v.reasoningEffort)
+      reasoningEffort: ['none', 'low', 'medium', 'high', 'max'].includes(v.reasoningEffort)
         ? v.reasoningEffort
         : undefined,
       guidedThinking: !!v.guidedThinking,

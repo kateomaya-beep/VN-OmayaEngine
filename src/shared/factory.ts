@@ -334,7 +334,7 @@ export function normalizeProject(raw: any): Project {
       turnLength: ai.turnLength ? normalizeTurnLength(ai.turnLength) : undefined,
       choiceMinGap:
         typeof ai.choiceMinGap === 'number' ? clamp(Math.round(ai.choiceMinGap), 0, 20) : undefined,
-      reasoningEffort: ['none', 'low', 'medium', 'high'].includes(ai.reasoningEffort)
+      reasoningEffort: ['none', 'low', 'medium', 'high', 'max'].includes(ai.reasoningEffort)
         ? ai.reasoningEffort
         : undefined,
       guidedThinking: bool(ai.guidedThinking, false) || undefined,

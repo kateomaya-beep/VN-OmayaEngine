@@ -19,7 +19,7 @@ export interface CompletionRequest {
   // дефолту (512/1024) — отсюда «всегда короткий ход». Считаем от длины хода.
   maxTokens?: number;
   // Глубина размышления reasoning-моделей → reasoning_effort. Меньше = быстрее.
-  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'max';
   // Картинки к ПОСЛЕДНЕМУ ходу игрока (vision): фото, которое герой отправил в
   // мессенджере. Модель без поддержки картинок отвечает 400 — тогда провайдер
   // повторяет запрос без вложений, и переписка продолжается по текстовой пометке.
@@ -351,23 +351,68 @@ function attachImagesOpenAi(
 const NO_PREFILL_LS_KEY = 'nf_no_prefill_targets';
 const targetKey = (base: string, model: string) => `${base}::${model}`;
 
-function loadNoPrefill(): Set<string> {
+// Модели, которые ДУМАЮТ ВСЕГДА и не принимают «выключить размышление». GLM-5.3 —
+// характерный пример: на reasoning_effort:"none" отвечает 400 (код 1210) с текстом
+// «This model always engages in thinking and cannot be disabled; please use low,
+// high, or max»; допустимы ровно low | high | max, а значение по умолчанию — max.
+//
+// Почему это надо чинить отдельно, а не просто убирать параметр (как делает общая
+// починка ниже): убрав его, мы получаем НЕ «без размышления», а самый тяжёлый
+// режим max — модель уходит в глубокое обдумывание на десятки секунд, съедает им
+// бюджет ответа, и на большом контексте шлюз успевает отвалиться по таймауту (502
+// с нечитаемым телом). То есть «починка» делала ровно противоположное намерению.
+// Поэтому здесь подменяем значение на 'low' — ближайшее к «не думай долго», —
+// и запоминаем модель, чтобы следующие ходы уходили правильными с первого раза.
+const ALWAYS_THINK_LS_KEY = 'nf_always_think_targets';
+
+function loadLsSet(key: string): Set<string> {
   try {
-    const raw = localStorage.getItem(NO_PREFILL_LS_KEY);
+    const raw = localStorage.getItem(key);
     const v = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   } catch {
     return new Set();
   }
 }
-const noPrefillTargets = loadNoPrefill();
-function rememberNoPrefill(key: string): void {
-  noPrefillTargets.add(key);
+function saveLsSet(key: string, set: Set<string>): void {
   try {
-    localStorage.setItem(NO_PREFILL_LS_KEY, JSON.stringify([...noPrefillTargets]));
+    localStorage.setItem(key, JSON.stringify([...set]));
   } catch {
     /* приватный режим — переживём, обойдёмся памятью сессии */
   }
+}
+
+const alwaysThinkTargets = loadLsSet(ALWAYS_THINK_LS_KEY);
+function rememberAlwaysThink(key: string): void {
+  alwaysThinkTargets.add(key);
+  saveLsSet(ALWAYS_THINK_LS_KEY, alwaysThinkTargets);
+}
+
+// Отказ вида «эта модель всегда думает». Ловим и по коду 1210, и по тексту: коды
+// у шлюзов-перепродавцов теряются, а формулировка довольно устойчивая.
+function isThinkingRequiredError(text: string): boolean {
+  return (
+    /1210/.test(text) ||
+    /always\s+(engages?\s+in\s+)?think/i.test(text) ||
+    /think\w*.{0,40}can\s?not\s+be\s+disabled?/i.test(text) ||
+    /use\s+low,?\s*high,?\s*(or\s*)?max/i.test(text)
+  );
+}
+
+// Значение reasoning_effort, пригодное для конкретной модели. Для «всегда думающих»
+// none/medium недопустимы: none → low (ближайшее по смыслу «думай поменьше»),
+// medium → high (из доступных ступеней это следующая вверх).
+function effortFor(target: string, effort: string | undefined): string | undefined {
+  if (!effort || !alwaysThinkTargets.has(target)) return effort;
+  if (effort === 'none') return 'low';
+  if (effort === 'medium') return 'high';
+  return effort;
+}
+
+const noPrefillTargets = loadLsSet(NO_PREFILL_LS_KEY);
+function rememberNoPrefill(key: string): void {
+  noPrefillTargets.add(key);
+  saveLsSet(NO_PREFILL_LS_KEY, noPrefillTargets);
 }
 
 // НАСТОЯЩИЙ префилл — это ход ассистента в конце запроса, который модель
@@ -390,14 +435,17 @@ const openAiCompatible: Provider = {
     if (req.attachments?.length) attachImagesOpenAi(messages, req.attachments);
     // Префилл шлём ходом ассистента — как и положено. Не шлём только той модели,
     // которая уже ответила на него отказом (см. noPrefillTargets).
-    let prefill = req.prefill?.trim() && !noPrefillTargets.has(targetKey(base, model)) ? req.prefill : '';
+    const target = targetKey(base, model);
+    let prefill = req.prefill?.trim() && !noPrefillTargets.has(target) ? req.prefill : '';
     if (prefill) messages.push({ role: 'assistant', content: prefill });
+    // Ступень размышления — уже пригодная для этой модели (см. effortFor).
+    const effort = effortFor(target, req.reasoningEffort);
     const body: Record<string, unknown> = {
       model,
       temperature: req.temperature,
       messages,
       ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
-      ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
+      ...(effort ? { reasoning_effort: effort } : {}),
       ...(req.stop?.length ? { stop: req.stop } : {}),
     };
     const post = (b: Record<string, unknown>) =>
@@ -426,7 +474,27 @@ const openAiCompatible: Provider = {
       );
       const b2 = { ...body };
       let fixes: string[] = [];
-      if ('reasoning_effort' in b2 && (/reason/i.test(errText) || !/max_tokens|max_completion|temperature|context|token/i.test(errText))) {
+      // «Модель думает всегда» — ОТДЕЛЬНАЯ ветка, ДО общей починки ниже. Убрать
+      // reasoning_effort здесь было бы худшим из возможных решений: без него такая
+      // модель берёт свой дефолт — самую глубокую ступень (max), то есть ровно
+      // противоположное тому, чего мы добивались значением 'none'. Подменяем на
+      // допустимую ступень и запоминаем модель на будущее.
+      if ('reasoning_effort' in b2 && isThinkingRequiredError(errText)) {
+        rememberAlwaysThink(target);
+        const fixed = effortFor(target, req.reasoningEffort) ?? 'low';
+        b2.reasoning_effort = fixed;
+        fixes.push(`reasoning_effort → ${fixed} (модель думает всегда)`);
+        logEvent(
+          'warn',
+          'llm',
+          `Модель «${model}» не умеет выключать размышление (допустимы low/high/max). ` +
+            `Ступень заменена на «${fixed}» — и запомнена, дальше запросы уйдут сразу правильными. ` +
+            'Убирать параметр нельзя: без него модель берёт максимальную глубину и отвечает очень долго.'
+        );
+      } else if (
+        'reasoning_effort' in b2 &&
+        (/reason/i.test(errText) || !/max_tokens|max_completion|temperature|context|token/i.test(errText))
+      ) {
         delete b2.reasoning_effort;
         fixes.push('без reasoning_effort');
       }
@@ -535,8 +603,13 @@ const openAiCompatible: Provider = {
       ...sanitizeMessages(req.messages),
     ];
     if (req.attachments?.length) attachImagesOpenAi(messages, req.attachments);
-    const prefill = req.prefill?.trim() && !noPrefillTargets.has(targetKey(base, model)) ? req.prefill : '';
+    const target = targetKey(base, model);
+    const prefill = req.prefill?.trim() && !noPrefillTargets.has(target) ? req.prefill : '';
     if (prefill) messages.push({ role: 'assistant', content: prefill });
+    // Та же поправка ступени, что и в обычном пути: «всегда думающая» модель
+    // отвергла бы 'none'/'medium', а откат на обычный запрос стоил бы лишнего
+    // круга. Один раз узнав про модель (в complete), дальше шлём сразу верное.
+    const effort = effortFor(target, req.reasoningEffort);
     const res = await withRetry(() =>
       apiFetch(`${base}/chat/completions`, {
         method: 'POST',
@@ -552,7 +625,7 @@ const openAiCompatible: Provider = {
           messages,
           stream: true,
           ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
-          ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
+          ...(effort ? { reasoning_effort: effort } : {}),
           ...(req.stop?.length ? { stop: req.stop } : {}),
         }),
       })
@@ -813,10 +886,19 @@ export async function runCompletion(req: CompletionRequest): Promise<string> {
   // Диагностика: размер запроса + активны ли префилл/reasoning — чтобы по логам
   // сразу понять, не пресет ли мешает (некоторые провайдеры не принимают префилл).
   const reqChars = req.system.length + req.messages.reduce((n, m) => n + m.content.length, 0);
+  // Ступень размышления показываем ТУ, что реально уйдёт в запрос: у «всегда
+  // думающих» моделей она подменяется (none → low), и лог, показывающий исходное
+  // значение, отправлял бы разбор полётов по ложному следу.
+  const sentEffort = effortFor(
+    targetKey((conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, ''), model),
+    req.reasoningEffort
+  );
   const flags = [
     method !== 'none' ? `обработка:${method}` : null,
     req.prefill ? `префилл(${req.prefill.length})` : null,
-    req.reasoningEffort ? `reasoning:${req.reasoningEffort}` : null,
+    sentEffort
+      ? `reasoning:${sentEffort}${sentEffort !== req.reasoningEffort ? ` (вместо ${req.reasoningEffort})` : ''}`
+      : null,
     req.stop?.length ? `стоп(${req.stop.length})` : null,
     req.onDelta ? 'поток' : null,
   ].filter(Boolean).join(', ');
