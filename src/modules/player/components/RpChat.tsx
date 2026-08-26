@@ -27,6 +27,14 @@ import { loadGlobalTheme } from '../playerTheme';
 // персонаж, и лицо ему приписать нельзя — для «визуала» есть отдельный режим
 // новеллы со спрайтами. Вместо аватарки — имя, центрированное над баблом.
 
+// Стартовая сцена — это задание миру от автора, а не реплика героя. В историю она
+// как ход игрока уже не попадает (см. applyTurn), но ПРЕДПРОСМОТР отправленного
+// хода жил отдельно и всё равно рисовал её баблом «Героя» на всё время генерации —
+// а на медленной модели это минуты.
+function isGameStart(move: string): boolean {
+  return move.trimStart().startsWith('[GAME START]');
+}
+
 interface Rendered {
   /** Проза для показа: без служебного блока, после правил-регэкспов. */
   text: string;
@@ -171,7 +179,7 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
 
           {/* Отправленный ход, пока идёт генерация: в историю он попадёт только
               вместе с ответом, а исчезать с экрана на полминуты ему нельзя. */}
-          {s.pendingMove && s.thinking && (
+          {s.pendingMove && s.thinking && !isGameStart(s.pendingMove) && (
             <Message mine who={heroName} text={stripMoveTag(s.pendingMove)} pending busy />
           )}
 
@@ -186,11 +194,17 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
             />
           )}
 
+          {/* Живой черновик размышления. Показывается ДО первой буквы прозы —
+              именно ради этого и существует: на модели, думающей минуту-две, иначе
+              не отличить работу от зависания. Свёрнут по умолчанию: это черновик,
+              а не часть истории, и разворачивать его нужно не всем и не всегда. */}
+          {s.thinking && !!s.thinkingText && <ThinkingDraft text={s.thinkingText} />}
+
           {s.thinking && (
             <div className="flex items-center gap-2 text-sm text-gray-400 pl-1">
               <span className="inline-block w-3 h-3 border-2 border-[var(--pl-accent)] border-t-transparent rounded-full animate-spin" />
               <span>
-                {s.streamingText ? 'печатает…' : 'думает…'} {elapsedSec} с
+                {s.streamingText ? 'печатает…' : s.thinkingText ? 'размышляет…' : 'думает…'} {elapsedSec} с
               </span>
               <button
                 className="ml-1 rounded-full bg-white/10 hover:bg-white/20 px-2.5 py-1 text-xs"
@@ -213,6 +227,50 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
         hasNotes={hasNotes}
         onOpenNotes={onOpenNotes}
       />
+    </div>
+  );
+}
+
+// ЧЕРНОВИК РАЗМЫШЛЕНИЯ, пока идёт генерация.
+//
+// Свёрнут по умолчанию, но НЕ пуст даже свёрнутым: в заголовке идёт последняя
+// строка черновика, и она обновляется на каждом куске. Это и есть доказательство
+// жизни — по бегущей строке видно, что модель пишет, не требуя ничего открывать.
+// Развёрнутый вид сам прокручивается вниз: читать интересно именно конец.
+function ThinkingDraft({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (open && el) el.scrollTop = el.scrollHeight;
+  }, [text, open]);
+  // Последняя непустая строка — «что модель думает прямо сейчас».
+  const lines = text.split('\n').filter((l) => l.trim());
+  const tail = lines[lines.length - 1] ?? '';
+
+  return (
+    <div className="rounded-xl border border-dashed border-[rgba(180,150,255,0.25)] bg-black/20 overflow-hidden">
+      <button
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.03]"
+        onClick={() => setOpen((v) => !v)}
+        title={open ? 'Свернуть размышление' : 'Показать размышление целиком'}
+      >
+        <span className="text-xs shrink-0 opacity-60">💭</span>
+        <span className="flex-1 min-w-0 text-[11px] text-gray-400 truncate italic">
+          {open ? 'черновик размышления' : tail || 'модель размышляет…'}
+        </span>
+        <span className="text-[11px] text-gray-500 shrink-0">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div
+          ref={boxRef}
+          className="px-3 pb-2.5 max-h-56 overflow-y-auto border-t border-white/[0.06] pt-2"
+        >
+          <p className="m-0 text-[12px] leading-relaxed text-gray-400 whitespace-pre-wrap italic">
+            {text}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

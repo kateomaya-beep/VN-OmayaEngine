@@ -7,13 +7,13 @@ import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
 import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson, nameHit } from './characterRegistry';
 import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
-import { runCompletion } from './providers';
+import { runCompletion, modelAlwaysThinks } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
-import { parseRpResponse, rpTurn, streamingProse, stripStateBlock } from './rpResponse';
+import { parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock } from './rpResponse';
 import { protagonistName } from './macros';
 import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
@@ -706,7 +706,7 @@ export async function runTurn(
   // Потоковый показ (только текстовый РП): зовётся с НАКОПЛЕННЫМ текстом ответа,
   // уже очищенным от служебных тегов. В новелле смысла не имеет — там ход
   // приезжает одним JSON-объектом, показывать по кускам нечего.
-  onStream?: (text: string) => void
+  onStream?: (s: { prose: string; thinking: string }) => void
 ): Promise<TurnResult> {
   const mode = normalizeNarrativeMode(project.mode);
   // Случайное событие (Batch 6 §3) и случайное СМС (Batch 8-fix) — независимые роллы.
@@ -755,7 +755,17 @@ export async function runTurn(
   const maxTokens = Math.min(8000, Math.max(1500, Math.round(tl.max * perWord) + 900));
   // При управляемом размышлении родную «думалку» глушим (none) — иначе она сложится
   // с нашим планом и станет только медленнее.
-  const reasoningEffort = ps.guidedThinking ? 'none' : ps.reasoningEffort;
+  //
+  // Кроме моделей, у которых её не выключить (GLM-5.x, Kimi, DeepSeek-R1): там
+  // управляемое размышление уже отступило (см. promptBuilder), а из ступеней
+  // просим САМУЮ НИЗКУЮ. Намерение то же — «не трать время на обдумывание», — но
+  // «выкл» такая модель не примет, а промолчать нельзя: без параметра она берёт
+  // свой дефолт, максимальную глубину, и ход думается минуты.
+  const reasoningEffort = ps.guidedThinking
+    ? modelAlwaysThinks()
+      ? 'low'
+      : 'none'
+    : ps.reasoningEffort;
 
   // Имена — для метода обработки промпта «одним сообщением» (там реплики надо
   // подписывать).
@@ -781,11 +791,15 @@ export async function runTurn(
       // это как раз открывающий <thinking>. Без него накопленный текст выглядел бы
       // как обычная проза, и план размышления утекал бы игроку на экран.
       let acc = req.prefill ?? '';
-      const onDelta = onStream
-        ? (chunk: string) => {
-            acc += chunk;
-            onStream(streamingProse(acc));
-          }
+      // Размышление приезжает из ДВУХ независимых источников, и показывать надо оба:
+      //  — скрытое размышление самой модели (отдельное поле дельты, см. onReasoning);
+      //  — наш блок <thinking> из управляемого размышления (идёт внутри content).
+      // У одной модели может быть и то и другое, поэтому копим раздельно и склеиваем.
+      let reasoningAcc = '';
+      const thinkingNow = () =>
+        [reasoningAcc.trim(), streamingThinking(acc)].filter(Boolean).join('\n\n');
+      const emit = onStream
+        ? () => onStream({ prose: streamingProse(acc), thinking: thinkingNow() })
         : undefined;
       return runCompletion({
         system: req.system,
@@ -795,7 +809,18 @@ export async function runTurn(
         maxTokens,
         reasoningEffort,
         names,
-        onDelta,
+        onDelta: emit
+          ? (chunk: string) => {
+              acc += chunk;
+              emit();
+            }
+          : undefined,
+        onReasoning: emit
+          ? (chunk: string) => {
+              reasoningAcc += chunk;
+              emit();
+            }
+          : undefined,
         signal,
       });
     };

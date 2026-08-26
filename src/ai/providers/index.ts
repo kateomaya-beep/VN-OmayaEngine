@@ -33,6 +33,12 @@ export interface CompletionRequest {
   // Потоковый вывод: движок отдаёт колбэк, провайдер зовёт его на каждый кусок
   // текста. Отсутствует — обычная генерация одним ответом.
   onDelta?: (chunk: string) => void;
+  // Куски СКРЫТОГО РАЗМЫШЛЕНИЯ модели. Reasoning-модели (GLM, DeepSeek, o-серия
+  // через шлюзы) шлют его ОТДЕЛЬНЫМ полем дельты — reasoning_content или reasoning,
+  // — а не в content. Пока идёт размышление, в content не приходит НИ БАЙТА: у
+  // моделей, думающих минуту-две, экран всё это время выглядел мёртвым, хотя поток
+  // исправно шёл. Этот колбэк и есть доказательство жизни для игрока.
+  onReasoning?: (chunk: string) => void;
   // Отмена генерации: сигнал прерывания fetch (кнопка «Отменить» в игре).
   signal?: AbortSignal;
 }
@@ -382,6 +388,13 @@ function saveLsSet(key: string, set: Set<string>): void {
   }
 }
 
+// Семейства, про которые известно, что родную думалку у них не отключить. Это
+// ЗАТРАВКА, а не истина: точный ответ даёт только отказ провайдера (см.
+// rememberAlwaysThink), но ждать первого отказа — значит подарить пользователю
+// один пыточно медленный ход на каждом новом браузере. Ошибка затравки дёшева:
+// управляемое размышление просто уступит место родному, и ход всё равно пройдёт.
+const ALWAYS_THINK_PATTERNS = /glm-?5|kimi-?k?[23]|deepseek-?(r1|reasoner)|minimax-?m[12]/i;
+
 const alwaysThinkTargets = loadLsSet(ALWAYS_THINK_LS_KEY);
 function rememberAlwaysThink(key: string): void {
   alwaysThinkTargets.add(key);
@@ -403,10 +416,24 @@ function isThinkingRequiredError(text: string): boolean {
 // none/medium недопустимы: none → low (ближайшее по смыслу «думай поменьше»),
 // medium → high (из доступных ступеней это следующая вверх).
 function effortFor(target: string, effort: string | undefined): string | undefined {
-  if (!effort || !alwaysThinkTargets.has(target)) return effort;
+  if (!effort || !alwaysThinks(target)) return effort;
   if (effort === 'none') return 'low';
   if (effort === 'medium') return 'high';
   return effort;
+}
+
+function alwaysThinks(target: string): boolean {
+  return alwaysThinkTargets.has(target) || ALWAYS_THINK_PATTERNS.test(target);
+}
+
+// Думает ли выбранная модель ВСЕГДА, без возможности это выключить. Спрашивает
+// сборка промпта: управляемому размышлению на такой модели делать нечего — оно
+// не заменяет родную думалку, а ДОБАВЛЯЕТСЯ к ней, и ход думается дважды.
+export function modelAlwaysThinks(model?: string): boolean {
+  const conn = getConnection();
+  const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
+  const name = model || conn.model || '';
+  return name ? alwaysThinks(targetKey(base, name)) : false;
 }
 
 const noPrefillTargets = loadLsSet(NO_PREFILL_LS_KEY);
@@ -649,7 +676,19 @@ const openAiCompatible: Provider = {
         }
         const fr = ev?.choices?.[0]?.finish_reason;
         if (typeof fr === 'string') finishReason = fr;
-        const piece = normalizeContent(ev?.choices?.[0]?.delta?.content);
+        const delta = ev?.choices?.[0]?.delta;
+        // Скрытое размышление приходит отдельным полем и НЕ идёт в текст ответа:
+        // это черновик модели, а не проза. Имя поля у шлюзов разное —
+        // reasoning_content (Zhipu/GLM, DeepSeek) или reasoning (OpenRouter).
+        //
+        // started оно НАМЕРЕННО не выставляет: этот флаг решает, можно ли молча
+        // переиграть запрос обычным (нестриминговым) вызовом. Шлюз, который шлёт
+        // размышление, но так и не отдаёт content (кривая раскладка SSE — обычное
+        // дело у перепродавцов), должен провалиться в этот откат и там ожить, а не
+        // упереться в «пустой ответ» навсегда.
+        const rPiece = normalizeContent(delta?.reasoning_content ?? delta?.reasoning);
+        if (rPiece) req.onReasoning?.(rPiece);
+        const piece = normalizeContent(delta?.content);
         if (!piece) return;
         started = true;
         out += piece;
@@ -802,6 +841,12 @@ anthropic.completeStream = async function completeStream(conn, apiKey, req, onDe
         stopReason = ev.delta.stop_reason;
       }
       if (ev?.type !== 'content_block_delta') return;
+      // Размышление у Anthropic — свой тип дельты (thinking_delta), текст в поле
+      // thinking. В ответ он не идёт, только на экран «модель уже работает».
+      if (typeof ev?.delta?.thinking === 'string' && ev.delta.thinking) {
+        req.onReasoning?.(ev.delta.thinking);
+        return;
+      }
       const piece = typeof ev?.delta?.text === 'string' ? ev.delta.text : '';
       if (!piece) return;
       started = true;

@@ -75,6 +75,23 @@ export function streamingProse(raw: string): string {
   return t.trimStart();
 }
 
+// Текст ДУМАЛКИ по мере набора — то, что модель пишет внутри <thinking>, пока блок
+// ещё не закрыт. Нужен ровно для одного: показать, что модель уже работает.
+//
+// Без него управляемое размышление выглядит как зависание: прозы ещё нет (она
+// начнётся только после закрытия блока), думалка не видна — и отличить думающую
+// модель от намертво вставшей невозможно. На моделях, которые размышляют минутами,
+// это разница между «идёт работа» и «всё сломалось».
+export function streamingThinking(raw: string): string {
+  const open = /<think(?:ing)?>/i.exec(raw);
+  if (!open) return '';
+  const after = raw.slice(open.index + open[0].length);
+  const close = /<\/think(?:ing)?>/i.exec(after);
+  const body = close ? after.slice(0, close.index) : after;
+  // Хвост вида «</thin» — закрывающий тег, приехавший по кусочкам.
+  return body.replace(/<\/?[a-z]*$/i, '').trim();
+}
+
 export function parseRpResponse(raw: string, opts?: { userName?: string; guard?: boolean }): RpResponse {
   const plan = extractThinking(raw);
   // Блок размышления вырезаем тем же способом, что и в новелле, чтобы план не

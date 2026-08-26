@@ -6,6 +6,7 @@ import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { stripStateBlock } from './rpResponse';
 import { applyRegexRules } from './regexRules';
 import { getPresetSettings, presetForMode } from './presetSettings';
+import { modelAlwaysThinks } from './providers';
 import { matchLorebook } from './lorebookEngine';
 import { logEvent } from '../shared/logStore';
 import { getGlobalNotes } from '../shared/globalNotes';
@@ -1259,7 +1260,23 @@ export async function buildRequest(
   // «думалки». Префилл открывает тег, инструкция задаёт короткий шаблон плана,
   // после закрытия тега — только ответ. Парсер вырезает <thinking>…</thinking>.
   let prefill = ps.prefill?.trim() || undefined;
-  if (ps.guidedThinking) {
+  // …но только там, где родную думалку РЕАЛЬНО можно заглушить. У моделей, которые
+  // думают всегда (GLM-5.x, Kimi, DeepSeek-R1), наш план не заменяет родное
+  // размышление, а ложится ПОВЕРХ него: модель сперва думает про себя минуту-две,
+  // потом пишет ещё и наш план, и только потом прозу. Ровно отсюда «китайские
+  // модели тупят, а Gemini с Claude резвые» — у тех двоих думалка отключается.
+  // Родное размышление теперь видно в ленте по мере набора, так что смысл
+  // управляемого плана (видеть, что модель планирует) там и так закрыт.
+  const nativeThinker = modelAlwaysThinks();
+  if (ps.guidedThinking && nativeThinker) {
+    logEvent(
+      'info',
+      'prompt',
+      'Управляемое размышление отключено для этой модели: она думает всегда, и план ложился бы ' +
+        'поверх её собственного размышления — ход обдумывался бы дважды. Её родную думалку видно в ленте.'
+    );
+  }
+  if (ps.guidedThinking && !nativeThinker) {
     const plan = (ps.thinkingPlan?.trim() || (mode === 'rp' ? DEFAULT_RP_THINKING_PLAN : DEFAULT_THINKING_PLAN));
     const after =
       mode === 'rp'

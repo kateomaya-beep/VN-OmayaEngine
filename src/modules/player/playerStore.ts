@@ -84,6 +84,12 @@ interface PlayerStore {
   // Текст, который печатается прямо сейчас (потоковая генерация, режим РП).
   // null — потока нет: либо он не поддерживается шлюзом, либо ход уже применён.
   streamingText: string | null;
+  // Черновик размышления модели, пока идёт генерация: её скрытый reasoning и/или
+  // наш блок <thinking>. Показывается свёрнутой панелью над ответом и исчезает,
+  // когда ход применён. Единственный смысл — видеть, что модель РАБОТАЕТ: на
+  // моделях, думающих минуту-две, до первой буквы прозы экран иначе неотличим
+  // от зависшего.
+  thinkingText: string | null;
   choices: Choice[];
   cg: string | null; // active cutscene CG assetId
   chapterTitle: string | null;
@@ -301,6 +307,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   phase: 'beats',
   pendingMove: null,
   streamingText: null,
+  thinkingText: null,
   choices: [],
   cg: null,
   chapterTitle: null,
@@ -329,7 +336,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // Оптимистично: возвращаем прошлый вид сцены СРАЗУ (не ждём обрыва сети/раскрутки
     // промиса). Помечаем ход обработанным, чтобы его catch не перезаписал UI повторно.
     cur.handled = true;
-    set({ thinking: false, error: null, pendingMove: null, streamingText: null, ...cur.prevView });
+    set({ thinking: false, error: null, pendingMove: null, streamingText: null, thinkingText: null, ...cur.prevView });
     // Реальный обрыв сетевого запроса — в фоне.
     cur.controller.abort();
   },
@@ -1646,18 +1653,18 @@ async function runAndApply(
     queue: [],
     visibleBeats: [],
     pendingMove: playerMove,
-    streamingText: null,
+    streamingText: null, thinkingText: null,
   });
   // Потоковый показ — только для текстового РП: там ответ и есть проза, её видно
   // по мере набора. В новелле ход приезжает одним JSON-объектом, и «печатать» его
   // нечем — показывать сырую схему игроку бессмысленно.
   const streaming = normalizeNarrativeMode(project.mode) === 'rp' && getPresetSettings().streamingEnabled;
   const onStream = streaming
-    ? (text: string) => {
+    ? (s: { prose: string; thinking: string }) => {
         // Вытесненный ход (отмена/новая генерация) не должен дорисовывать свой
         // текст поверх уже перерисованного экрана.
         if (self.handled) return;
-        set({ streamingText: text });
+        set({ streamingText: s.prose, thinkingText: s.thinking || null });
       }
     : undefined;
   logEvent('info', 'turn', `Ход: ${playerMove.slice(0, 60)}`);
@@ -1717,7 +1724,7 @@ async function runAndApply(
       choices: turn.choices,
       thinking: false,
       pendingMove: null,
-      streamingText: null,
+      streamingText: null, thinkingText: null,
       cg: turn.scene.cutsceneCgId,
       statFlash: flash,
       chapterTitle: turn.chapterEvent === 'chapter_end' ? 'Сюжетная веха' : null,
@@ -1754,11 +1761,11 @@ async function runAndApply(
     if (aborted) {
       // Отмена: возвращаем прошлый вид сцены; ошибку не показываем.
       logEvent('info', 'turn', 'Генерация отменена — возвращён прошлый ход');
-      set({ thinking: false, error: null, pendingMove: null, streamingText: null, ...prevView });
+      set({ thinking: false, error: null, pendingMove: null, streamingText: null, thinkingText: null, ...prevView });
     } else {
       // Ошибка: тоже возвращаем прошлый вид (сцена не пустеет), показываем тост.
       logEvent('error', 'turn', 'Не удалось выполнить ход: ' + (e as Error).message, (e as Error).stack);
-      set({ thinking: false, error: (e as Error).message, pendingMove: null, streamingText: null, ...prevView });
+      set({ thinking: false, error: (e as Error).message, pendingMove: null, streamingText: null, thinkingText: null, ...prevView });
     }
     return false;
   } finally {
