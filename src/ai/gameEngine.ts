@@ -13,7 +13,7 @@ import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThi
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
-import { parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock } from './rpResponse';
+import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock } from './rpResponse';
 import { protagonistName } from './macros';
 import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
@@ -782,6 +782,11 @@ export async function runTurn(
     // прозе не как попытка выдать его реплику). Страховка от «модель пишет за
     // игрока» остаётся клиентской — trimImpersonation в parseRpResponse — она режет
     // только хвост, а не теряет весь ход целиком.
+    //
+    // Префилл, который надо спрятать при показе. Объявлен ДО ask: замыкание внутри
+    // читает его на каждом куске потока, а первый вызов ask случается раньше любой
+    // строки ниже.
+    const hidePf = ps.hidePrefill ? req.prefill : undefined;
     const ask = (extra?: string) => {
       // Накопитель для показа: провайдер отдаёт куски, а экрану нужен весь текст
       // целиком — иначе каждый кусок пришлось бы склеивать ещё и там.
@@ -799,7 +804,7 @@ export async function runTurn(
       const thinkingNow = () =>
         [reasoningAcc.trim(), streamingThinking(acc)].filter(Boolean).join('\n\n');
       const emit = onStream
-        ? () => onStream({ prose: streamingProse(acc), thinking: thinkingNow() })
+        ? () => onStream({ prose: dropPrefill(streamingProse(acc), hidePf), thinking: thinkingNow() })
         : undefined;
       return runCompletion({
         system: req.system,
@@ -826,13 +831,13 @@ export async function runTurn(
     };
 
     let rawRp = await ask();
-    let rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard });
+    let rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard, prefill: hidePf });
     // Пустой текст — единственная настоящая ошибка этого режима: обычно весь бюджет
     // ушёл в reasoning или сработал фильтр. Один повтор, дальше честная ошибка.
     if (!rp.prose.trim()) {
       logEvent('warn', 'llm', 'Ответ пустой — повторяю запрос с явным напоминанием формата');
       rawRp = await ask(RP_RETRY_HINT);
-      rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard });
+      rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard, prefill: hidePf });
     }
     if (!rp.prose.trim()) throw new Error('Модель вернула пустой ответ');
     if (rp.plan) logEvent('info', 'think', `План хода ${state.turnCount + 1}`, rp.plan);

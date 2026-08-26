@@ -37,6 +37,22 @@ export function stripStateBlock(raw: string): string {
   return raw.replace(STATE_RE, '').trim();
 }
 
+// Убирает префилл из начала текста. Префилл — это НАШИ слова, вписанные в уста
+// модели, чтобы она начала ответ нужным образом; провайдер приклеивает их обратно
+// к результату, иначе ответ был бы обрезан с головы.
+//
+// Показывать их игроку нужно не всегда: «затравка» для джейлбрейка — чистая
+// техника и в истории смотрится инородно, а вот префилл-стабилизатор формата
+// (одинокая «*», открывающая курсив) убирать нельзя — разметка останется
+// незакрытой. Отличить одно от другого может только автор, поэтому решает
+// настройка, а здесь только механика.
+export function dropPrefill(text: string, prefill?: string): string {
+  const p = prefill?.trim();
+  if (!p) return text;
+  const t = text.trimStart();
+  return t.startsWith(p) ? t.slice(p.length).trimStart() : text;
+}
+
 // Хвост ответа, в котором модель начала писать за игрока. Стоп-строки провайдера
 // ловят это на генерации, но не все шлюзы их поддерживают, поэтому подстраховываемся
 // и на разборе: всё начиная со строки «Имя героя:» отрезается.
@@ -92,7 +108,10 @@ export function streamingThinking(raw: string): string {
   return body.replace(/<\/?[a-z]*$/i, '').trim();
 }
 
-export function parseRpResponse(raw: string, opts?: { userName?: string; guard?: boolean }): RpResponse {
+export function parseRpResponse(
+  raw: string,
+  opts?: { userName?: string; guard?: boolean; prefill?: string }
+): RpResponse {
   const plan = extractThinking(raw);
   // Блок размышления вырезаем тем же способом, что и в новелле, чтобы план не
   // оказался в тексте истории. Тег может быть и <think> (так его называют часть
@@ -109,7 +128,7 @@ export function parseRpResponse(raw: string, opts?: { userName?: string; guard?:
     if (parsed) worldState = parsed;
   }
 
-  let prose = stripStateBlock(body);
+  let prose = dropPrefill(stripStateBlock(body), opts?.prefill);
   if (opts?.guard !== false) prose = trimImpersonation(prose, opts?.userName || '');
 
   return { prose, worldState, plan };

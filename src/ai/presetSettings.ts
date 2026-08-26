@@ -48,6 +48,11 @@ export interface PresetSettings {
   guidedThinking: boolean;
   thinkingPlan?: string;
   prefill?: string;
+  // Прятать префилл в показанном ответе. Префилл — наши слова, вписанные в уста
+  // модели; «затравке» для джейлбрейка в ленте не место. Выключать имеет смысл,
+  // когда префилл открывает разметку (одинокая «*» под курсив): без него она
+  // осталась бы незакрытой.
+  hidePrefill: boolean;
   advancedBlocks: AdvancedPromptBlock[];
 }
 
@@ -60,6 +65,7 @@ function defaults(): PresetSettings {
     promptProcessing: 'merge',
     impersonationGuard: true,
     streamingEnabled: true,
+    hidePrefill: true,
     regexRules: [],
     showStateInfobox: true,
     assistantPersona: '',
@@ -99,6 +105,7 @@ function load(): PresetSettings {
       promptProcessing: isPromptProcessing(v.promptProcessing) ? v.promptProcessing : d.promptProcessing,
       impersonationGuard: typeof v.impersonationGuard === 'boolean' ? v.impersonationGuard : true,
       streamingEnabled: typeof v.streamingEnabled === 'boolean' ? v.streamingEnabled : true,
+      hidePrefill: typeof v.hidePrefill === 'boolean' ? v.hidePrefill : true,
       regexRules: normalizeRegexRules(v.regexRules),
       showStateInfobox: typeof v.showStateInfobox === 'boolean' ? v.showStateInfobox : true,
       assistantPersona: typeof v.assistantPersona === 'string' ? v.assistantPersona : '',

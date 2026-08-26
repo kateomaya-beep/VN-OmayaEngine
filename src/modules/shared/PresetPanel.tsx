@@ -248,6 +248,27 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
           placeholder={isRp ? '*' : '{"scene":'}
           onChange={(e) => patch({ prefill: e.target.value || undefined })}
         />
+        {isRp && !!cfg.prefill && (
+          <>
+            <label className="flex items-start gap-2 mt-3 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={cfg.hidePrefill}
+                onChange={(e) => patch({ hidePrefill: e.target.checked })}
+              />
+              <span>
+                Прятать префилл в ответе
+                <span className="block text-[11px] text-gray-500">
+                  Префилл — ваши слова, вписанные в уста модели, и в ленте «затравка» выглядит
+                  инородно. Снимите галочку, если префилл ОТКРЫВАЕТ разметку (одинокая «*» под
+                  курсив): спрятав его, вы оставите её незакрытой. В контексте модели префилл
+                  остаётся в любом случае — прячется только показ.
+                </span>
+              </span>
+            </label>
+          </>
+        )}
       </div>
 
       {/* Совместимость со шлюзом: метод обработки промпта + защита от письма за игрока */}

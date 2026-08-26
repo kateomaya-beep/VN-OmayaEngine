@@ -77,13 +77,16 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
       }
       // guard: false — обрезать «письмо за игрока» на показе поздно и вредно: ход
       // уже применён, и текст на экране разошёлся бы с текстом в контексте.
-      const rp = parseRpResponse(m.content, { guard: false });
+      const rp = parseRpResponse(m.content, {
+        guard: false,
+        prefill: cfg.hidePrefill ? cfg.prefill : undefined,
+      });
       return {
         text: applyRegexRules(rp.prose, cfg.regexRules, { role: 'ai', scope: 'display' }),
         world: rp.worldState,
       };
     });
-  }, [history, cfg.regexRules]);
+  }, [history, cfg.regexRules, cfg.hidePrefill, cfg.prefill]);
 
   // Прокрутка вниз при новом сообщении и по мере набора текста. useLayoutEffect, а
   // не useEffect: иначе кадр между вёрсткой и прокруткой видно как рывок вверх.
