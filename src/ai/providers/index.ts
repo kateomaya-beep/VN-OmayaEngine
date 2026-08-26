@@ -203,6 +203,27 @@ async function apiFetch(url: string, init: RequestInit): Promise<Response> {
   }
 }
 
+// Автоповтор ПЕРВОГО запроса на явно транзиентных статусах (перегрузка/шлюз
+// прилёг/лимит) — это НЕ починка капризов пресета (для того ниже своя логика на
+// 400), а страховка от разовых сбоев шлюза/провайдера. Особенно заметно на менее
+// обкатанных провайдерах (китайские шлюзы вроде z-ai/GLM чаще отдают 502 с
+// «нечитаемым» телом — их гейтвей не всегда справляется с ответом бэкенда), но
+// причина внешняя: наш запрос корректен, повторный тот же запрос обычно проходит.
+async function withRetry(post: () => Promise<Response>, maxRetries = 2): Promise<Response> {
+  let res = await post();
+  for (let i = 0; i < maxRetries && !res.ok && RETRYABLE.has(res.status); i++) {
+    const delay = 700 * (i + 1);
+    logEvent(
+      'warn',
+      'llm',
+      `HTTP ${res.status} — похоже, временный сбой шлюза, а не наш запрос. Повтор ${i + 1}/${maxRetries} через ${delay} мс.`
+    );
+    await new Promise((r) => setTimeout(r, delay));
+    res = await post();
+  }
+  return res;
+}
+
 function requireModel(model: string | undefined): string {
   if (!model || !model.trim()) {
     throw new Error(
@@ -386,7 +407,7 @@ const openAiCompatible: Provider = {
         headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
         body: JSON.stringify(b),
       });
-    let res = await post(body);
+    let res = await withRetry(() => post(body));
     // Адаптация под капризы шлюзов: параметры вне базового набора OpenAI-совместимые
     // провайдеры принимают по-разному. На 400 пробуем починить тело и повторить ОДИН раз:
     //  - reasoning_effort не знают многие (или не принимают 'none') → убираем;
@@ -516,24 +537,26 @@ const openAiCompatible: Provider = {
     if (req.attachments?.length) attachImagesOpenAi(messages, req.attachments);
     const prefill = req.prefill?.trim() && !noPrefillTargets.has(targetKey(base, model)) ? req.prefill : '';
     if (prefill) messages.push({ role: 'assistant', content: prefill });
-    const res = await apiFetch(`${base}/chat/completions`, {
-      method: 'POST',
-      signal: req.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({
-        model,
-        temperature: req.temperature,
-        messages,
-        stream: true,
-        ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
-        ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
-        ...(req.stop?.length ? { stop: req.stop } : {}),
-      }),
-    });
+    const res = await withRetry(() =>
+      apiFetch(`${base}/chat/completions`, {
+        method: 'POST',
+        signal: req.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model,
+          temperature: req.temperature,
+          messages,
+          stream: true,
+          ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+          ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
+          ...(req.stop?.length ? { stop: req.stop } : {}),
+        }),
+      })
+    );
     if (!res.ok) {
       // Ошибку НЕ разбираем и не показываем: обычный путь умеет чинить половину
       // причин 400 сам, поэтому просто просим движок переиграть без потока.
@@ -618,24 +641,26 @@ const anthropic: Provider = {
     // переводом строки (напр. префилл "<thinking>\n") — обрезаем хвост.
     const pf = req.prefill ? req.prefill.replace(/\s+$/, '') : '';
     if (pf) messages.push({ role: 'assistant', content: pf });
-    const res = await apiFetch(`${base}/messages`, {
-      method: 'POST',
-      signal: req.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: req.maxTokens || 4096,
-        temperature: req.temperature,
-        ...(req.system.trim() ? { system: req.system } : {}),
-        messages,
-        ...(req.stop?.length ? { stop_sequences: req.stop } : {}),
-      }),
-    });
+    const res = await withRetry(() =>
+      apiFetch(`${base}/messages`, {
+        method: 'POST',
+        signal: req.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: req.maxTokens || 4096,
+          temperature: req.temperature,
+          ...(req.system.trim() ? { system: req.system } : {}),
+          messages,
+          ...(req.stop?.length ? { stop_sequences: req.stop } : {}),
+        }),
+      })
+    );
     if (!res.ok) throw providerHttpError(res.status, await res.text().catch(() => ''));
     const data = await res.json();
     const content = data?.content?.[0]?.text;
@@ -664,26 +689,28 @@ anthropic.completeStream = async function completeStream(conn, apiKey, req, onDe
   // Хвостовой пробел в префилле Anthropic отклоняет — так же, как в обычном пути.
   const pf = req.prefill ? req.prefill.replace(/\s+$/, '') : '';
   if (pf) messages.push({ role: 'assistant', content: pf });
-  const res = await apiFetch(`${base}/messages`, {
-    method: 'POST',
-    signal: req.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: req.maxTokens || 4096,
-      temperature: req.temperature,
-      stream: true,
-      ...(req.system.trim() ? { system: req.system } : {}),
-      messages,
-      ...(req.stop?.length ? { stop_sequences: req.stop } : {}),
-    }),
-  });
+  const res = await withRetry(() =>
+    apiFetch(`${base}/messages`, {
+      method: 'POST',
+      signal: req.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: req.maxTokens || 4096,
+        temperature: req.temperature,
+        stream: true,
+        ...(req.system.trim() ? { system: req.system } : {}),
+        messages,
+        ...(req.stop?.length ? { stop_sequences: req.stop } : {}),
+      }),
+    })
+  );
   if (!res.ok) throw new StreamNotStarted(`Поток не открылся: HTTP ${res.status}`);
   let out = '';
   let started = false;
