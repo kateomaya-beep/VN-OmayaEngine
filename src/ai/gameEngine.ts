@@ -787,6 +787,11 @@ export async function runTurn(
     // читает его на каждом куске потока, а первый вызов ask случается раньше любой
     // строки ниже.
     const hidePf = ps.hidePrefill ? req.prefill : undefined;
+    // Скрытое размышление ПОСЛЕДНЕГО запроса. Живёт снаружи ask, чтобы пережить
+    // его возврат: панель размышления на экране исчезает вместе с приходом ответа,
+    // и прочитать её до конца попросту не успеваешь. Копия уходит в журнал —
+    // там ход можно раскрыть и разобрать спокойно.
+    let lastReasoning = '';
     const ask = (extra?: string) => {
       // Накопитель для показа: провайдер отдаёт куски, а экрану нужен весь текст
       // целиком — иначе каждый кусок пришлось бы склеивать ещё и там.
@@ -801,6 +806,7 @@ export async function runTurn(
       //  — наш блок <thinking> из управляемого размышления (идёт внутри content).
       // У одной модели может быть и то и другое, поэтому копим раздельно и склеиваем.
       let reasoningAcc = '';
+      lastReasoning = '';
       const thinkingNow = () =>
         [reasoningAcc.trim(), streamingThinking(acc)].filter(Boolean).join('\n\n');
       const emit = onStream
@@ -820,12 +826,13 @@ export async function runTurn(
               emit();
             }
           : undefined,
-        onReasoning: emit
-          ? (chunk: string) => {
-              reasoningAcc += chunk;
-              emit();
-            }
-          : undefined,
+        // Копим размышление ВСЕГДА, даже без потокового показа: в журнал оно
+        // должно попасть в любом случае.
+        onReasoning: (chunk: string) => {
+          reasoningAcc += chunk;
+          lastReasoning = reasoningAcc;
+          emit?.();
+        },
         signal,
       });
     };
@@ -841,6 +848,8 @@ export async function runTurn(
     }
     if (!rp.prose.trim()) throw new Error('Модель вернула пустой ответ');
     if (rp.plan) logEvent('info', 'think', `План хода ${state.turnCount + 1}`, rp.plan);
+    if (lastReasoning.trim())
+      logEvent('info', 'think', `Размышление модели, ход ${state.turnCount + 1}`, lastReasoning.trim());
 
     const turn = rpTurn(state, rp.prose, rp.worldState);
     // В историю кладём СЫРОЙ ответ, вместе со служебной сводкой. В контекст она не

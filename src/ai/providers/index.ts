@@ -63,21 +63,32 @@ export interface Provider {
 // обычным запросом. После первого куска откат уже виден игроку, и мы его не делаем.
 export class StreamNotStarted extends Error {}
 
+// Поток ОТКРЫЛСЯ, но замолчал. Отдельный класс, и это принципиально: обычный
+// StreamNotStarted означает «шлюз так не умеет» и лечится переигрыванием без
+// потока. Молчание — совсем другое: соединение живо, просто модель долго думает.
+// Переигрывать его обычным запросом — значит заново ждать столько же, но уже
+// вслепую; честнее сказать правду и дать нажать «Повторить».
+export class StreamStalled extends Error {}
+
 // Читает SSE-поток построчно. Кадры разделяются пустой строкой; нас интересуют
 // только строки data:. \r\n нормализуем — их шлют некоторые шлюзы, и без этого
 // разделитель кадра не находится вовсе.
 //
 // СТОРОЖЕВОЙ ТАЙМЕР: если провайдер молчит дольше staleMs между кусками (включая
-// самый первый), считаем соединение зависшим и обрываем его сами — иначе «вечная
-// загрузка» медленной/перегруженной модели ничем не отличима от честно работающего
-// запроса, и ждать пришлось бы буквально бесконечно. Ошибка тут не теряет уже
-// пришедший текст: вызывающий код (completeStream) при обрыве ПОСЛЕ первого куска
-// просто возвращает то, что успело прийти, а до первого куска — молча переигрывает
-// обычным (нестриминговым) запросом.
+// самый первый), считаем соединение зависшим и обрываем его сами — иначе намертво
+// вставший запрос ничем не отличим от работающего, и ждать пришлось бы бесконечно.
+// Уже пришедший текст при этом не теряется: обрыв ПОСЛЕ первого куска отдаёт то,
+// что успело прийти.
+//
+// Порог считаем от худшего ЧЕСТНОГО случая, а не от среднего. Прежние 45 с вредили
+// ровно тем, кого должны были спасать: GLM-5.x, Kimi K3 и прочие «всегда думающие»
+// молчат по полторы-две минуты, пока размышляют, — и сторож убивал живой поток на
+// середине работы, а ход уходил на нестриминговый путь, где ждать столько же, но
+// уже вслепую. Лучше подождать лишнюю минуту, чем оборвать почти готовый ответ.
 async function readSse(
   res: Response,
   onData: (data: string) => void,
-  staleMs = 45000
+  staleMs = 180000
 ): Promise<void> {
   const reader = res.body?.getReader();
   if (!reader) throw new StreamNotStarted('Поток недоступен: у ответа нет тела');
@@ -89,7 +100,12 @@ async function readSse(
     const chunk = await new Promise<{ done: boolean; value?: Uint8Array }>((resolve, reject) => {
       timer = setTimeout(() => {
         settled = true;
-        reject(new Error(`Провайдер не прислал ни байта дольше ${Math.round(staleMs / 1000)} с — похоже, завис`));
+        reject(
+          new StreamStalled(
+            `Провайдер молчал дольше ${Math.round(staleMs / 1000)} с — соединение оборвано с нашей стороны. ` +
+              'Нажмите «Повторить»; если повторяется — модель слишком медленная для такого контекста.'
+          )
+        );
       }, staleMs);
       reader.read().then(
         (r) => {
@@ -401,6 +417,18 @@ function rememberAlwaysThink(key: string): void {
   saveLsSet(ALWAYS_THINK_LS_KEY, alwaysThinkTargets);
 }
 
+// Модели, которые reasoning_effort не принимают ВООБЩЕ. Таких два сорта, и внешне
+// они неразличимы: одни про параметр не слышали, другие знают, но принимают не
+// все ступени (Kimi K3 на момент выхода понимал только "max"). Итог один — параметр
+// слать нельзя, глубину размышления придётся оставить на усмотрение модели.
+// Запоминаем, чтобы не платить лишним кругом запросов на каждом ходу.
+const NO_EFFORT_LS_KEY = 'nf_no_effort_targets';
+const noEffortTargets = loadLsSet(NO_EFFORT_LS_KEY);
+function rememberNoEffort(key: string): void {
+  noEffortTargets.add(key);
+  saveLsSet(NO_EFFORT_LS_KEY, noEffortTargets);
+}
+
 // Отказ вида «эта модель всегда думает». Ловим и по коду 1210, и по тексту: коды
 // у шлюзов-перепродавцов теряются, а формулировка довольно устойчивая.
 function isThinkingRequiredError(text: string): boolean {
@@ -416,6 +444,7 @@ function isThinkingRequiredError(text: string): boolean {
 // none/medium недопустимы: none → low (ближайшее по смыслу «думай поменьше»),
 // medium → high (из доступных ступеней это следующая вверх).
 function effortFor(target: string, effort: string | undefined): string | undefined {
+  if (noEffortTargets.has(target)) return undefined;
   if (!effort || !alwaysThinks(target)) return effort;
   if (effort === 'none') return 'low';
   if (effort === 'medium') return 'high';
@@ -637,29 +666,57 @@ const openAiCompatible: Provider = {
     // отвергла бы 'none'/'medium', а откат на обычный запрос стоил бы лишнего
     // круга. Один раз узнав про модель (в complete), дальше шлём сразу верное.
     const effort = effortFor(target, req.reasoningEffort);
-    const res = await withRetry(() =>
-      apiFetch(`${base}/chat/completions`, {
-        method: 'POST',
-        signal: req.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream',
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model,
-          temperature: req.temperature,
-          messages,
-          stream: true,
-          ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
-          ...(effort ? { reasoning_effort: effort } : {}),
-          ...(req.stop?.length ? { stop: req.stop } : {}),
-        }),
-      })
-    );
+    const postStream = (e: string | undefined) =>
+      withRetry(() =>
+        apiFetch(`${base}/chat/completions`, {
+          method: 'POST',
+          signal: req.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            model,
+            temperature: req.temperature,
+            messages,
+            stream: true,
+            ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+            ...(e ? { reasoning_effort: e } : {}),
+            ...(req.stop?.length ? { stop: req.stop } : {}),
+          }),
+        })
+      );
+    let res = await postStream(effort);
+    // Ступень размышления чиним ПРЯМО ЗДЕСЬ и переспрашиваем снова потоком.
+    //
+    // Раньше любая ошибка отправляла ход на обычный (нестриминговый) путь: мол,
+    // там все починки. Но для думающих моделей это худший исход из возможных —
+    // именно у них размышление идёт минутами, и поток был единственным способом
+    // показать, что модель жива. Уронив его, мы меняли «видно, как идёт работа»
+    // на «пустой экран вдвое дольше»: сначала неудачный запрос, потом ещё один,
+    // молчащий до самого конца. Дешевле починить параметр и остаться в потоке.
+    if (res.status === 400 && effort) {
+      const errText = await res.text().catch(() => '');
+      if (isThinkingRequiredError(errText)) {
+        rememberAlwaysThink(target);
+        res = await postStream(effortFor(target, req.reasoningEffort) ?? 'low');
+      } else if (/reason/i.test(errText)) {
+        // Параметр не понят или понята не эта ступень (Kimi K3 принимал только
+        // "max"). Отличить нельзя — перестаём его слать этой модели вовсе.
+        rememberNoEffort(target);
+        logEvent(
+          'warn',
+          'llm',
+          `Модель «${model}» не приняла глубину размышления (reasoning_effort) — больше не шлём ей этот ` +
+            'параметр. Глубину выбирает сама модель; если она думает долго, это её штатный режим.'
+        );
+        res = await postStream(undefined);
+      }
+    }
     if (!res.ok) {
-      // Ошибку НЕ разбираем и не показываем: обычный путь умеет чинить половину
-      // причин 400 сам, поэтому просто просим движок переиграть без потока.
+      // Всё остальное чинит обычный путь (префилл, вложения, лимиты токенов) —
+      // там эти починки уже написаны, дублировать их здесь незачем.
       throw new StreamNotStarted(`Поток не открылся: HTTP ${res.status}`);
     }
     let out = '';
@@ -696,6 +753,9 @@ const openAiCompatible: Provider = {
       });
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') throw e;
+      // Замолчавший поток НЕ переигрываем без потока: ждать столько же вслепую —
+      // хуже, чем честно сказать. Прочее (шлюз не умеет SSE) — как раньше.
+      if (e instanceof StreamStalled) throw e;
       if (!started) throw new StreamNotStarted((e as Error).message);
       // Поток оборвался на середине: то, что уже пришло, — настоящий текст, и
       // выбрасывать его хуже, чем отдать короткий ход.
@@ -855,6 +915,9 @@ anthropic.completeStream = async function completeStream(conn, apiKey, req, onDe
     });
   } catch (e) {
     if ((e as Error)?.name === 'AbortError') throw e;
+    // Замолчавший поток НЕ переигрываем без потока: ждать столько же вслепую —
+    // хуже, чем честно сказать. Прочее (шлюз не умеет SSE) — как раньше.
+    if (e instanceof StreamStalled) throw e;
     if (!started) throw new StreamNotStarted((e as Error).message);
     logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти: ' + (e as Error).message);
   }
