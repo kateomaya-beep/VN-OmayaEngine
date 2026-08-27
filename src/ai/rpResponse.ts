@@ -80,8 +80,16 @@ function escapeRe(s: string): string {
 // от незакрытого тега и до конца просто отрезается.
 export function streamingProse(raw: string): string {
   let t = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '');
-  // Незакрытая думалка — значит текста истории ещё нет вовсе.
-  if (/<think(?:ing)?>/i.test(t)) return '';
+  // Незакрытая думалка. Обычно это значит, что план ещё пишется и прозы нет, —
+  // но не всегда: модель могла забыть закрыть тег и уже писать сцену внутри него.
+  // Показываем ту часть, которая перестала быть списком (см. splitUnclosedPlan);
+  // пока идут пункты плана, она пуста, и на экране честно ничего.
+  const tail = afterUnclosedOpen(t);
+  if (tail !== null) {
+    const prose = splitUnclosedPlan(tail).prose;
+    if (!prose) return '';
+    t = prose;
+  }
   t = t.replace(STATE_RE, '');
   // Сводка началась — история на этом закончилась, дальше только служебное.
   const at = t.search(new RegExp(RP_STATE_OPEN.replace(/[<>]/g, (c) => '\\' + c), 'i'));
@@ -89,6 +97,44 @@ export function streamingProse(raw: string): string {
   // Хвост вида «<sta» — начало тега, приехавшее по кусочкам.
   t = t.replace(/<[a-z]*$/i, '');
   return t.trimStart();
+}
+
+// НЕЗАКРЫТЫЙ <thinking>. Случай частый и коварный: префилл открывает тег за
+// модель, а закрыть его должна она сама — и иногда просто забывает, уезжая писать
+// сцену прямо внутри блока. Особенно у моделей, чья родная думалка живёт отдельным
+// каналом (Sonnet): наш тег для них лишняя формальность, и они её роняют.
+//
+// Раньше это стоило игроку ВСЕГО ХОДА: разбор считал незакрытый блок обрывком
+// плана и вырезал всё до конца ответа, а показ намертво замирал на «размышляет»,
+// хотя готовая сцена уже пришла. Здесь блок делится по единственному надёжному
+// признаку: наш шаблон плана — это СПИСОК, каждая строка начинается с маркера.
+// Ведущие строки-пункты — план; первая строка без маркера означает, что модель
+// перешла к прозе, и всё оттуда — уже сцена.
+//
+// Если маркеры так и не кончились, прозы нет вовсе — значит ответ и правда
+// оборвался на середине плана. Тогда prose пустой, и движок переспросит: это
+// ровно то поведение, ради которого вырезание задумывалось.
+export function splitUnclosedPlan(body: string): { plan: string; prose: string } {
+  const lines = body.split('\n');
+  let i = 0;
+  for (; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (!l) continue; // пустая строка внутри плана его не заканчивает
+    if (/^([-*•–—]|\d+[.)])\s/.test(l)) continue;
+    break;
+  }
+  return {
+    plan: lines.slice(0, i).join('\n').trim(),
+    prose: lines.slice(i).join('\n').trim(),
+  };
+}
+
+// Тело после открывающего <thinking>, если тег так и не закрыт. Пусто — тег либо
+// закрыт, либо его нет вовсе.
+function afterUnclosedOpen(raw: string): string | null {
+  const stripped = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '');
+  const open = /<think(?:ing)?>/i.exec(stripped);
+  return open ? stripped.slice(open.index + open[0].length) : null;
 }
 
 // Текст ДУМАЛКИ по мере набора — то, что модель пишет внутри <thinking>, пока блок
@@ -103,23 +149,44 @@ export function streamingThinking(raw: string): string {
   if (!open) return '';
   const after = raw.slice(open.index + open[0].length);
   const close = /<\/think(?:ing)?>/i.exec(after);
-  const body = close ? after.slice(0, close.index) : after;
   // Хвост вида «</thin» — закрывающий тег, приехавший по кусочкам.
-  return body.replace(/<\/?[a-z]*$/i, '').trim();
+  const body = (close ? after.slice(0, close.index) : after).replace(/<\/?[a-z]*$/i, '');
+  // Тег не закрыт — берём только пункты плана. Проза, которую модель написала
+  // внутри незакрытого блока, уходит в ответ, а не дублируется в панель.
+  return (close ? body : splitUnclosedPlan(body).plan).trim();
 }
 
 export function parseRpResponse(
   raw: string,
   opts?: { userName?: string; guard?: boolean; prefill?: string }
 ): RpResponse {
-  const plan = extractThinking(raw);
+  let plan = extractThinking(raw);
   // Блок размышления вырезаем тем же способом, что и в новелле, чтобы план не
   // оказался в тексте истории. Тег может быть и <think> (так его называют часть
   // reasoning-моделей), и <thinking> (так его открывает наш префилл).
   let body = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
-  // Незакрытый тег (обрыв по лимиту токенов) — режем всё до конца ответа: показать
-  // игроку сырой план хуже, чем показать пустой ход и переспросить.
-  body = body.replace(/^<think(?:ing)?>[\s\S]*$/i, '').trim();
+  // Незакрытый тег. Раньше здесь вырезалось ВСЁ до конца ответа — из соображения
+  // «сырой план на экране хуже пустого хода». Но чаще случается другое: модель
+  // забыла закрыть тег и написала внутри него готовую сцену, и вырезание съедало
+  // её целиком. Делим по маркерам списка: пункты плана — в план, остальное — в
+  // ответ. Оборвавшийся на середине плана ход по-прежнему даёт пустую прозу, и
+  // движок переспросит.
+  const tail = afterUnclosedOpen(body);
+  if (tail !== null) {
+    const split = splitUnclosedPlan(tail);
+    if (split.prose) {
+      logEvent(
+        'warn',
+        'turn',
+        'Модель не закрыла </thinking> и продолжила сценой внутри блока — ' +
+          'план отделён от прозы по разметке списка, ход не потерян.'
+      );
+    }
+    body = split.prose;
+    // extractThinking на незакрытом теге отдаёт пустоту — план брать неоткуда,
+    // кроме как отсюда. Без этого он бесследно пропадал бы из журнала.
+    if (!plan) plan = split.plan;
+  }
 
   let worldState: WorldStateUpdate | undefined;
   const m = STATE_RE.exec(body);
