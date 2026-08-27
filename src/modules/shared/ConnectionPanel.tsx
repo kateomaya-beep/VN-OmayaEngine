@@ -84,6 +84,41 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
         </p>
       </div>
 
+      {/* Быстрое подключение к модели НА СВОЁМ КОМПЬЮТЕРЕ. Отдельной «поддержки»
+          локальных моделей движку не нужно: LM Studio и Ollama говорят на том же
+          OpenAI-совместимом протоколе. Нужен ровно адрес — и вот его-то никто не
+          помнит наизусть, а ошибка в нём выглядит как «ничего не работает». */}
+      <div className="card !bg-panel2 !p-3 mb-4">
+        <label className="label">Модель на своём компьютере</label>
+        <div className="flex gap-2 flex-wrap items-center">
+          {LOCAL_TARGETS.map((t) => (
+            <button
+              key={t.name}
+              className={`btn-ghost !px-3 text-xs ${
+                connection.baseUrl.replace(/\/$/, '') === t.baseUrl ? '!border-emerald-400/60 text-emerald-200' : ''
+              }`}
+              title={`${t.baseUrl} — ${t.hint}`}
+              onClick={() =>
+                setConnection({ provider: 'openai-compatible', baseUrl: t.baseUrl, model: connection.model })
+              }
+            >
+              🖥 {t.name}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-gray-500 mt-2">
+          Подставит адрес и провайдера. Ключ таким серверам не нужен — оставьте поле пустым.
+          Дальше нажмите ⟳ рядом с «Моделью»: список подтянется из того, что у вас загружено.
+          В LM Studio модель должна быть ЗАГРУЖЕНА и сервер запущен (вкладка Developer →
+          Start Server), иначе список придёт пустым.
+        </p>
+        <p className="text-[11px] text-gray-500 mt-1">
+          Под маленькую модель стоит включить «🖥 Модель у меня на компьютере» в пресете (🎚):
+          она подгонит контекст, длину хода и сам пресет — без этого локальная модель почти
+          наверняка захлебнётся.
+        </p>
+      </div>
+
       <ApiConnectionField
         conn={connection}
         keyRole={connection.provider}
@@ -92,3 +127,11 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
     </Modal>
   );
 }
+
+// Адреса по умолчанию у локальных серверов. Оба — OpenAI-совместимые ручки, и
+// порт у каждого свой фиксированный: у LM Studio 1234, у Ollama 11434.
+const LOCAL_TARGETS = [
+  { name: 'LM Studio', baseUrl: 'http://localhost:1234/v1', hint: 'вкладка Developer → Start Server' },
+  { name: 'Ollama', baseUrl: 'http://localhost:11434/v1', hint: 'ollama serve' },
+  { name: 'llama.cpp', baseUrl: 'http://localhost:8080/v1', hint: 'llama-server --port 8080' },
+];

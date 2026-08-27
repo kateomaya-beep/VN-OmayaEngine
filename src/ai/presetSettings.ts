@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { defaultPreset, normalizePreset, type PromptPreset } from './promptPreset';
 import { defaultRpPreset, normalizeRpPreset } from './rpPreset';
+import { defaultLocalPreset, normalizeLocalPreset } from './localPreset';
 import { isPromptProcessing, type PromptProcessing } from './promptPostProcess';
 import { normalizeRegexRules, type RegexRule } from './regexRules';
 import type { AdvancedPromptBlock, NarrativeMode } from '../shared/types';
@@ -21,6 +22,14 @@ export interface PresetSettings {
   // и выборов, зато есть жёсткий запрет писать за игрока. Держать оба в одном списке
   // блоков не вышло бы — половина блоков каждого режима мешает другому.
   rpPreset: PromptPreset;
+  // Компактный пресет для локальной модели — см. localPreset.ts. Отдельный, а не
+  // урезанная копия РП: у маленькой модели другой предел внимания и контекста.
+  localPreset: PromptPreset;
+  // РЕЖИМ ЛОКАЛЬНОЙ МОДЕЛИ. Один тумблер вместо десятка настроек: включив его,
+  // пользователь получает и компактный пресет, и подогнанные параметры генерации
+  // (см. LOCAL_OVERRIDES). Сохранённые «облачные» значения при этом НЕ портятся —
+  // они просто перекрываются на время, и выключение возвращает всё как было.
+  localMode: boolean;
   promptProcessing: PromptProcessing;
   // Страховка от «модель написала за игрока» в РП: срез хвоста ответа, если модель
   // всё же начала реплику героя. Промпт один это не держит.
@@ -62,6 +71,8 @@ function defaults(): PresetSettings {
   return {
     preset: defaultPreset(),
     rpPreset: defaultRpPreset(),
+    localPreset: defaultLocalPreset(),
+    localMode: false,
     promptProcessing: 'merge',
     impersonationGuard: true,
     streamingEnabled: true,
@@ -102,6 +113,8 @@ function load(): PresetSettings {
     return {
       preset: normalizePreset(v.preset),
       rpPreset: normalizeRpPreset(v.rpPreset),
+      localPreset: normalizeLocalPreset(v.localPreset),
+      localMode: !!v.localMode,
       promptProcessing: isPromptProcessing(v.promptProcessing) ? v.promptProcessing : d.promptProcessing,
       impersonationGuard: typeof v.impersonationGuard === 'boolean' ? v.impersonationGuard : true,
       streamingEnabled: typeof v.streamingEnabled === 'boolean' ? v.streamingEnabled : true,
@@ -139,16 +152,60 @@ function load(): PresetSettings {
   }
 }
 
+// ЧТО МЕНЯЕТ РЕЖИМ ЛОКАЛЬНОЙ МОДЕЛИ. Каждое значение — не «поменьше на всякий
+// случай», а ответ на конкретную беду маленькой модели на своём железе:
+//
+//  contextBudget — главное. У локальных сборок контекст обычно 4–8k, и он же
+//    определяет скорость: чем длиннее запрос, тем дольше обработка ДО первого
+//    токена. Облачные 80k тут означают либо ошибку, либо минуты ожидания.
+//  liveWindow — меньше ходов дословно, чтобы в оставшееся место влезла история.
+//  turnLength — маленькая модель на длинном ходе разваливается: начинает
+//    повторяться и терять нить. Короткий ход она держит.
+//  guidedThinking — план в <thinking> ей не по силам: чаще всего она либо не
+//    закрывает тег, либо пишет план вместо сцены.
+//  prefill — та же причина: вписанное начало она нередко продолжает не туда.
+//  showStateInfobox — служебный JSON в конце каждого хода маленькая модель
+//    портит, и заодно портит прозу перед ним (см. localPreset).
+//  reasoningEffort — локальным reasoning-сборкам просим минимум: «думать» они
+//    умеют, но на своём железе это десятки секунд впустую.
+//  promptProcessing — 'semi': многие локальные сборщики промпта строги к
+//    чередованию ролей и на двух user подряд ведут себя непредсказуемо.
+const LOCAL_OVERRIDES: Partial<PresetSettings> = {
+  contextBudget: 6000,
+  liveWindow: 6,
+  turnLength: { min: 120, max: 320 },
+  guidedThinking: false,
+  prefill: undefined,
+  showStateInfobox: false,
+  reasoningEffort: 'none',
+  promptProcessing: 'semi',
+};
+
+// Настройки, ДЕЙСТВУЮЩИЕ СЕЙЧАС. В локальном режиме поверх сохранённых значений
+// ложатся LOCAL_OVERRIDES — сами значения при этом не переписываются, поэтому
+// выключение тумблера возвращает всё, что было настроено для облачных моделей.
+export function effectiveSettings(s: PresetSettings): PresetSettings {
+  return s.localMode ? { ...s, ...LOCAL_OVERRIDES } : s;
+}
+
 let current = load();
 
-// Не-хук доступ для движка (buildRequest/runTurn/memoryEngine).
+// Не-хук доступ для движка (buildRequest/runTurn/memoryEngine). Отдаёт именно
+// ДЕЙСТВУЮЩИЕ настройки: движку нужно то, что уйдёт в запрос, а не то, что лежит
+// в панели. Панель редактирования читает стор напрямую (usePresetSettings) и
+// показывает сохранённые значения — так правки не теряются под переопределениями.
 export function getPresetSettings(): PresetSettings {
-  return current;
+  return effectiveSettings(current);
 }
 
 // Пресет, действующий для данного режима повествования. Один и тот же проект можно
 // вести и новеллой, и текстовым РП — блоки при этом берутся разные.
 export function presetForMode(s: PresetSettings, mode: NarrativeMode): PromptPreset {
+  // Локальный режим подменяет пресет только в РП. В новелле подменять нечем:
+  // там ход держится на JSON-контракте, и выкинуть его — значит не получить
+  // ход вовсе. Маленькой модели новелла даётся тяжело в принципе, но это
+  // честнее, чем молча отдать ей пресет, по которому она заведомо не ответит.
+  if (s.localMode && mode === 'rp') return s.localPreset;
   return mode === 'rp' ? s.rpPreset : s.preset;
 }
 

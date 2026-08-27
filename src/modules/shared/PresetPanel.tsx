@@ -9,6 +9,7 @@ import {
 } from '../../ai/promptPreset';
 import { usePresetSettings, type PresetSettings } from '../../ai/presetSettings';
 import { defaultRpPreset, defaultRpBlockContent } from '../../ai/rpPreset';
+import { defaultLocalPreset, defaultLocalBlockContent } from '../../ai/localPreset';
 import { PROMPT_PROCESSING_LABELS, type PromptProcessing } from '../../ai/promptPostProcess';
 import { MACRO_HELP } from '../../ai/macros';
 import { RegexRulesEditor } from './RegexRulesEditor';
@@ -43,10 +44,15 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   if (!open) return null;
 
   const isRp = mode === 'rp';
-  const preset = isRp ? cfg.rpPreset : cfg.preset;
+  // Локальный режим подменяет пресет РП компактным — и панель должна править
+  // ИМЕННО ЕГО. Иначе получилось бы худшее из возможного: пользователь правит
+  // блоки, а в запрос уходят другие, и правки «не работают».
+  const isLocal = cfg.localMode && isRp;
+  const preset = isLocal ? cfg.localPreset : isRp ? cfg.rpPreset : cfg.preset;
 
   const patch = (p: Partial<PresetSettings>) => patchStore(p);
-  const savePreset = (next: PromptPreset) => patchStore(isRp ? { rpPreset: next } : { preset: next });
+  const savePreset = (next: PromptPreset) =>
+    patchStore(isLocal ? { localPreset: next } : isRp ? { rpPreset: next } : { preset: next });
   const patchBlock = (id: string, p: Partial<PromptBlock>) =>
     savePreset({ ...preset, blocks: preset.blocks.map((b) => (b.id === id ? { ...b, ...p } : b)) });
   const removeBlock = (id: string) =>
@@ -58,12 +64,16 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
     });
   const resetBlock = (b: PromptBlock) => {
     if (!b.builtinKey) return;
-    const content = isRp ? defaultRpBlockContent(b.builtinKey) : defaultBlockContent(b.builtinKey);
+    const content = isLocal
+      ? defaultLocalBlockContent(b.builtinKey)
+      : isRp
+        ? defaultRpBlockContent(b.builtinKey)
+        : defaultBlockContent(b.builtinKey);
     if (content !== null) patchBlock(b.id, { content, enabled: true });
   };
   const resetPreset = () => {
     if (confirm('Вернуть весь пресет к OmayaEngine по умолчанию? Правки блоков будут потеряны.'))
-      savePreset(isRp ? defaultRpPreset() : defaultPreset());
+      savePreset(isLocal ? defaultLocalPreset() : isRp ? defaultRpPreset() : defaultPreset());
   };
   const reorder = (fromId: string, toId: string) => {
     if (fromId === toId) return;
@@ -100,10 +110,59 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         <span className="chip !px-3 !py-1 text-xs bg-accent2 text-white">
           {isRp ? '💬 Классический РП' : '🎭 Визуальная новелла'}
         </span>
+        {isLocal && (
+          <span className="chip !px-3 !py-1 text-xs bg-emerald-500/20 border border-emerald-400/40 text-emerald-200">
+            🖥 Локальная модель
+          </span>
+        )}
         <span className="text-xs text-gray-500">
           У второго режима свой пресет — он откроется здесь же, когда вы переключите режим
           значком в верхней панели.
         </span>
+      </div>
+
+      {/* РЕЖИМ ЛОКАЛЬНОЙ МОДЕЛИ — одним тумблером, а не десятком настроек. */}
+      <div className="card !bg-panel2 !p-3 mb-3">
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={cfg.localMode}
+            onChange={(e) => patch({ localMode: e.target.checked })}
+          />
+          <span>
+            🖥 Модель у меня на компьютере (LM Studio, Ollama)
+            <span className="block text-[11px] text-gray-500 mt-0.5">
+              Маленькая модель на своём железе не тянет то, что тянет облачная: у неё меньше
+              контекста и меньше внимания. Тумблер разом подгоняет всё под неё — и, что важно,
+              НЕ портит ваши облачные настройки: выключите, и они вернутся как были.
+            </span>
+          </span>
+        </label>
+        {cfg.localMode && (
+          <div className="mt-2.5 rounded-lg border border-emerald-400/25 bg-emerald-500/[0.07] px-3 py-2">
+            <div className="text-[11px] font-semibold text-emerald-300 mb-1">Пока включено, действует:</div>
+            <ul className="text-[11px] text-gray-300 space-y-0.5">
+              <li>• бюджет контекста 6000 вместо {cfg.contextBudget} — у локальных сборок его обычно 4–8k</li>
+              <li>• живое окно 6 ходов вместо {cfg.liveWindow}</li>
+              <li>• ход 120–320 слов: на длинном маленькая модель теряет нить и повторяется</li>
+              <li>• без управляемого размышления и без префилла — она их чаще ломает, чем выполняет</li>
+              <li>• без служебной сводки состояния: JSON в конце хода портит и сводку, и прозу</li>
+              <li>• обработка промпта «полустрогая» — локальные сборки строги к чередованию ролей</li>
+              {isRp ? (
+                <li>• компактный пресет: 4 блока вместо тринадцати (правится здесь же, ниже)</li>
+              ) : (
+                <li className="text-amber-300">
+                  • пресет новеллы НЕ подменяется: он держится на JSON-контракте, и выкинуть его
+                  нельзя. Новелла маленькой модели даётся тяжело — для неё лучше классический РП.
+                </li>
+              )}
+            </ul>
+            <div className="text-[11px] text-gray-500 mt-1.5">
+              Значения ниже показаны сохранённые (облачные) — в запрос уходят те, что перечислены здесь.
+            </div>
+          </div>
+        )}
       </div>
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <input
