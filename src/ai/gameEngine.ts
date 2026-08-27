@@ -7,7 +7,7 @@ import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
 import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson, nameHit } from './characterRegistry';
 import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
-import { runCompletion, modelAlwaysThinks } from './providers';
+import { runCompletion, modelAlwaysThinks, modelTakesPrefill } from './providers';
 import { getPresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
@@ -800,7 +800,11 @@ export async function runTurn(
       // его «продолжает», а не повторяет), и при управляемом размышлении префилл —
       // это как раз открывающий <thinking>. Без него накопленный текст выглядел бы
       // как обычная проза, и план размышления утекал бы игроку на экран.
-      let acc = req.prefill ?? '';
+      // ...но только если он до модели ДОШЁЛ: шлюзы вроде Gemini не принимают
+      // запрос, оканчивающийся ходом модели, и там префилл не отправляется и
+      // обратно не приклеивается. Засеяв им накопитель, мы показали бы игроку
+      // призрачный <thinking>, которого в готовом ответе нет.
+      let acc = modelTakesPrefill() ? req.prefill ?? '' : '';
       // Размышление приезжает из ДВУХ независимых источников, и показывать надо оба:
       //  — скрытое размышление самой модели (отдельное поле дельты, см. onReasoning);
       //  — наш блок <thinking> из управляемого размышления (идёт внутри content).

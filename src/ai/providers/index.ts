@@ -458,6 +458,19 @@ function alwaysThinks(target: string): boolean {
 // Думает ли выбранная модель ВСЕГДА, без возможности это выключить. Спрашивает
 // сборка промпта: управляемому размышлению на такой модели делать нечего — оно
 // не заменяет родную думалку, а ДОБАВЛЯЕТСЯ к ней, и ход думается дважды.
+// Дойдёт ли префилл до выбранной модели. Спрашивает движок: накопитель потока
+// засевается префиллом (модель его «продолжает», а не повторяет), но у моделей из
+// noPrefillTargets — Gemini на OpenAI-совместимой ручке первый в списке — провайдер
+// его не шлёт и обратно не приклеивает. Засеять им накопитель значит показывать
+// игроку текст с призрачным <thinking>, которого в готовом ответе нет: лента и
+// история разъехались бы.
+export function modelTakesPrefill(model?: string): boolean {
+  const conn = getConnection();
+  const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
+  const name = model || conn.model || '';
+  return !name || !noPrefillTargets.has(targetKey(base, name));
+}
+
 export function modelAlwaysThinks(model?: string): boolean {
   const conn = getConnection();
   const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
