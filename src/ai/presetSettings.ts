@@ -30,6 +30,9 @@ export interface PresetSettings {
   // (см. LOCAL_OVERRIDES). Сохранённые «облачные» значения при этом НЕ портятся —
   // они просто перекрываются на время, и выключение возвращает всё как было.
   localMode: boolean;
+  // Облачные значения, отложенные на время локального режима, — чтобы выключение
+  // вернуло ровно то, что было настроено, а не общие дефолты.
+  cloudBackup?: Partial<PresetSettings>;
   promptProcessing: PromptProcessing;
   // Страховка от «модель написала за игрока» в РП: срез хвоста ответа, если модель
   // всё же начала реплику героя. Промпт один это не держит.
@@ -115,6 +118,7 @@ function load(): PresetSettings {
       rpPreset: normalizeRpPreset(v.rpPreset),
       localPreset: normalizeLocalPreset(v.localPreset),
       localMode: !!v.localMode,
+      cloudBackup: v.cloudBackup && typeof v.cloudBackup === 'object' ? v.cloudBackup : undefined,
       promptProcessing: isPromptProcessing(v.promptProcessing) ? v.promptProcessing : d.promptProcessing,
       impersonationGuard: typeof v.impersonationGuard === 'boolean' ? v.impersonationGuard : true,
       streamingEnabled: typeof v.streamingEnabled === 'boolean' ? v.streamingEnabled : true,
@@ -152,28 +156,23 @@ function load(): PresetSettings {
   }
 }
 
-// ЧТО МЕНЯЕТ РЕЖИМ ЛОКАЛЬНОЙ МОДЕЛИ. Каждое значение — не «поменьше на всякий
-// случай», а ответ на конкретную беду маленькой модели на своём железе:
+// НАСТРОЙКИ ПОД ЛОКАЛЬНУЮ МОДЕЛЬ. Не «поменьше на всякий случай», а ответ на
+// конкретные беды маленькой модели на своём железе:
 //
-//  contextBudget — главное. У локальных сборок контекст обычно 4–8k, и он же
-//    определяет скорость: чем длиннее запрос, тем дольше обработка ДО первого
-//    токена. Облачные 80k тут означают либо ошибку, либо минуты ожидания.
-//  liveWindow — меньше ходов дословно, чтобы в оставшееся место влезла история.
-//  turnLength — маленькая модель на длинном ходе разваливается: начинает
-//    повторяться и терять нить. Короткий ход она держит.
-//  guidedThinking — план в <thinking> ей не по силам: чаще всего она либо не
-//    закрывает тег, либо пишет план вместо сцены.
-//  prefill — та же причина: вписанное начало она нередко продолжает не туда.
-//  showStateInfobox — служебный JSON в конце каждого хода маленькая модель
-//    портит, и заодно портит прозу перед ним (см. localPreset).
-//  reasoningEffort — локальным reasoning-сборкам просим минимум: «думать» они
-//    умеют, но на своём железе это десятки секунд впустую.
-//  promptProcessing — 'semi': многие локальные сборщики промпта строги к
-//    чередованию ролей и на двух user подряд ведут себя непредсказуемо.
-const LOCAL_OVERRIDES: Partial<PresetSettings> = {
-  contextBudget: 6000,
-  liveWindow: 6,
-  turnLength: { min: 120, max: 320 },
+//  contextBudget — главное и самое личное. Он должен совпадать с тем, сколько
+//    контекста вы выделили модели при загрузке (в LM Studio это поле рядом с
+//    моделью). Больше — запрос не влезет; сильно меньше — история будет рваться
+//    там, где могла бы жить. Угадать за вас невозможно, поэтому 16000 — это
+//    разумная отправная точка, а не приговор: поправьте под свою сборку.
+//  turnLength — короче облачного, но не куце: длинный ход маленькая модель к
+//    концу разваливает, начиная повторяться.
+//  guidedThinking / prefill — она их чаще ломает, чем выполняет.
+//  showStateInfobox — служебный JSON в конце хода портит и сводку, и прозу.
+//  promptProcessing — 'semi': локальные сборки строги к чередованию ролей.
+const LOCAL_DEFAULTS: Partial<PresetSettings> = {
+  contextBudget: 16000,
+  liveWindow: 10,
+  turnLength: { min: 300, max: 600 },
   guidedThinking: false,
   prefill: undefined,
   showStateInfobox: false,
@@ -181,21 +180,14 @@ const LOCAL_OVERRIDES: Partial<PresetSettings> = {
   promptProcessing: 'semi',
 };
 
-// Настройки, ДЕЙСТВУЮЩИЕ СЕЙЧАС. В локальном режиме поверх сохранённых значений
-// ложатся LOCAL_OVERRIDES — сами значения при этом не переписываются, поэтому
-// выключение тумблера возвращает всё, что было настроено для облачных моделей.
-export function effectiveSettings(s: PresetSettings): PresetSettings {
-  return s.localMode ? { ...s, ...LOCAL_OVERRIDES } : s;
-}
+// Какие поля тумблер подменяет — и, значит, какие надо сохранить, чтобы вернуть.
+const LOCAL_KEYS = Object.keys(LOCAL_DEFAULTS) as (keyof PresetSettings)[];
 
 let current = load();
 
-// Не-хук доступ для движка (buildRequest/runTurn/memoryEngine). Отдаёт именно
-// ДЕЙСТВУЮЩИЕ настройки: движку нужно то, что уйдёт в запрос, а не то, что лежит
-// в панели. Панель редактирования читает стор напрямую (usePresetSettings) и
-// показывает сохранённые значения — так правки не теряются под переопределениями.
+// Не-хук доступ для движка (buildRequest/runTurn/memoryEngine).
 export function getPresetSettings(): PresetSettings {
-  return effectiveSettings(current);
+  return current;
 }
 
 // Пресет, действующий для данного режима повествования. Один и тот же проект можно
@@ -212,12 +204,34 @@ export function presetForMode(s: PresetSettings, mode: NarrativeMode): PromptPre
 interface PresetStore {
   settings: PresetSettings;
   patch: (p: Partial<PresetSettings>) => void;
+  setLocalMode: (on: boolean) => void;
 }
 
 export const usePresetSettings = create<PresetStore>((set) => ({
   settings: current,
   patch: (p) => {
     current = { ...current, ...p };
+    localStorage.setItem(LS_KEY, JSON.stringify(current));
+    set({ settings: current });
+  },
+  // ПЕРЕКЛЮЧЕНИЕ РЕЖИМА. Тумблер не накрывает настройки невидимым слоем, а
+  // ПОДСТАВЛЯЕТ значения в те же самые поля: дальше они обычные и правятся как
+  // всегда — иначе «удобный тумблер» отнимал бы возможность подогнать движок под
+  // своё железо, а угадать его за пользователя нельзя. Прежние (облачные)
+  // значения при этом откладываются и возвращаются при выключении.
+  setLocalMode: (on) => {
+    if (on === current.localMode) return;
+    let next: PresetSettings;
+    if (on) {
+      const backup: Partial<PresetSettings> = {};
+      for (const k of LOCAL_KEYS) (backup as any)[k] = current[k];
+      next = { ...current, ...LOCAL_DEFAULTS, cloudBackup: backup, localMode: true };
+    } else {
+      // Возвращаем отложенное. Нет его (режим включили в старой версии) — просто
+      // снимаем флаг: молча подставлять чужие дефолты хуже, чем оставить как есть.
+      next = { ...current, ...(current.cloudBackup ?? {}), cloudBackup: undefined, localMode: false };
+    }
+    current = next;
     localStorage.setItem(LS_KEY, JSON.stringify(current));
     set({ settings: current });
   },

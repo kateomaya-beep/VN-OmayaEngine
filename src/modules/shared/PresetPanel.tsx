@@ -36,6 +36,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   // ГЛОБАЛЬНЫЙ пресет — один на все истории, доступен везде и всегда.
   const cfg = usePresetSettings((s) => s.settings);
   const patchStore = usePresetSettings((s) => s.patch);
+  const setLocalMode = usePresetSettings((s) => s.setLocalMode);
   // Пресет ВСЕГДА показывается для текущего режима приложения — того самого, в
   // котором вы работаете. Раньше здесь была вкладка-переключатель, и она сбивала с
   // толку: можно было править пресет одного режима, играя в другом, и удивляться,
@@ -128,27 +129,28 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
             type="checkbox"
             className="mt-1"
             checked={cfg.localMode}
-            onChange={(e) => patch({ localMode: e.target.checked })}
+            onChange={(e) => setLocalMode(e.target.checked)}
           />
           <span>
             🖥 Модель у меня на компьютере (LM Studio, Ollama)
             <span className="block text-[11px] text-gray-500 mt-0.5">
-              Маленькая модель на своём железе не тянет то, что тянет облачная: у неё меньше
-              контекста и меньше внимания. Тумблер разом подгоняет всё под неё — и, что важно,
-              НЕ портит ваши облачные настройки: выключите, и они вернутся как были.
+              Подставит настройки под маленькую модель и включит компактный пресет. Это ОТПРАВНАЯ
+              ТОЧКА, а не запрет: все значения ниже остаются вашими и правятся как обычно.
+              Выключите — вернутся те, что были настроены для облачных моделей.
             </span>
           </span>
         </label>
         {cfg.localMode && (
           <div className="mt-2.5 rounded-lg border border-emerald-400/25 bg-emerald-500/[0.07] px-3 py-2">
-            <div className="text-[11px] font-semibold text-emerald-300 mb-1">Пока включено, действует:</div>
+            <div className="text-[11px] font-semibold text-emerald-300 mb-1">Что подставлено:</div>
             <ul className="text-[11px] text-gray-300 space-y-0.5">
-              <li>• бюджет контекста 6000 вместо {cfg.contextBudget} — у локальных сборок его обычно 4–8k</li>
-              <li>• живое окно 6 ходов вместо {cfg.liveWindow}</li>
-              <li>• ход 120–320 слов: на длинном маленькая модель теряет нить и повторяется</li>
-              <li>• без управляемого размышления и без префилла — она их чаще ломает, чем выполняет</li>
-              <li>• без служебной сводки состояния: JSON в конце хода портит и сводку, и прозу</li>
-              <li>• обработка промпта «полустрогая» — локальные сборки строги к чередованию ролей</li>
+              <li>
+                • <b>бюджет контекста {cfg.contextBudget}</b> — поставьте СТОЛЬКО ЖЕ, сколько выделили
+                модели при загрузке (в LM Studio поле рядом с моделью). Больше — запрос не влезет,
+                сильно меньше — история будет рваться зря. Угадать за вас нельзя.
+              </li>
+              <li>• ход {cfg.turnLength.min}–{cfg.turnLength.max} слов — мало? поднимите, но к концу длинного хода маленькая модель начинает повторяться</li>
+              <li>• живое окно {cfg.liveWindow} ходов, без думалки, без префилла, без сводки состояния</li>
               {isRp ? (
                 <li>• компактный пресет: 4 блока вместо тринадцати (правится здесь же, ниже)</li>
               ) : (
@@ -158,139 +160,8 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
                 </li>
               )}
             </ul>
-            <div className="text-[11px] text-gray-500 mt-1.5">
-              Значения ниже показаны сохранённые (облачные) — в запрос уходят те, что перечислены здесь.
-            </div>
           </div>
         )}
-      </div>
-      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-        <input
-          className="input !py-1 text-sm max-w-xs"
-          value={preset.name}
-          onChange={(e) => savePreset({ ...preset, name: e.target.value })}
-        />
-        <div className="flex gap-2 flex-wrap">
-          <button className="btn-ghost !px-3 !py-1 text-xs" onClick={addBlock}>
-            + Блок
-          </button>
-          <button className="btn-ghost !px-3 !py-1 text-xs" onClick={exportPreset}>
-            Экспорт
-          </button>
-          <button className="btn-ghost !px-3 !py-1 text-xs" onClick={() => fileRef.current?.click()}>
-            Импорт
-          </button>
-          <button className="btn-ghost !px-3 !py-1 text-xs" onClick={resetPreset}>
-            По умолчанию
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".json"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) importPresetFile(f);
-              e.target.value = '';
-            }}
-          />
-        </div>
-      </div>
-      <p className="text-xs text-gray-500 mb-3">
-        Порядок = порядок в промпте. Перетаскивайте за ⠿; роль{' '}
-        <b>S</b>/<b>U</b>/<b>A</b> = system/user/assistant (как в Таверне).{' '}
-        <span className="text-amber-400">↳ блоки</span> наполняет движок (мир, персонажи, память).
-      </p>
-
-      <div className="space-y-2">
-        {preset.blocks.map((b) => (
-          <div
-            key={b.id}
-            draggable
-            onDragStart={() => setDragId(b.id)}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => {
-              if (dragId) reorder(dragId, b.id);
-              setDragId(null);
-            }}
-            className={`rounded-lg border p-3 bg-panel2 ${
-              b.flagged ? 'border-amber-500/40' : 'border-white/10'
-            } ${dragId === b.id ? 'opacity-50' : ''}`}
-          >
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="cursor-grab select-none text-gray-500" title="Перетащить">
-                ⠿
-              </span>
-              <input
-                type="checkbox"
-                checked={b.enabled}
-                onChange={(e) => patchBlock(b.id, { enabled: e.target.checked })}
-                title="Вкл/выкл блок"
-              />
-              <input
-                className="input !py-1 text-sm flex-1 min-w-[8rem]"
-                value={b.name}
-                onChange={(e) => patchBlock(b.id, { name: e.target.value })}
-              />
-              {/* Роль блока S/U/A */}
-              <div className="inline-flex rounded-lg overflow-hidden border border-white/10 text-xs">
-                {ROLES.map((r) => (
-                  <button
-                    key={r.id}
-                    title={r.id}
-                    className={`px-2 py-1 ${
-                      (b.role || 'system') === r.id ? 'bg-accent2 text-white' : 'bg-panel hover:bg-white/10'
-                    }`}
-                    onClick={() => patchBlock(b.id, { role: r.id })}
-                  >
-                    {r.label}
-                  </button>
-                ))}
-              </div>
-              {b.builtinKey && !b.dynamic && (
-                <button
-                  className="btn-ghost !px-2 !py-1 text-xs"
-                  title="Вернуть текст блока к дефолту"
-                  onClick={() => resetBlock(b)}
-                >
-                  ↺
-                </button>
-              )}
-              {!b.builtinKey && !b.dynamic && (
-                <button
-                  className="btn-danger !px-2 !py-1 text-xs"
-                  title="Удалить блок"
-                  onClick={() => removeBlock(b.id)}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-
-            {b.flagged && (
-              <p className="text-xs text-amber-400 mt-2">
-                {isRp
-                  ? '⚠ Этот блок кормит движок сводкой мира (часы, досье, память). Выключить можно — история продолжит идти, но Game Master перестанет обновляться сам.'
-                  : '⚠ Этот блок обеспечивает работу движка (JSON-контракт). Менять можно, но при поломке формата парсер откатится на безопасный разбор.'}
-              </p>
-            )}
-
-            {b.dynamic ? (
-              <p className="text-xs text-gray-500 mt-2">
-                Контент собирает движок из данных проекта (источник:{' '}
-                <code className="text-gray-400">{b.dynamic}</code>). Редактируется порядок, роль и вкл/выкл.
-              </p>
-            ) : (
-              b.enabled && (
-                <textarea
-                  className="input h-28 mt-2 text-sm font-mono"
-                  value={b.content}
-                  onChange={(e) => patchBlock(b.id, { content: e.target.value })}
-                />
-              )
-            )}
-          </div>
-        ))}
       </div>
 
       {/* Префилл — отдельным блоком, чтобы был на виду */}
