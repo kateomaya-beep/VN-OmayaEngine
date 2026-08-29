@@ -7,9 +7,10 @@ import {
   type PromptPreset,
   type PromptBlock,
 } from '../../ai/promptPreset';
-import { usePresetSettings, type PresetSettings } from '../../ai/presetSettings';
+import { usePresetSettings, MODEL_PROFILES, type PresetSettings, type ModelProfile } from '../../ai/presetSettings';
 import { defaultRpPreset, defaultRpBlockContent } from '../../ai/rpPreset';
 import { defaultLocalPreset, defaultLocalBlockContent } from '../../ai/localPreset';
+import { defaultDeepseekPreset, defaultDeepseekBlockContent } from '../../ai/deepseekPreset';
 import { PROMPT_PROCESSING_LABELS, type PromptProcessing } from '../../ai/promptPostProcess';
 import { MACRO_HELP } from '../../ai/macros';
 import { RegexRulesEditor } from './RegexRulesEditor';
@@ -36,7 +37,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   // ГЛОБАЛЬНЫЙ пресет — один на все истории, доступен везде и всегда.
   const cfg = usePresetSettings((s) => s.settings);
   const patchStore = usePresetSettings((s) => s.patch);
-  const setLocalMode = usePresetSettings((s) => s.setLocalMode);
+  const setModelProfile = usePresetSettings((s) => s.setModelProfile);
   // Пресет ВСЕГДА показывается для текущего режима приложения — того самого, в
   // котором вы работаете. Раньше здесь была вкладка-переключатель, и она сбивала с
   // толку: можно было править пресет одного режима, играя в другом, и удивляться,
@@ -48,12 +49,16 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   // Локальный режим подменяет пресет РП компактным — и панель должна править
   // ИМЕННО ЕГО. Иначе получилось бы худшее из возможного: пользователь правит
   // блоки, а в запрос уходят другие, и правки «не работают».
-  const isLocal = cfg.localMode && isRp;
-  const preset = isLocal ? cfg.localPreset : isRp ? cfg.rpPreset : cfg.preset;
+  const prof = cfg.modelProfile;
+  const isLocal = prof === 'local' && isRp;
+  const isDs = prof === 'deepseek' && isRp;
+  const preset = isLocal ? cfg.localPreset : isDs ? cfg.deepseekPreset : isRp ? cfg.rpPreset : cfg.preset;
 
   const patch = (p: Partial<PresetSettings>) => patchStore(p);
   const savePreset = (next: PromptPreset) =>
-    patchStore(isLocal ? { localPreset: next } : isRp ? { rpPreset: next } : { preset: next });
+    patchStore(
+      isLocal ? { localPreset: next } : isDs ? { deepseekPreset: next } : isRp ? { rpPreset: next } : { preset: next }
+    );
   const patchBlock = (id: string, p: Partial<PromptBlock>) =>
     savePreset({ ...preset, blocks: preset.blocks.map((b) => (b.id === id ? { ...b, ...p } : b)) });
   const removeBlock = (id: string) =>
@@ -67,14 +72,24 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
     if (!b.builtinKey) return;
     const content = isLocal
       ? defaultLocalBlockContent(b.builtinKey)
-      : isRp
+      : isDs
+        ? defaultDeepseekBlockContent(b.builtinKey)
+        : isRp
         ? defaultRpBlockContent(b.builtinKey)
         : defaultBlockContent(b.builtinKey);
     if (content !== null) patchBlock(b.id, { content, enabled: true });
   };
   const resetPreset = () => {
     if (confirm('Вернуть весь пресет к OmayaEngine по умолчанию? Правки блоков будут потеряны.'))
-      savePreset(isLocal ? defaultLocalPreset() : isRp ? defaultRpPreset() : defaultPreset());
+      savePreset(
+        isLocal
+          ? defaultLocalPreset()
+          : isDs
+            ? defaultDeepseekPreset()
+            : isRp
+              ? defaultRpPreset()
+              : defaultPreset()
+      );
   };
   const reorder = (fromId: string, toId: string) => {
     if (fromId === toId) return;
@@ -111,9 +126,9 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         <span className="chip !px-3 !py-1 text-xs bg-accent2 text-white">
           {isRp ? '💬 Классический РП' : '🎭 Визуальная новелла'}
         </span>
-        {isLocal && (
+        {prof !== 'universal' && (
           <span className="chip !px-3 !py-1 text-xs bg-emerald-500/20 border border-emerald-400/40 text-emerald-200">
-            🖥 Локальная модель
+            {isLocal ? '🖥 Локальная модель' : '🐋 DeepSeek'}
           </span>
         )}
         <span className="text-xs text-gray-500">
@@ -122,45 +137,64 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         </span>
       </div>
 
-      {/* РЕЖИМ ЛОКАЛЬНОЙ МОДЕЛИ — одним тумблером, а не десятком настроек. */}
+      {/* ПРОФИЛЬ МОДЕЛИ. Универсальный пресет — компромисс: модели ломаются
+          по-разному, и лечится это тоже по-разному. */}
       <div className="card !bg-panel2 !p-3 mb-3">
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="mt-1"
-            checked={cfg.localMode}
-            onChange={(e) => setLocalMode(e.target.checked)}
-          />
-          <span>
-            🖥 Модель у меня на компьютере (LM Studio, Ollama)
-            <span className="block text-[11px] text-gray-500 mt-0.5">
-              Подставит настройки под маленькую модель и включит компактный пресет. Это ОТПРАВНАЯ
-              ТОЧКА, а не запрет: все значения ниже остаются вашими и правятся как обычно.
-              Выключите — вернутся те, что были настроены для облачных моделей.
-            </span>
-          </span>
-        </label>
-        {cfg.localMode && (
+        <label className="label">На какой модели играете</label>
+        <select
+          className="input !py-1"
+          value={prof}
+          onChange={(e) => setModelProfile(e.target.value as ModelProfile)}
+        >
+          {MODEL_PROFILES.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <p className="text-[11px] text-gray-500 mt-1.5">
+          {MODEL_PROFILES.find((p) => p.id === prof)?.hint}
+        </p>
+        <p className="text-[11px] text-gray-500 mt-1">
+          Профиль ПОДСТАВЛЯЕТ значения, а не запирает их: всё ниже остаётся вашим и правится как
+          обычно. Возврат на «Универсальный» вернёт то, что было настроено до смены профиля.
+        </p>
+
+        {isDs && (
+          <div className="mt-2.5 rounded-lg border border-emerald-400/25 bg-emerald-500/[0.07] px-3 py-2">
+            <div className="text-[11px] font-semibold text-emerald-300 mb-1">Что подставлено под DeepSeek:</div>
+            <ul className="text-[11px] text-gray-300 space-y-0.5">
+              <li>
+                • <b>родная думалка выключена</b> — и это главное: пока она включена, у DeepSeek V4
+                температура и штрафы за повтор принимаются молча и не действуют вовсе
+              </li>
+              <li>• температура {cfg.temperature} — DeepSeek советует 1.5 для прозы и 1.3 для диалога, РП между ними</li>
+              <li>• штрафы за повтор: частота {cfg.frequencyPenalty}, присутствие {cfg.presencePenalty}</li>
+              <li>• разбор своего прошлого ответа в думалке: модель обязана назвать фразы, которые уже использовала, и запретить их себе</li>
+              <li>• три блока в пресете: анти-эхо, анти-повторы, против шаблона сцены (правятся ниже)</li>
+            </ul>
+          </div>
+        )}
+
+        {isLocal && (
           <div className="mt-2.5 rounded-lg border border-emerald-400/25 bg-emerald-500/[0.07] px-3 py-2">
             <div className="text-[11px] font-semibold text-emerald-300 mb-1">Что подставлено:</div>
             <ul className="text-[11px] text-gray-300 space-y-0.5">
               <li>
                 • <b>бюджет контекста {cfg.contextBudget}</b> — поставьте СТОЛЬКО ЖЕ, сколько выделили
-                модели при загрузке (в LM Studio поле рядом с моделью). Больше — запрос не влезет,
-                сильно меньше — история будет рваться зря. Угадать за вас нельзя.
+                модели при загрузке (в LM Studio поле рядом с моделью). Угадать за вас нельзя.
               </li>
-              <li>• ход {cfg.turnLength.min}–{cfg.turnLength.max} слов — мало? поднимите, но к концу длинного хода маленькая модель начинает повторяться</li>
-              <li>• живое окно {cfg.liveWindow} ходов, без думалки, без префилла, без сводки состояния</li>
-              {isRp ? (
-                <li>• компактный пресет: 4 блока вместо тринадцати (правится здесь же, ниже)</li>
-              ) : (
-                <li className="text-amber-300">
-                  • пресет новеллы НЕ подменяется: он держится на JSON-контракте, и выкинуть его
-                  нельзя. Новелла маленькой модели даётся тяжело — для неё лучше классический РП.
-                </li>
-              )}
+              <li>• ход {cfg.turnLength.min}–{cfg.turnLength.max} слов, живое окно {cfg.liveWindow}</li>
+              <li>• без думалки, без префилла, без сводки состояния</li>
+              <li>• компактный пресет: 4 блока вместо тринадцати</li>
             </ul>
           </div>
+        )}
+        {prof !== 'universal' && !isRp && (
+          <p className="text-[11px] text-amber-300 mt-2">
+            В новелле пресет НЕ подменяется: он держится на JSON-контракте, выкинуть его нельзя.
+            Профиль здесь влияет только на параметры генерации.
+          </p>
         )}
       </div>
 

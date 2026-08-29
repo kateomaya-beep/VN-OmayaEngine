@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { defaultPreset, normalizePreset, type PromptPreset } from './promptPreset';
 import { defaultRpPreset, normalizeRpPreset } from './rpPreset';
 import { defaultLocalPreset, normalizeLocalPreset } from './localPreset';
+import { defaultDeepseekPreset, normalizeDeepseekPreset, DEEPSEEK_THINKING_PLAN } from './deepseekPreset';
 import { isPromptProcessing, type PromptProcessing } from './promptPostProcess';
 import { normalizeRegexRules, type RegexRule } from './regexRules';
 import type { AdvancedPromptBlock, NarrativeMode } from '../shared/types';
@@ -11,6 +12,34 @@ import {
   DEFAULT_THINKING_PLAN,
   LEGACY_THINKING_PLANS,
 } from '../shared/types';
+
+// Семейство модели, под которое подогнан пресет и параметры.
+export type ModelProfile = 'universal' | 'deepseek' | 'local';
+
+export function isModelProfile(v: unknown): v is ModelProfile {
+  return v === 'universal' || v === 'deepseek' || v === 'local';
+}
+
+export const MODEL_PROFILES: { id: ModelProfile; label: string; hint: string }[] = [
+  {
+    id: 'universal',
+    label: 'Универсальный (Gemini, Claude, GPT)',
+    hint: 'Полный пресет. На этих моделях он и отлаживался.',
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    hint:
+      'Лечит фирменные привычки DeepSeek: пересказ хода игрока в начале ответа, заедание удачных ' +
+      'фраз и одинаковую композицию каждой сцены. Плюс штрафы за повтор и разбор прошлого ответа ' +
+      'в думалке — промптом одним это не лечится.',
+  },
+  {
+    id: 'local',
+    label: 'Своя модель (LM Studio, Ollama)',
+    hint: 'Компактный пресет и малый контекст: маленькая модель не удержит полный свод правил.',
+  },
+];
 
 // ГЛОБАЛЬНЫЕ настройки пресета/генерации — ОДИН пресет на все истории (не на проект).
 // Доступны из верхней панели везде и всегда, даже без открытого проекта. В будущем —
@@ -30,6 +59,12 @@ export interface PresetSettings {
   // (см. LOCAL_OVERRIDES). Сохранённые «облачные» значения при этом НЕ портятся —
   // они просто перекрываются на время, и выключение возвращает всё как было.
   localMode: boolean;
+  // Пресет под болячки DeepSeek — см. deepseekPreset.ts.
+  deepseekPreset: PromptPreset;
+  // ПРОФИЛЬ МОДЕЛИ. Универсальный пресет «для всех» — компромисс, а модели ломаются
+  // по-разному: у DeepSeek эхо и заедание фраз, у локальной — предел контекста.
+  // Профиль подставляет и пресет, и параметры генерации под конкретную родню.
+  modelProfile: ModelProfile;
   // Облачные значения, отложенные на время локального режима, — чтобы выключение
   // вернуло ровно то, что было настроено, а не общие дефолты.
   cloudBackup?: Partial<PresetSettings>;
@@ -52,6 +87,20 @@ export interface PresetSettings {
   // на котором ИИ пишет текст истории. Пока ru/en.
   narrativeLanguage: 'ru' | 'en';
   temperature: number;
+  // Ядерная выборка. undefined — не шлём вовсе (провайдер решает сам). Крутить
+  // ВМЕСТЕ с температурой не стоит: оба режут один и тот же хвост распределения.
+  topP?: number;
+  // ШТРАФЫ ЗА ПОВТОР (−2…2). Единственный МЕХАНИЧЕСКИЙ рычаг против «модель
+  // жуёт одни и те же фразы» — промптом это лечится плохо, потому что модель не
+  // видит своей склонности со стороны. frequency бьёт по частоте повторов,
+  // presence — по возврату к уже поднятым темам. undefined — не шлём.
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  // Гасить РОДНУЮ думалку модели там, где она включена по умолчанию и мешает.
+  // У DeepSeek V4 это не блажь: в режиме размышления температура и штрафы за
+  // повтор не действуют вовсе — принимаются молча и игнорируются. Пока думалка
+  // включена, всё, что ниже, не работает.
+  disableNativeThinking: boolean;
   liveWindow: number;
   contextBudget: number;
   turnLength: { min: number; max: number };
@@ -76,6 +125,8 @@ function defaults(): PresetSettings {
     rpPreset: defaultRpPreset(),
     localPreset: defaultLocalPreset(),
     localMode: false,
+    deepseekPreset: defaultDeepseekPreset(),
+    modelProfile: 'universal',
     promptProcessing: 'merge',
     impersonationGuard: true,
     streamingEnabled: true,
@@ -85,6 +136,7 @@ function defaults(): PresetSettings {
     assistantPersona: '',
     narrativeLanguage: 'ru',
     temperature: 0.9,
+    disableNativeThinking: false,
     liveWindow: 12,
     // Бюджет контекста ЖЁСТКО ограничивает запрос (см. promptBuilder), а не только
     // красит счётчик. Он же задаёт, сколько истории живёт дословно: память
@@ -118,6 +170,9 @@ function load(): PresetSettings {
       rpPreset: normalizeRpPreset(v.rpPreset),
       localPreset: normalizeLocalPreset(v.localPreset),
       localMode: !!v.localMode,
+      deepseekPreset: normalizeDeepseekPreset(v.deepseekPreset),
+      // Миграция: раньше был один тумблер «локальная модель», теперь профиль.
+      modelProfile: isModelProfile(v.modelProfile) ? v.modelProfile : v.localMode ? 'local' : 'universal',
       cloudBackup: v.cloudBackup && typeof v.cloudBackup === 'object' ? v.cloudBackup : undefined,
       promptProcessing: isPromptProcessing(v.promptProcessing) ? v.promptProcessing : d.promptProcessing,
       impersonationGuard: typeof v.impersonationGuard === 'boolean' ? v.impersonationGuard : true,
@@ -128,6 +183,10 @@ function load(): PresetSettings {
       assistantPersona: typeof v.assistantPersona === 'string' ? v.assistantPersona : '',
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
+      topP: typeof v.topP === 'number' ? v.topP : undefined,
+      frequencyPenalty: typeof v.frequencyPenalty === 'number' ? v.frequencyPenalty : undefined,
+      presencePenalty: typeof v.presencePenalty === 'number' ? v.presencePenalty : undefined,
+      disableNativeThinking: !!v.disableNativeThinking,
       liveWindow: num(v.liveWindow, d.liveWindow),
       // Прежние дефолты (8000, 24000, 40000) считаем «пользователь не настраивал» и
       // поднимаем до нового: на них живая история была заметно короче.
@@ -180,8 +239,51 @@ const LOCAL_DEFAULTS: Partial<PresetSettings> = {
   promptProcessing: 'semi',
 };
 
-// Какие поля тумблер подменяет — и, значит, какие надо сохранить, чтобы вернуть.
-const LOCAL_KEYS = Object.keys(LOCAL_DEFAULTS) as (keyof PresetSettings)[];
+// НАСТРОЙКИ ПОД DEEPSEEK. Ключевое здесь — не числа сами по себе, а то, что они
+// вообще начинают действовать: у DeepSeek V4 думалка включена по умолчанию, а в
+// режиме думалки температура и штрафы за повтор принимаются молча и игнорируются.
+// Поэтому первым делом гасим родную думалку — иначе весь остальной список ниже
+// был бы бесполезной декорацией.
+//
+//  temperature 1.4 — DeepSeek советует 1.5 для художественного текста и 1.3 для
+//    диалога; РП это ровно между ними. Ниже 1.0 текст у него сохнет.
+//  topP не трогаем (1.0 по умолчанию): крутить его вместе с температурой не надо,
+//    оба режут один хвост распределения.
+//  frequencyPenalty 0.4 / presencePenalty 0.3 — умеренные. Это МЕХАНИЧЕСКАЯ часть
+//    борьбы с заеданием фраз; выше 0.7 модель начинает избегать нужных слов
+//    (имён, повторяющихся предметов сцены) и текст рассыпается.
+//  guidedThinking — ВКЛЮЧАЕМ вместе со своим планом: в нём первый пункт заставляет
+//    модель разобрать собственный прошлый ход и назвать его фразы, прежде чем
+//    писать новый. Запрет «не повторяйся» без такого разбора не работает —
+//    DeepSeek искренне не считает, что повторяется.
+const DEEPSEEK_DEFAULTS: Partial<PresetSettings> = {
+  disableNativeThinking: true,
+  temperature: 1.4,
+  frequencyPenalty: 0.4,
+  presencePenalty: 0.3,
+  guidedThinking: true,
+  thinkingPlan: DEEPSEEK_THINKING_PLAN,
+  reasoningEffort: 'none',
+};
+
+const UNIVERSAL_DEFAULTS: Partial<PresetSettings> = {
+  disableNativeThinking: false,
+  frequencyPenalty: undefined,
+  presencePenalty: undefined,
+};
+
+const PROFILE_DEFAULTS: Record<ModelProfile, Partial<PresetSettings>> = {
+  universal: UNIVERSAL_DEFAULTS,
+  deepseek: DEEPSEEK_DEFAULTS,
+  local: LOCAL_DEFAULTS,
+};
+
+// Какие поля профиль подменяет — и, значит, какие надо сохранить, чтобы вернуть.
+// Объединение по ВСЕМ профилям: иначе переключение deepseek → local оставило бы
+// висеть штрафы за повтор, которых в локальном профиле нет.
+const PROFILE_KEYS = Array.from(
+  new Set(Object.values(PROFILE_DEFAULTS).flatMap((d) => Object.keys(d)))
+) as (keyof PresetSettings)[];
 
 let current = load();
 
@@ -193,18 +295,20 @@ export function getPresetSettings(): PresetSettings {
 // Пресет, действующий для данного режима повествования. Один и тот же проект можно
 // вести и новеллой, и текстовым РП — блоки при этом берутся разные.
 export function presetForMode(s: PresetSettings, mode: NarrativeMode): PromptPreset {
-  // Локальный режим подменяет пресет только в РП. В новелле подменять нечем:
-  // там ход держится на JSON-контракте, и выкинуть его — значит не получить
-  // ход вовсе. Маленькой модели новелла даётся тяжело в принципе, но это
-  // честнее, чем молча отдать ей пресет, по которому она заведомо не ответит.
-  if (s.localMode && mode === 'rp') return s.localPreset;
-  return mode === 'rp' ? s.rpPreset : s.preset;
+  // Профиль подменяет пресет только в РП. В новелле подменять нечем: там ход
+  // держится на JSON-контракте, и выкинуть его — значит не получить ход вовсе.
+  if (mode === 'rp') {
+    if (s.modelProfile === 'local') return s.localPreset;
+    if (s.modelProfile === 'deepseek') return s.deepseekPreset;
+    return s.rpPreset;
+  }
+  return s.preset;
 }
 
 interface PresetStore {
   settings: PresetSettings;
   patch: (p: Partial<PresetSettings>) => void;
-  setLocalMode: (on: boolean) => void;
+  setModelProfile: (p: ModelProfile) => void;
 }
 
 export const usePresetSettings = create<PresetStore>((set) => ({
@@ -214,25 +318,31 @@ export const usePresetSettings = create<PresetStore>((set) => ({
     localStorage.setItem(LS_KEY, JSON.stringify(current));
     set({ settings: current });
   },
-  // ПЕРЕКЛЮЧЕНИЕ РЕЖИМА. Тумблер не накрывает настройки невидимым слоем, а
-  // ПОДСТАВЛЯЕТ значения в те же самые поля: дальше они обычные и правятся как
-  // всегда — иначе «удобный тумблер» отнимал бы возможность подогнать движок под
-  // своё железо, а угадать его за пользователя нельзя. Прежние (облачные)
-  // значения при этом откладываются и возвращаются при выключении.
-  setLocalMode: (on) => {
-    if (on === current.localMode) return;
-    let next: PresetSettings;
-    if (on) {
-      const backup: Partial<PresetSettings> = {};
-      for (const k of LOCAL_KEYS) (backup as any)[k] = current[k];
-      next = { ...current, ...LOCAL_DEFAULTS, cloudBackup: backup, localMode: true };
-    } else {
-      // Возвращаем отложенное. Нет его (режим включили в старой версии) — просто
-      // снимаем флаг: молча подставлять чужие дефолты хуже, чем оставить как есть.
-      next = { ...current, ...(current.cloudBackup ?? {}), cloudBackup: undefined, localMode: false };
-    }
-    current = next;
+  // СМЕНА ПРОФИЛЯ. Профиль не накрывает настройки невидимым слоем, а ПОДСТАВЛЯЕТ
+  // значения в те же самые поля: дальше они обычные и правятся как всегда —
+  // иначе «удобный выбор» отнимал бы возможность подогнать движок под себя.
+  // Прежние значения откладываются и возвращаются при возврате на универсальный.
+  setModelProfile: (profile) => {
+    if (profile === current.modelProfile) return;
+    // Откладываем ОДИН раз — на первом уходе с универсального. Иначе прыжок
+    // deepseek → local сохранил бы поверх бэкапа уже профильные значения, и
+    // возврат отдал бы не то, что настраивал пользователь, а чужие дефаулты.
+    const backup =
+      current.modelProfile === 'universal'
+        ? (Object.fromEntries(PROFILE_KEYS.map((k) => [k, current[k]])) as Partial<PresetSettings>)
+        : current.cloudBackup;
+    // Отложенное накатываем ПЕРЕД профильным всегда, а не только при возврате:
+    // иначе профили наслаивались бы друг на друга — переход deepseek → local
+    // оставлял бы висеть штрафы за повтор, которых в локальном профиле нет.
+    const base = { ...current, ...(backup ?? {}), ...PROFILE_DEFAULTS[profile] };
+    current = {
+      ...base,
+      modelProfile: profile,
+      localMode: profile === 'local',
+      cloudBackup: profile === 'universal' ? undefined : backup,
+    };
     localStorage.setItem(LS_KEY, JSON.stringify(current));
     set({ settings: current });
   },
 }));
+

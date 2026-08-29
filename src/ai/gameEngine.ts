@@ -823,6 +823,10 @@ export async function runTurn(
         temperature: extra ? Math.min(ps.temperature, 0.7) : ps.temperature,
         maxTokens,
         reasoningEffort,
+        topP: ps.topP,
+        frequencyPenalty: ps.frequencyPenalty,
+        presencePenalty: ps.presencePenalty,
+        disableNativeThinking: ps.disableNativeThinking,
         names,
         onDelta: emit
           ? (chunk: string) => {
@@ -874,6 +878,10 @@ export async function runTurn(
     temperature: ps.temperature,
     maxTokens,
     reasoningEffort,
+    topP: ps.topP,
+    frequencyPenalty: ps.frequencyPenalty,
+    presencePenalty: ps.presencePenalty,
+    disableNativeThinking: ps.disableNativeThinking,
     names,
     signal,
   });

@@ -7,6 +7,7 @@ import { stripStateBlock } from './rpResponse';
 import { applyRegexRules } from './regexRules';
 import { getPresetSettings, presetForMode } from './presetSettings';
 import { modelAlwaysThinks } from './providers';
+import { DEEPSEEK_THINKING_PLAN } from './deepseekPreset';
 import { matchLorebook } from './lorebookEngine';
 import { logEvent } from '../shared/logStore';
 import { getGlobalNotes } from '../shared/globalNotes';
@@ -1291,7 +1292,17 @@ export async function buildRequest(
     );
   }
   if (ps.guidedThinking && !nativeThinker) {
-    const plan = (ps.thinkingPlan?.trim() || (mode === 'rp' ? DEFAULT_RP_THINKING_PLAN : DEFAULT_THINKING_PLAN));
+    // План по умолчанию зависит и от режима, и от ПРОФИЛЯ модели: под DeepSeek он
+    // начинается с разбора собственного прошлого ответа, и без этого пункта запрет
+    // «не повторяйся» повисает в воздухе — модель не считает, что повторяется.
+    // Берём профильный именно как ДЕФОЛТ: свой текст автора всегда важнее.
+    const planDefault =
+      mode !== 'rp'
+        ? DEFAULT_THINKING_PLAN
+        : ps.modelProfile === 'deepseek'
+          ? DEEPSEEK_THINKING_PLAN
+          : DEFAULT_RP_THINKING_PLAN;
+    const plan = ps.thinkingPlan?.trim() || planDefault;
     const after =
       mode === 'rp'
         ? 'Then immediately close </thinking> and write the scene itself and nothing else.'

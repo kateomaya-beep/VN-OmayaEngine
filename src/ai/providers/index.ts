@@ -20,6 +20,15 @@ export interface CompletionRequest {
   maxTokens?: number;
   // Глубина размышления reasoning-моделей → reasoning_effort. Меньше = быстрее.
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'max';
+  // Ядерная выборка и штрафы за повтор (−2…2). Уходят, только если заданы:
+  // молчание тут значит «решай сам», а не «ноль».
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  // Погасить РОДНУЮ думалку модели. У DeepSeek это делается своим полем
+  // thinking:{type:'disabled'} — и без него ни температура, ни штрафы за повтор
+  // не действуют вовсе. Шлём ТОЛЬКО тем, кто это поле понимает (см. ниже).
+  disableNativeThinking?: boolean;
   // Картинки к ПОСЛЕДНЕМУ ходу игрока (vision): фото, которое герой отправил в
   // мессенджере. Модель без поддержки картинок отвечает 400 — тогда провайдер
   // повторяет запрос без вложений, и переписка продолжается по текстовой пометке.
@@ -246,6 +255,26 @@ async function withRetry(post: () => Promise<Response>, maxRetries = 2): Promise
   return res;
 }
 
+// Поле гашения родной думалки понимают НЕ ВСЕ: у DeepSeek это thinking:{type},
+// а для остальных лишнее поле в теле — риск получить 400 на ровном месте. Поэтому
+// шлём его только тем, кто заведомо понимает, и запоминаем тех, кто не понял.
+const NO_THINKING_FIELD_LS_KEY = 'nf_no_thinking_field';
+const DEEPSEEK_RE = /deepseek/i;
+
+// Параметры выборки, общие для обычного и потокового пути. Вынесены, чтобы пути
+// не разъезжались: раньше каждый собирал тело сам, и добавленный в одном месте
+// параметр молча не доезжал во втором.
+function samplingFields(req: CompletionRequest, target: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (typeof req.topP === 'number') out.top_p = req.topP;
+  if (typeof req.frequencyPenalty === 'number') out.frequency_penalty = req.frequencyPenalty;
+  if (typeof req.presencePenalty === 'number') out.presence_penalty = req.presencePenalty;
+  if (req.disableNativeThinking && DEEPSEEK_RE.test(target) && !noThinkingField.has(target)) {
+    out.thinking = { type: 'disabled' };
+  }
+  return out;
+}
+
 function requireModel(model: string | undefined): string {
   if (!model || !model.trim()) {
     throw new Error(
@@ -424,6 +453,12 @@ function rememberAlwaysThink(key: string): void {
 // Запоминаем, чтобы не платить лишним кругом запросов на каждом ходу.
 const NO_EFFORT_LS_KEY = 'nf_no_effort_targets';
 const noEffortTargets = loadLsSet(NO_EFFORT_LS_KEY);
+
+const noThinkingField = loadLsSet(NO_THINKING_FIELD_LS_KEY);
+function rememberNoThinkingField(key: string): void {
+  noThinkingField.add(key);
+  saveLsSet(NO_THINKING_FIELD_LS_KEY, noThinkingField);
+}
 function rememberNoEffort(key: string): void {
   noEffortTargets.add(key);
   saveLsSet(NO_EFFORT_LS_KEY, noEffortTargets);
@@ -515,6 +550,7 @@ const openAiCompatible: Provider = {
       messages,
       ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
       ...(effort ? { reasoning_effort: effort } : {}),
+      ...samplingFields(req, target),
       ...(req.stop?.length ? { stop: req.stop } : {}),
     };
     const post = (b: Record<string, unknown>) =>
@@ -548,6 +584,19 @@ const openAiCompatible: Provider = {
       // модель берёт свой дефолт — самую глубокую ступень (max), то есть ровно
       // противоположное тому, чего мы добивались значением 'none'. Подменяем на
       // допустимую ступень и запоминаем модель на будущее.
+      // Шлюз не понял поле гашения думалки — убираем и запоминаем. Без этого
+      // каждый ход стоил бы лишнего круга, а на части шлюзов — вовсе не проходил.
+      if ('thinking' in b2 && /thinking/i.test(errText)) {
+        rememberNoThinkingField(target);
+        delete b2.thinking;
+        fixes.push('без thinking');
+        logEvent(
+          'warn',
+          'llm',
+          `Шлюз не принял поле thinking для «${model}» — больше не шлём. Учтите: пока родная ` +
+            'думалка модели включена, штрафы за повтор и температура на ней могут не действовать.'
+        );
+      }
       if ('reasoning_effort' in b2 && isThinkingRequiredError(errText)) {
         rememberAlwaysThink(target);
         const fixed = effortFor(target, req.reasoningEffort) ?? 'low';
@@ -696,6 +745,7 @@ const openAiCompatible: Provider = {
             stream: true,
             ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
             ...(e ? { reasoning_effort: e } : {}),
+            ...samplingFields(req, target),
             ...(req.stop?.length ? { stop: req.stop } : {}),
           }),
         })
