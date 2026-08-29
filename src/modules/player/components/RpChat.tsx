@@ -146,6 +146,9 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
             const mine = m.role === 'user';
             const r = rendered[i];
             const isLast = i === lastIndex;
+            // Нулевое сообщение — авторская стартовая сцена, а не ответ модели:
+            // вариантов у неё нет и быть не может (менять её нужно в проекте).
+            const canSwipe = !mine && isLast && i > 0 && !s.thinking;
             return (
               <Message
                 key={i}
@@ -169,12 +172,12 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
                 onCopy={() => copyToClipboard(r?.text ?? '')}
                 // Варианты — только у последнего ответа: откат состояния движок
                 // умеет ровно на один ход назад, для середины ленты снимка нет.
-                swipes={!mine && isLast && !s.thinking ? { count: Math.max(1, swipeCount), at: swipeAt } : undefined}
+                swipes={canSwipe ? { count: Math.max(1, swipeCount), at: swipeAt } : undefined}
                 onSwipe={(dir) => {
                   if (dir === 1 && swipeAt >= swipeCount - 1) void s.addSwipe();
                   else void s.setSwipe(swipeAt + dir);
                 }}
-                onNewSwipe={!mine && isLast && !s.thinking ? () => void s.addSwipe() : undefined}
+                onNewSwipe={canSwipe ? () => void s.addSwipe() : undefined}
                 busy={s.thinking}
               />
             );

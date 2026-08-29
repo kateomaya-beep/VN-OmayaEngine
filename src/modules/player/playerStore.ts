@@ -387,8 +387,32 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       currentCheckpointId: undefined,
       autosnapRing: [],
     });
-    // Seed the opening turn (макросы в стартовой сцене раскрываются).
-    const opening = expandMacros(project.lore.openingScene, { project, state });
+    // Стартовая сцена (макросы раскрываются).
+    const opening = expandMacros(project.lore.openingScene, { project, state }).trim();
+
+    // В РП стартовая сцена — ЭТО САМО ПЕРВОЕ СООБЩЕНИЕ, дословно то, что автор
+    // написал в проекте. Ровно как first_mes у карточки в Таверне.
+    //
+    // Раньше она уходила модели директивой «[GAME START] …», и модель по ней
+    // СОЧИНЯЛА открытие. Получалось не то, что задумал автор: текст каждый раз
+    // выходил другой, а по ощущению — будто ИИ отвечает на сообщение игрока,
+    // которого тот не писал. Здесь генерировать нечего: сцена уже написана,
+    // её надо просто показать и ждать хода игрока.
+    if (normalizeNarrativeMode(project.mode) === 'rp') {
+      // Сцены нет — лента открывается пустой, первым пишет игрок. Прохождение
+      // всё равно сохраняем: иначе оно жило бы только до перезагрузки вкладки.
+      if (opening) {
+        set({
+          state: { ...state, history: [{ role: 'assistant', content: opening }] },
+          phase: 'beats',
+          visibleBeats: [],
+          queue: [],
+        });
+      }
+      await get().autosave();
+      return;
+    }
+
     await runAndApply(set, get, project, state, `[GAME START] ${opening}`.trim());
   },
 
@@ -620,15 +644,18 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (!hist.length) return;
     const last = hist[hist.length - 1];
     if (last.role !== 'assistant') return;
-    // Стартовая сцена — особый случай: единственное сообщение в истории, и хода
-    // игрока ПЕРЕД ним нет вовсе (see applyTurn — [GAME START] не кладётся в
-    // history отдельной репликой, чтобы не показывать её в бабле героя).
-    // Директиву открытия восстанавливаем из preTurnState, а нет его (вкладку
-    // перезагружали) — пересобираем из стартовой сцены проекта заново.
-    const isOpening = hist.length === 1;
-    const lastMove = isOpening
-      ? preTurnState?.move ?? `[GAME START] ${expandMacros(project.lore.openingScene, { project, state })}`.trim()
-      : hist[hist.length - 2]?.content;
+    // Стартовая сцена вариантов не имеет и иметь не может: это АВТОРСКИЙ текст,
+    // дословно взятый из проекта, а не сочинение модели. Перегенерировать нечего —
+    // «другой вариант» здесь означал бы выдумать вместо автора.
+    if (hist.length === 1) {
+      logEvent(
+        'info',
+        'turn',
+        'Стартовая сцена написана автором и вариантов не имеет — менять её нужно в проекте (Лор → Стартовая сцена).'
+      );
+      return;
+    }
+    const lastMove = hist[hist.length - 2]?.content;
     if (lastMove === undefined) return;
     // Копим варианты. У ответа, сгенерированного до появления свайпов, списка нет —
     // тогда первым вариантом считаем его самого.
@@ -667,12 +694,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       guard: ps.impersonationGuard,
     });
     if (!rp.prose.trim()) return;
-    // Стартовая сцена — та же особенность, что и в addSwipe: хода ПЕРЕД единственным
-    // сообщением истории нет, директиву открытия восстанавливаем так же.
-    const move =
-      li === 0
-        ? preTurnState?.move ?? `[GAME START] ${expandMacros(project.lore.openingScene, { project, state })}`.trim()
-        : hist[li - 1]?.content ?? '';
+    // У стартовой сцены вариантов нет по построению (см. addSwipe), так что
+    // li === 0 сюда не доходит; берём ход, стоящий перед ответом.
+    const move = hist[li - 1]?.content ?? '';
     const snap = preTurnState && preTurnState.move === move ? preTurnState.state : null;
 
     if (!snap) {
