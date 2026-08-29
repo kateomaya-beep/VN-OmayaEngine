@@ -168,8 +168,12 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
                 • <b>родная думалка выключена</b> — и это главное: пока она включена, у DeepSeek V4
                 температура и штрафы за повтор принимаются молча и не действуют вовсе
               </li>
-              <li>• температура {cfg.temperature} — DeepSeek советует 1.5 для прозы и 1.3 для диалога, РП между ними</li>
-              <li>• штрафы за повтор: частота {cfg.frequencyPenalty}, присутствие {cfg.presencePenalty}</li>
+              <li>• температура {cfg.temperature} — базовая рекомендация DeepSeek для V4 Pro</li>
+              <li>
+                • штрафы за повтор: частота {cfg.frequencyPenalty}, присутствие {cfg.presencePenalty}.
+                Частота намеренно почти нулевая — на больших значениях модель к концу хода
+                перестаёт ставить точки и запятые
+              </li>
               <li>• разбор своего прошлого ответа в думалке: модель обязана назвать фразы, которые уже использовала, и запретить их себе</li>
               <li>• три блока в пресете: анти-эхо, анти-повторы, против шаблона сцены (правятся ниже)</li>
             </ul>
@@ -405,6 +409,32 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
               onChange={(e) => patch({ temperature: Number(e.target.value) })}
             />
           </Field>
+
+          {/* ШТРАФЫ ЗА ПОВТОР — рядом с температурой и на ЛЮБОМ профиле: заедание
+              фраз бывает не только у DeepSeek, а лечится это одними и теми же
+              ручками. «—» значит «не шлём вовсе»: у части шлюзов явный ноль и
+              отсутствие параметра — не одно и то же. */}
+          <PenaltyField
+            label="Штраф за частоту"
+            value={cfg.frequencyPenalty}
+            onChange={(frequencyPenalty) => patch({ frequencyPenalty })}
+            hint="Растёт с числом повторов токена. ОСТОРОЖНО: точки и запятые повторяются чаще всего, и на больших значениях к концу длинного хода модель перестаёт их ставить. Выше 0.3 не поднимайте без нужды."
+          />
+          <PenaltyField
+            label="Штраф за присутствие"
+            value={cfg.presencePenalty}
+            onChange={(presencePenalty) => patch({ presencePenalty })}
+            hint="Ровный штраф за уже использованное слово, без накопления. Против заезженных формулировок безопаснее предыдущего — знаки препинания от него не страдают."
+          />
+          <PenaltyField
+            label="top_p (ядерная выборка)"
+            value={cfg.topP}
+            min={0}
+            max={1}
+            step={0.05}
+            onChange={(topP) => patch({ topP })}
+            hint="Крутить ВМЕСТЕ с температурой не стоит: оба режут один и тот же хвост распределения. Меняйте что-то одно."
+          />
           <Field label={`Живое окно: ${cfg.liveWindow} ходов дословно после свёртки`}>
             <input
               type="range"
@@ -727,5 +757,53 @@ function TurnLengthField({
         длиннее сцены между действиями.
       </p>
     </div>
+  );
+}
+
+
+// Одно необязательное числовое поле параметров выборки. Ключевое отличие от
+// обычного ползунка — состояние «не задано»: у части шлюзов явный ноль и
+// отсутствие параметра ведут себя по-разному, и подменять одно другим нельзя.
+function PenaltyField({
+  label,
+  value,
+  onChange,
+  hint,
+  min = -2,
+  max = 2,
+  step = 0.1,
+}: {
+  label: string;
+  value: number | undefined;
+  onChange: (v: number | undefined) => void;
+  hint: string;
+  min?: number;
+  max?: number;
+  step?: number;
+}) {
+  const on = value !== undefined;
+  return (
+    <Field label={`${label}: ${on ? value.toFixed(2) : '— (не шлём)'}`}>
+      <div className="flex items-center gap-2">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          className="flex-1"
+          value={on ? value : 0}
+          disabled={!on}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+        <button
+          className="btn-ghost !px-2 !py-0.5 text-[11px] shrink-0"
+          onClick={() => onChange(on ? undefined : 0)}
+          title={on ? 'Не слать этот параметр' : 'Задать значение'}
+        >
+          {on ? 'сбросить' : 'задать'}
+        </button>
+      </div>
+      <p className="text-[11px] text-gray-500 mt-1">{hint}</p>
+    </Field>
   );
 }
