@@ -54,11 +54,17 @@ Other ways to build a turn, all legitimate: open on dialogue with no lead-in; op
 // ответа»: заставляет модель ПОСМОТРЕТЬ на собственный предыдущий ход и назвать
 // его фразы вслух, прежде чем писать новый. Без этого запрет «не повторяйся»
 // повисает в воздухе — модель искренне не считает, что повторяется.
-export const DEEPSEEK_THINKING_PLAN = `- Last turn, mine: name 2–3 exact phrases/images I used, and how it was built (what opened it, what closed it). These are now BANNED for this turn.
-- Opening: what happens FIRST that {{user}} does not already know? (never a retelling of their move)
-- Shape: how is this turn built differently from the last one? (1 line)
-- Who acts: who moves or speaks on their own initiative this turn, and what do they want? (1 line)
-- Friction: who here does not simply go along with {{user}}, and why? (1 line, or "nobody, and here is why that is earned")`;
+export const DEEPSEEK_THINKING_PLAN = `1. MY LAST REPLY: name 2-3 exact phrases or images I used, and how it was built (what opened it, what closed it). All of it is BANNED for this turn. (1 line)
+2. OPENING: what happens FIRST that {{user}} does not already know? Never a retelling, paraphrase or mirror of their move — start where the world ANSWERS. (1 line)
+3. SHAPE: how is this turn built differently from the last one — what opens it, what closes it? (1 line)
+4. BAN LIST: is anything from the banned words and phrases about to slip in? Name it and what replaces it, or "clean". (1 line)
+5. SCENE: where, when, who is physically here, what each is doing and wearing — carried over; name only what CHANGES now. (1 line)
+6. SAID vs THOUGHT: what did {{user}} actually say or do OUT LOUD this turn, and what was only a thought or an unstated intention? Thoughts are NOT audible — nobody may react to them. (1 line)
+7. WHO KNOWS WHAT: for every character about to speak or act, name the fact they are about to use and WHERE THEY GOT IT — saw it themselves / were told it in a played scene / it is in their tags / common knowledge. Anything not on that list they DO NOT KNOW: say so and change what they do. (1-2 lines)
+8. WHO ACTS: who moves or speaks on their own initiative this turn, and what do they want? (1 line)
+9. FRICTION: who here does not simply go along with {{user}}, and why? ("nobody, and here is why that is earned" is a valid answer — but it has to be earned.) (1 line)
+10. THE TURN: the first beat, the turn it takes, and where it STOPS — and it stops where it is {{user}}'s move. (1-2 lines)
+11. FORMAT: speech in one kind of quotation marks, a quote inside speech in 'single' ones, {{user}} in the second person, italics only for an unspoken thought, no dash opening a line of speech, nothing written for {{user}}. ("ok", or name what you are fixing.)`;
 
 function makeDefaults(): PromptBlock[] {
   // Основа — полный РП-пресет: всё, что в нём есть про запрет писать за игрока,

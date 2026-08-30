@@ -1,5 +1,5 @@
 import type { NarrativeMode, Project, RuntimeState, LlmMessage } from '../shared/types';
-import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
+import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, DEFAULT_BAN_WORDS, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
@@ -1258,6 +1258,20 @@ export async function buildRequest(
   const depth = DEPTH_REMINDERS.filter((r) => r.keys.some((k) => enabledBuiltins.has(k))).map((r) => r.text);
   if (depth.length) tail.push(depth.join('\n'));
 
+  // Стоп-слова. undefined = список по умолчанию, пустая строка = осознанно
+  // выключено (тогда ни блока, ни пункта проверки в чек-листе размышления).
+  const banWords = (ps.banWords ?? DEFAULT_BAN_WORDS).trim();
+  if (banWords) {
+    tail.push(
+      'BANNED WORDS AND PHRASES — do not write these, in any language, in any form: not reworded, not ' +
+        'as a near-synonym of the same image, however well it seems to fit. Each of them is a phrase you ' +
+        'reach for out of habit, not because this scene needs it. When one comes to mind, that is the ' +
+        'signal to find a DIFFERENT image or to drop the beat entirely — a synonym of a banned phrase is ' +
+        'the same phrase:\n' +
+        banWords
+    );
+  }
+
   // Скрытая директива случайного события/СМС/реролла — игрок её не видит и она НЕ
   // сохраняется в истории (buildRequest собирает сообщения заново каждый ход).
   if (opts?.extraDirective?.trim()) tail.push(opts.extraDirective.trim());
@@ -1288,16 +1302,8 @@ export async function buildRequest(
   // Родное размышление теперь видно в ленте по мере набора, так что смысл
   // управляемого плана (видеть, что модель планирует) там и так закрыт.
   const nativeThinker = modelAlwaysThinks();
-  if (ps.guidedThinking && nativeThinker) {
-    logEvent(
-      'info',
-      'prompt',
-      'Управляемое размышление отключено для этой модели: она думает всегда, и план ложился бы ' +
-        'поверх её собственного размышления — ход обдумывался бы дважды. Её родную думалку видно в ленте.'
-    );
-  }
-  if (ps.guidedThinking && !nativeThinker) {
-    // План по умолчанию зависит и от режима, и от ПРОФИЛЯ модели: под DeepSeek он
+  if (ps.guidedThinking) {
+    // Чек-лист по умолчанию зависит и от режима, и от ПРОФИЛЯ модели: под DeepSeek он
     // начинается с разбора собственного прошлого ответа, и без этого пункта запрет
     // «не повторяйся» повисает в воздухе — модель не считает, что повторяется.
     // Берём профильный именно как ДЕФОЛТ: свой текст автора всегда важнее.
@@ -1307,15 +1313,46 @@ export async function buildRequest(
         : ps.modelProfile === 'deepseek'
           ? DEEPSEEK_THINKING_PLAN
           : DEFAULT_RP_THINKING_PLAN;
-    const plan = ps.thinkingPlan?.trim() || planDefault;
-    const after =
-      mode === 'rp'
-        ? 'Then immediately close </thinking> and write the scene itself and nothing else.'
-        : 'Then immediately close </thinking> and output the ONE JSON object per the schema and nothing after it.';
-    tail.push(
-      `REASONING PROTOCOL: Do ALL planning ONLY inside a single <thinking></thinking> block at the very start of your reply, and keep it SHORT — a brief bullet per line following this template, nothing more:\n${plan}\n${after}\n${lengthReminder}\n${formatReminder}`
-    );
-    prefill = '<thinking>\n';
+    let plan = ps.thinkingPlan?.trim() || planDefault;
+    // Пункт про стоп-слова осмыслен, только если список есть. С пустым списком он
+    // просил бы сверяться с пустотой — модель отвечала бы «clean», не проверив
+    // ничего, и приучалась бы отвечать так же на соседние пункты.
+    if (!banWords) plan = plan.split('\n').filter((l) => !/^\s*\d+\.\s*BAN LIST/i.test(l)).join('\n');
+
+    if (nativeThinker) {
+      // У этой модели своя думалка, и выключить её нельзя. Свой <thinking> здесь
+      // ложился бы ПОВЕРХ родного размышления — ход обдумывался бы дважды, отсюда
+      // и полторы минуты ожидания. Но сами проверки нужны ей ровно так же, поэтому
+      // отдаём чек-лист без тегов и без префилла: пусть пройдёт его в своём
+      // размышлении, а в ответ напишет только сцену.
+      tail.push(
+        'SELF-CHECK — before you write a single line, work through this checklist IN YOUR OWN REASONING, ' +
+          'in order, and let the answers decide what you write. Do NOT put any of it in the reply itself:\n' +
+          plan
+      );
+      tail.push(`${formatReminder}\n${lengthReminder}`);
+      logEvent(
+        'info',
+        'prompt',
+        'Своё размышление в <thinking> для этой модели отключено: она думает всегда, и наш план лёг бы ' +
+          'поверх её собственного. Чек-лист ушёл к ней как SELF-CHECK — проверки те же, но в её родной думалке.'
+      );
+    } else {
+      const after =
+        mode === 'rp'
+          ? 'Then immediately close </thinking> and write the scene itself and nothing else.'
+          : 'Then immediately close </thinking> and output the ONE JSON object per the schema and nothing after it.';
+      tail.push(
+        'REASONING PROTOCOL: before writing anything, work through this checklist ONCE, inside a single ' +
+          '<thinking></thinking> block at the very start of your reply. One short line per numbered step, ' +
+          'in this order, in the language you are writing the story in. It is a CHECKLIST, not an essay: no ' +
+          'prose, no drafting the scene inside it, no second pass. A step that comes out clean is answered ' +
+          'in two words ("clean", "same", "ok") — the point is that you actually looked. A step that does ' +
+          'NOT come out clean is answered by naming what you are changing.\n' +
+          `${plan}\n${after}\n${lengthReminder}\n${formatReminder}`
+      );
+      prefill = '<thinking>\n';
+    }
   } else {
     tail.push(`${formatReminder}\n${lengthReminder}`);
   }

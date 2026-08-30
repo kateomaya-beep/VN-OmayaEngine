@@ -333,28 +333,87 @@ export const TURN_LENGTH_PRESETS: { id: string; name: string; hint: string; min:
 // одежда, что кто знает, тон, статы, развилка). Расширять его лучше слиянием строк,
 // а не добавлением: план на пятнадцать пунктов — это уже медленная родная «думалка»,
 // от которой мы и уходили.
-export const DEFAULT_THINKING_PLAN = `- Scene: where we are, who is actually here, what each of them wants, what they are wearing — carried over from last turn; name only what CHANGES now (1 line)
-- Focus: what shifts this turn — does the story move, or circle what already happened? (1 line)
-- Friction: who here does NOT simply go along with the hero right now, and why? (1 line, or "nobody, and here is why that is earned")
-- Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")
-- Tone: does the mood of the scene turn this turn? (1 line, or "same")
-- Any stat/relationship change? (1 line, or "none")
-- Offer a choice? (only at a real fork, else "no")`;
+// ЧЕК-ЛИСТ ХОДА (управляемое размышление). Это не «план сцены», а РАЗБОР ПО ШАГАМ:
+// половина пунктов здесь — проверки против конкретных известных поломок, а не
+// творческое планирование.
+//
+// Почему он длинный, хотя каждая строка оплачивается на каждом ходу. Правила в
+// пресете модель читает — и всё равно нарушает, причём предсказуемо и всегда одни
+// и те же: персонаж действует по факту, которого ему никто не говорил; ответ
+// открывается пересказом хода игрока; удачная фраза из прошлого хода едет в
+// следующий. Это не «недостаточно строгие формулировки», а слепые зоны: изнутри
+// генерации модель их не видит. Единственное, что реально помогает, — заставить
+// её ВЫПИСАТЬ проверку явно, до текста: выписанное «Марк не знает про письмо»
+// меняет ход, прочитанное «соблюдай информационную гигиену» — нет.
+//
+// Список закрытый и упорядоченный: сначала обстановка, потом информационная
+// гигиена, потом повторы, потом сам ход и формат. Пункт, ответ на который «чисто»,
+// стоит две-три токена — платим мы за те, где ответ другой.
+export const DEFAULT_THINKING_PLAN = `1. SCENE: where, when, who is physically present, what each is doing and wearing — carried over from last turn; name only what CHANGES now. (1 line)
+2. WANTS: what does each present character want in this exact moment, and what are they covering up? (1 line)
+3. PUBLIC vs PRIVATE: what did the hero's move actually make visible or audible to the others? Their private reasoning is not perceivable — nobody reacts to it. (1 line)
+4. WHO KNOWS WHAT: for every character about to speak or act, name the fact they are about to use and WHERE THEY GOT IT — saw it themselves / were told it in a played scene / it is in their dossier or tags / common knowledge. Anything not on that list they DO NOT KNOW: say so and change what they do. (1-2 lines)
+5. MY LAST REPLY: name 2-3 exact phrases or images I used last turn, and how it was built (what opened it, what closed it). They are BANNED for this turn. (1 line)
+6. ECHO: does my planned opening retell, paraphrase or mirror the hero's move? If yes, move the opening to where the world ANSWERS. (1 line)
+7. BAN LIST: is anything from the banned words and phrases about to slip in? Name it and what replaces it, or "clean". (1 line)
+8. FRICTION: who here does NOT simply go along with the hero right now, and why? ("nobody, and here is why that is earned" is a valid answer — but it has to be earned.) (1 line)
+9. THE TURN: the first beat, the turn it takes, where it stops. (1-2 lines)
+10. STATE: any stat or relationship change this turn? (1 line, or "none")
+11. CHOICE: is this a real fork? (only at a real fork, else "no")
+12. FORMAT: one JSON object per the schema, every dialogue beat carrying the speaker's characterId, nothing outside the JSON. ("ok", or name what you are fixing.)`;
 
-// РП-вариант того же чек-листа — БЕЗ пунктов про стат/выбор: в РП нет ни JSON-статов,
-// ни кнопок выбора, и строка «Offer a choice?» в плане размышления была ровно тем,
-// из-за чего модель начинала предлагать выбор в конце обычной прозы (сама мысль
-// «а не предложить ли выбор» просачивалась из скрытого плана в видимый текст).
-export const DEFAULT_RP_THINKING_PLAN = `- Scene: where we are, who is actually here, what each of them wants, what they are wearing — carried over from last turn; name only what CHANGES now (1 line)
-- Focus: what shifts this turn — does the story move, or circle what already happened? (1 line)
-- Friction: who here does NOT simply go along with {{user}} right now, and why? (1 line, or "nobody, and here is why that is earned")
-- Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")
-- Tone: does the mood of the scene turn this turn? (1 line, or "same")`;
+// РП-вариант того же чек-листа. Отличия не косметические:
+//  — нет пунктов про статы и выбор: в РП нет ни JSON-статов, ни кнопок, и строка
+//    «Offer a choice?» в плане была ровно тем, из-за чего модель начинала
+//    предлагать выбор в конце обычной прозы — мысль просачивалась из скрытого
+//    плана в видимый текст;
+//  — пункт 3 разделяет сказанное вслух и подуманное: ход игрока приходит его
+//    собственным текстом, где курсив = невысказанная мысль, и слышать её никто
+//    не может;
+//  — пункт формата проверяет кавычки и второе лицо, а не JSON.
+export const DEFAULT_RP_THINKING_PLAN = `1. SCENE: where, when, who is physically here, what each is doing and wearing — carried over from last turn; name only what CHANGES now. (1 line)
+2. WANTS: what does each present character want in this exact moment, and what are they covering up? (1 line)
+3. SAID vs THOUGHT: what did {{user}} actually say or do OUT LOUD this turn, and what was only a thought or an unstated intention? Thoughts are NOT audible — nobody may react to them. (1 line)
+4. WHO KNOWS WHAT: for every character about to speak or act, name the fact they are about to use and WHERE THEY GOT IT — saw it themselves / were told it in a played scene / it is in their tags / common knowledge. Anything not on that list they DO NOT KNOW: say so and change what they do. (1-2 lines)
+5. MY LAST REPLY: name 2-3 exact phrases or images I used last turn, and how it was built (what opened it, what closed it). They are BANNED for this turn. (1 line)
+6. ECHO: does my planned opening retell, paraphrase or mirror {{user}}'s move? If yes, move the opening to where the world ANSWERS. (1 line)
+7. BAN LIST: is anything from the banned words and phrases about to slip in? Name it and what replaces it, or "clean". (1 line)
+8. FRICTION: who here does NOT simply go along with {{user}} right now, and why? ("nobody, and here is why that is earned" is a valid answer — but it has to be earned.) (1 line)
+9. THE TURN: the first beat, the turn it takes, and where it STOPS — and it stops where it is {{user}}'s move. (1-2 lines)
+10. FORMAT: speech in one kind of quotation marks, a quote inside speech in 'single' ones, {{user}} in the second person, italics only for an unspoken thought, no dash opening a line of speech, nothing written for {{user}}. ("ok", or name what you are fixing.)`;
+
+// СТОП-СЛОВА по умолчанию. Не «плохие слова», а обороты, которые модели тянут в
+// каждый второй ход независимо от сцены: они не режут глаз поодиночке, но на
+// двадцатом ходу читаются как подпись генератора. Список правится и чистится в
+// панели пресета; пустой — блок вообще не уходит в запрос.
+export const DEFAULT_BAN_WORDS = `воздух загустел / сгустился, повисла тишина, что-то неуловимо изменилось, по спине пробежал холодок, сердце пропустило удар, затаив дыхание, многозначительная пауза, взгляд задержался на мгновение дольше положенного, уголок губ дрогнул, он не мог не заметить
+the air thickened, a shiver ran down their spine, their breath hitched, silence hung between them, something shifted imperceptibly, a beat of silence, the corner of their mouth twitched, they couldn't help but notice, little did they know, a mixture of X and Y`;
 
 // Прежние дефолты плана. Если у проекта лежит ровно такой текст — автор его не
 // правил, просто он сохранился при первом открытии панели, и его надо обновить.
 // Отредактированный вручную план не трогаем никогда.
 export const LEGACY_THINKING_PLANS = [
+  // Чек-листы до пошагового разбора: информационная гигиена была ОДНОЙ строкой
+  // «is anyone about to act on something they were never told?», и модель отвечала
+  // на неё «clean», ничего не проверив — проверять было нечего, вопрос не просил
+  // назвать ни факт, ни его источник.
+  `- Scene: where we are, who is actually here, what each of them wants, what they are wearing — carried over from last turn; name only what CHANGES now (1 line)
+- Focus: what shifts this turn — does the story move, or circle what already happened? (1 line)
+- Friction: who here does NOT simply go along with the hero right now, and why? (1 line, or "nobody, and here is why that is earned")
+- Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")
+- Tone: does the mood of the scene turn this turn? (1 line, or "same")
+- Any stat/relationship change? (1 line, or "none")
+- Offer a choice? (only at a real fork, else "no")`,
+  `- Scene: where we are, who is actually here, what each of them wants, what they are wearing — carried over from last turn; name only what CHANGES now (1 line)
+- Focus: what shifts this turn — does the story move, or circle what already happened? (1 line)
+- Friction: who here does NOT simply go along with {{user}} right now, and why? (1 line, or "nobody, and here is why that is earned")
+- Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")
+- Tone: does the mood of the scene turn this turn? (1 line, or "same")`,
+  `- Last turn, mine: name 2–3 exact phrases/images I used, and how it was built (what opened it, what closed it). These are now BANNED for this turn.
+- Opening: what happens FIRST that {{user}} does not already know? (never a retelling of their move)
+- Shape: how is this turn built differently from the last one? (1 line)
+- Who acts: who moves or speaks on their own initiative this turn, and what do they want? (1 line)
+- Friction: who here does not simply go along with {{user}}, and why? (1 line, or "nobody, and here is why that is earned")`,
   `- Scene: where we are, who is actually here, what each of them wants, what they are wearing — carried over from last turn; name only what CHANGES now (1 line)
 - Focus: what shifts this turn — does the story move, or circle what already happened? (1 line)
 - Who knows what: is anyone about to act on something they were never told? (1 line, or "clean")

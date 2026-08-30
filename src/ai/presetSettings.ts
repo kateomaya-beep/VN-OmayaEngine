@@ -2,16 +2,11 @@ import { create } from 'zustand';
 import { defaultPreset, normalizePreset, type PromptPreset } from './promptPreset';
 import { defaultRpPreset, normalizeRpPreset } from './rpPreset';
 import { defaultLocalPreset, normalizeLocalPreset } from './localPreset';
-import { defaultDeepseekPreset, normalizeDeepseekPreset, DEEPSEEK_THINKING_PLAN } from './deepseekPreset';
+import { defaultDeepseekPreset, normalizeDeepseekPreset } from './deepseekPreset';
 import { isPromptProcessing, type PromptProcessing } from './promptPostProcess';
 import { normalizeRegexRules, type RegexRule } from './regexRules';
 import type { AdvancedPromptBlock, NarrativeMode } from '../shared/types';
-import {
-  DEFAULT_TURN_LENGTH,
-  normalizeTurnLength,
-  DEFAULT_THINKING_PLAN,
-  LEGACY_THINKING_PLANS,
-} from '../shared/types';
+import { DEFAULT_TURN_LENGTH, normalizeTurnLength, LEGACY_THINKING_PLANS } from '../shared/types';
 
 // Семейство модели, под которое подогнан пресет и параметры.
 export type ModelProfile = 'universal' | 'deepseek' | 'local';
@@ -108,6 +103,10 @@ export interface PresetSettings {
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'max';
   guidedThinking: boolean;
   thinkingPlan?: string;
+  // Стоп-слова: обороты, которые модель не должна писать. undefined = список по
+  // умолчанию (DEFAULT_BAN_WORDS), пустая строка = осознанно выключено, и тогда
+  // в запрос не уходит ни блока, ни пункта проверки в чек-листе.
+  banWords?: string;
   prefill?: string;
   // Прятать префилл в показанном ответе. Префилл — наши слова, вписанные в уста
   // модели; «затравке» для джейлбрейка в ленте не место. Выключать имеет смысл,
@@ -153,9 +152,13 @@ function defaults(): PresetSettings {
   };
 }
 
+// План, совпадающий со СТАРЫМ дефолтом, автор не правил — он просто сохранился
+// при первом открытии панели. Стираем такой в undefined, а не подменяем текстом:
+// дефолт зависит и от режима, и от профиля модели (см. promptBuilder), и записать
+// сюда один конкретный вариант значило бы навязать РП-игроку план новеллы.
 function refreshThinkingPlan(v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined;
-  return LEGACY_THINKING_PLANS.some((old) => old.trim() === v.trim()) ? DEFAULT_THINKING_PLAN : v;
+  return LEGACY_THINKING_PLANS.some((old) => old.trim() === v.trim()) ? undefined : v;
 }
 
 function load(): PresetSettings {
@@ -203,6 +206,7 @@ function load(): PresetSettings {
       // просто сохранился при открытии панели; обновляем на новый чек-лист. Всё,
       // что отличается хоть символом, считаем авторским и не трогаем.
       thinkingPlan: refreshThinkingPlan(v.thinkingPlan),
+      banWords: typeof v.banWords === 'string' ? v.banWords : undefined,
       prefill: typeof v.prefill === 'string' ? v.prefill : undefined,
       advancedBlocks: Array.isArray(v.advancedBlocks)
         ? v.advancedBlocks
@@ -270,7 +274,10 @@ const DEEPSEEK_DEFAULTS: Partial<PresetSettings> = {
   frequencyPenalty: 0.1,
   presencePenalty: 0.3,
   guidedThinking: true,
-  thinkingPlan: DEEPSEEK_THINKING_PLAN,
+  // План НЕ записываем: под профилем DeepSeek promptBuilder и так берёт свой
+  // (DEEPSEEK_THINKING_PLAN) как дефолт. Записанная копия застыла бы в той версии,
+  // что была на момент переключения профиля, и правки чек-листа до неё не доехали бы.
+  thinkingPlan: undefined,
   reasoningEffort: 'none',
 };
 

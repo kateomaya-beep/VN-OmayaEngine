@@ -10,7 +10,11 @@ import {
 import { usePresetSettings, MODEL_PROFILES, type PresetSettings, type ModelProfile } from '../../ai/presetSettings';
 import { defaultRpPreset, defaultRpBlockContent } from '../../ai/rpPreset';
 import { defaultLocalPreset, defaultLocalBlockContent } from '../../ai/localPreset';
-import { defaultDeepseekPreset, defaultDeepseekBlockContent } from '../../ai/deepseekPreset';
+import {
+  defaultDeepseekPreset,
+  defaultDeepseekBlockContent,
+  DEEPSEEK_THINKING_PLAN,
+} from '../../ai/deepseekPreset';
 import { PROMPT_PROCESSING_LABELS, type PromptProcessing } from '../../ai/promptPostProcess';
 import { MACRO_HELP } from '../../ai/macros';
 import { RegexRulesEditor } from './RegexRulesEditor';
@@ -20,7 +24,7 @@ import { TokenCounter } from '../player/components/TokenCounter';
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
 import type { AdvancedPromptBlock, LlmRole } from '../../shared/types';
-import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, TURN_LENGTH_PRESETS, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
+import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, TURN_LENGTH_PRESETS, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, DEFAULT_BAN_WORDS, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
 // отделён от настроек API. Каждый блок: порядок (drag&drop), роль system/user/assistant
@@ -385,6 +389,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
             </p>
           </div>
           <GuidedThinkingField cfg={cfg} patch={patch} isRp={isRp} />
+          <BanWordsField cfg={cfg} patch={patch} />
           <Field label="Язык повествования (язык текста истории, не интерфейса)">
             <div className="flex gap-2">
               {(['ru', 'en'] as const).map((lg) => (
@@ -600,7 +605,13 @@ function GuidedThinkingField({
   isRp: boolean;
 }) {
   const on = !!cfg.guidedThinking;
-  const modeDefault = isRp ? DEFAULT_RP_THINKING_PLAN : DEFAULT_THINKING_PLAN;
+  // Дефолт совпадает с тем, что реально уйдёт в запрос (см. promptBuilder): в РП
+  // под профилем DeepSeek это его собственный чек-лист, а не общий.
+  const modeDefault = !isRp
+    ? DEFAULT_THINKING_PLAN
+    : cfg.modelProfile === 'deepseek'
+      ? DEEPSEEK_THINKING_PLAN
+      : DEFAULT_RP_THINKING_PLAN;
   return (
     <div className="sm:col-span-2 rounded-lg border border-white/10 p-3">
       <label className="flex items-center gap-2 cursor-pointer">
@@ -609,12 +620,14 @@ function GuidedThinkingField({
           checked={on}
           onChange={(e) => patch({ guidedThinking: e.target.checked || undefined })}
         />
-        <span className="font-medium text-sm">Управляемое размышление (свой короткий план)</span>
+        <span className="font-medium text-sm">Управляемое размышление (разбор хода по шагам)</span>
       </label>
       <p className="text-xs text-gray-500 mt-1">
-        Вместо медленной родной «думалки» модель пишет короткий план в тегах{' '}
-        <code>&lt;thinking&gt;</code> (через префилл), затем сразу ответ. Обычно это заметно быстрее
-        «думающих» моделей. Родной reasoning при этом принудительно выключается.
+        Перед ответом модель проходит чек-лист в тегах <code>&lt;thinking&gt;</code> (через префилл),
+        затем сразу пишет сцену. Родной reasoning при этом принудительно выключается — обычно так
+        заметно быстрее «думающих» моделей. У тех, у кого думалку выключить нельзя (GLM-5.x, Kimi,
+        R1), тегов и префилла не будет: тот же чек-лист уедет к ним как <b>SELF-CHECK</b> и
+        пройдётся в их собственном размышлении.
       </p>
       {on && (
         <>
@@ -624,9 +637,16 @@ function GuidedThinkingField({
             onChange={(e) => patch({ thinkingPlan: e.target.value })}
           />
           <p className="text-xs text-gray-500 mt-1">
-            Каждая строка плана оплачивается на <b>каждом</b> ходу — и деньгами, и ожиданием.
-            Поэтому список закрытый: добавляйте пункт слиянием с соседним, а не сверху. План на
-            пятнадцать пунктов — это уже та самая медленная «думалка», от которой мы уходим.
+            Это не «план сцены», а <b>разбор по шагам</b>: половина пунктов — проверки против
+            конкретных поломок (кто что может знать, эхо хода игрока, заеденные фразы, стоп-слова,
+            формат). Правила в пресете модель читает и всё равно нарушает — изнутри генерации она
+            этих промахов не видит. Помогает только заставить её выписать проверку явно: выписанное
+            «Марк не знает про письмо» меняет ход, прочитанное «соблюдай гигиену» — нет.
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Плата за это честная: каждая строка идёт в запрос и в ответ на <b>каждом</b> ходу.
+            Если стало заметно медленно — режьте с конца списка, а не с начала: первые пункты
+            (обстановка, кто что знает) окупаются, последние — страховка.
           </p>
           <p className="text-xs text-gray-500 mt-1">
             Что модель по нему надумала — видно в{' '}
@@ -642,6 +662,55 @@ function GuidedThinkingField({
           </button>
         </>
       )}
+    </div>
+  );
+}
+
+// Стоп-слова. Не цензура, а список оборотов, которые модель тянет в каждый второй
+// ход независимо от сцены: поодиночке они не режут глаз, но на двадцатом ходу
+// читаются как подпись генератора. Список уходит в запрос отдельным блоком, и при
+// включённом управляемом размышлении в чек-листе появляется пункт «сверься с ним».
+// Пустое поле = осознанно выключено: тогда не уходит ни блок, ни пункт проверки.
+function BanWordsField({
+  cfg,
+  patch,
+}: {
+  cfg: PresetSettings;
+  patch: (p: Partial<PresetSettings>) => void;
+}) {
+  const value = cfg.banWords ?? DEFAULT_BAN_WORDS;
+  const isDefault = value === DEFAULT_BAN_WORDS;
+  const count = value.split(/[,\n]/).map((x) => x.trim()).filter(Boolean).length;
+  return (
+    <div className="sm:col-span-2 rounded-lg border border-white/10 p-3">
+      <label className="label">Стоп-слова {count ? `(${count})` : '(выключены)'}</label>
+      <p className="text-xs text-gray-500 mb-2">
+        Обороты, которые модель не должна писать ни в каком виде — ни переформулировав, ни
+        синонимом той же картинки. Через запятую или с новой строки, на любом языке. Пустое поле —
+        блок вообще не уходит в запрос.
+      </p>
+      <textarea
+        className="input h-28 text-sm"
+        value={value}
+        onChange={(e) => patch({ banWords: e.target.value })}
+        placeholder="воздух загустел, повисла тишина, по спине пробежал холодок"
+      />
+      <div className="flex gap-2 mt-2">
+        <button
+          className="btn-ghost !px-3 !py-1 text-xs"
+          onClick={() => patch({ banWords: DEFAULT_BAN_WORDS })}
+          disabled={isDefault}
+        >
+          Вернуть стандартный список
+        </button>
+        <button
+          className="btn-ghost !px-3 !py-1 text-xs"
+          onClick={() => patch({ banWords: '' })}
+          disabled={!value.trim()}
+        >
+          Очистить
+        </button>
+      </div>
     </div>
   );
 }
