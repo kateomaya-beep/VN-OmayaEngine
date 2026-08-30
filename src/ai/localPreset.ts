@@ -1,5 +1,11 @@
 import { uid } from '../shared/utils';
-import { parsePresetJson, type PromptBlock, type PromptPreset } from './promptPreset';
+import {
+  parsePresetJson,
+  refreshBuiltins,
+  type BuiltinSignature,
+  type PromptBlock,
+  type PromptPreset,
+} from './promptPreset';
 
 // ПРЕСЕТ ДЛЯ ЛОКАЛЬНОЙ МОДЕЛИ (LM Studio, Ollama и прочий свой сервер).
 //
@@ -39,16 +45,21 @@ function makeDefaults(): PromptBlock[] {
 
 NEVER write {{user}}'s words, thoughts, feelings or actions. Not one line. Describe what happens TO them and what others do; stop where it is their turn to act.
 
-Write in past tense, third person, unless the story already uses something else.`
+Address {{user}} as "you"; everyone else is third person, by name. Past tense, unless the story already uses something else.`
     ),
     b(
       'local_format',
-      '⚙ Формат',
-      `Speech goes in "double quotes". Always. Never use a dash to open a line of speech.
+      '⚙ Правила форматирования',
+      `Speak to {{user}} as "you". Everyone else is third person, by name.
+
+Speech goes in quotation marks — «…» in Russian, "…" in English. Always, every line. Never open a line of speech with a dash.
+A quote inside speech is written with 'single quotes' — never a second pair of the same kind, it breaks the display.
+Close every quote you open. In a speech that runs over several paragraphs the closing mark goes only at the very end.
+
 Everything else — actions, description — is plain text.
 *Italics* only for a character's unspoken thought. **Bold** only for real emphasis.
 
-Write plain paragraphs. No headings, no lists, no "Name:" prefixes, no notes to the player, no summary of what just happened.`
+Write plain paragraphs separated by a blank line. No headings, no lists, no "Name:" prefixes, no notes to the player, no summary of what just happened.`
     ),
     b(
       'local_style',
@@ -93,13 +104,24 @@ export function defaultLocalBlockContent(builtinKey: string): string | null {
 
 const LOCAL_BUILTIN_ORDER = makeDefaults().map((b) => b.builtinKey as string);
 
+// Сигнатуры устаревших дефолтов (см. refreshBuiltins): формат без правила вложенных
+// кавычек и второго лица, и «кто вы» с третьим лицом для героя — оно этому правилу
+// прямо противоречило.
+const LOCAL_OUTDATED_SIGNATURES: BuiltinSignature[] = [
+  { key: 'local_format', signature: 'Speech goes in "double quotes". Always.' },
+  { key: 'local_identity', signature: 'Write in past tense, third person, unless' },
+];
+
+const freshLocal = (pr: PromptPreset): PromptPreset =>
+  refreshBuiltins(pr, makeDefaults(), LOCAL_OUTDATED_SIGNATURES);
+
 export function normalizeLocalPreset(raw: unknown): PromptPreset {
   const parsed =
     raw && typeof raw === 'object' && Array.isArray((raw as any).blocks) ? parsePresetJson(raw) : null;
   if (!parsed) return defaultLocalPreset();
   const have = new Set(parsed.blocks.map((b) => b.builtinKey).filter(Boolean) as string[]);
   const missing = makeDefaults().filter((b) => b.builtinKey && !have.has(b.builtinKey));
-  if (!missing.length) return parsed;
+  if (!missing.length) return freshLocal(parsed);
   // Недостающие блоки вставляем на штатные места по порядку дефолта, а не в конец:
   // блок ниже истории переписки читается моделью как более свежий, и «формат»
   // внизу вёл бы себя иначе, чем задумано.
@@ -116,5 +138,5 @@ export function normalizeLocalPreset(raw: unknown): PromptPreset {
     }
     blocks.splice(at, 0, { ...block, id: uid('blk') });
   }
-  return { ...parsed, blocks };
+  return freshLocal({ ...parsed, blocks });
 }

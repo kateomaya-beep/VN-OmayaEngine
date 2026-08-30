@@ -299,6 +299,36 @@ export function defaultBlockContent(builtinKey: string): string | null {
   return found ? found.content : null;
 }
 
+// Подмена УСТАРЕВШИХ встроенных блоков на актуальные — общая механика для всех
+// пресетов (новелла, РП, DeepSeek, локальный). Пресет живёт в localStorage, поэтому
+// правка дефолта в коде сама по себе никуда не доезжает: у того, кто уже играл,
+// остаётся текст той версии, в которой пресет впервые сохранился. Сигнатура —
+// кусок СТАРОГО дефолта: если он всё ещё в блоке, значит пользователь блок не
+// трогал, и подменить его безопасно. Отредактированный вручную блок сигнатуре уже
+// не соответствует и остаётся как есть — своё пользователя мы не переписываем.
+export type BuiltinSignature = { key: string; signature: string };
+
+export function refreshBuiltins(
+  preset: PromptPreset,
+  fresh: PromptBlock[],
+  signatures: BuiltinSignature[]
+): PromptPreset {
+  let changed = false;
+  const blocks = preset.blocks.map((b) => {
+    if (!b.builtinKey || b.dynamic) return b;
+    // Проверяем ВСЕ сигнатуры ключа: у блока может быть несколько прошлых версий.
+    const outdated = signatures.some((s) => s.key === b.builtinKey && b.content.includes(s.signature));
+    if (!outdated) return b;
+    const next = fresh.find((d) => d.builtinKey === b.builtinKey);
+    if (!next || next.content === b.content) return b;
+    changed = true;
+    // Имя берём свежее вместе с текстом: раз содержимое не трогали, то и заголовок
+    // пользовательским не назовёшь, а блок мог быть переименован.
+    return { ...b, name: next.name, content: next.content };
+  });
+  return changed ? { ...preset, blocks } : preset;
+}
+
 // Разбор импортированного пресета с мягким откатом на дефолт при мусоре.
 export function parsePresetJson(raw: unknown): PromptPreset | null {
   if (!raw || typeof raw !== 'object') return null;

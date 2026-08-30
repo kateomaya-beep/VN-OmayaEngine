@@ -1,6 +1,11 @@
 import { uid } from '../shared/utils';
-import { parsePresetJson, type PromptBlock, type PromptPreset } from './promptPreset';
-import { defaultRpPreset } from './rpPreset';
+import {
+  parsePresetJson,
+  refreshBuiltins,
+  type PromptBlock,
+  type PromptPreset,
+} from './promptPreset';
+import { defaultRpPreset, RP_OUTDATED_SIGNATURES } from './rpPreset';
 
 // ПРЕСЕТ ПОД DEEPSEEK.
 //
@@ -105,9 +110,12 @@ export function normalizeDeepseekPreset(raw: unknown): PromptPreset {
   const parsed =
     raw && typeof raw === 'object' && Array.isArray((raw as any).blocks) ? parsePresetJson(raw) : null;
   if (!parsed) return defaultDeepseekPreset();
+  // Блоки здесь — копии РП-шных (те же builtinKey), поэтому и устаревают они по тем
+  // же сигнатурам: правка общего блока должна доезжать и до этого пресета.
+  const fresh = (pr: PromptPreset) => refreshBuiltins(pr, makeDefaults(), RP_OUTDATED_SIGNATURES);
   const have = new Set(parsed.blocks.map((b) => b.builtinKey).filter(Boolean) as string[]);
   const missing = makeDefaults().filter((b) => b.builtinKey && !have.has(b.builtinKey));
-  if (!missing.length) return parsed;
+  if (!missing.length) return fresh(parsed);
   const blocks = [...parsed.blocks];
   for (const block of missing) {
     const want = DS_ORDER.indexOf(block.builtinKey as string);
@@ -121,5 +129,5 @@ export function normalizeDeepseekPreset(raw: unknown): PromptPreset {
     }
     blocks.splice(at, 0, { ...block, id: uid('blk') });
   }
-  return { ...parsed, blocks };
+  return fresh({ ...parsed, blocks });
 }

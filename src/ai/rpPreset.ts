@@ -1,5 +1,11 @@
 import { uid } from '../shared/utils';
-import { parsePresetJson, type PromptBlock, type PromptPreset } from './promptPreset';
+import {
+  parsePresetJson,
+  refreshBuiltins,
+  type BuiltinSignature,
+  type PromptBlock,
+  type PromptPreset,
+} from './promptPreset';
 
 // ПРЕСЕТ РЕЖИМА «КЛАССИЧЕСКИЙ РОЛЕПЛЕЙ».
 //
@@ -64,7 +70,7 @@ function makeDefaults(): PromptBlock[] {
       `You are the narrator and co-author of an ongoing roleplay with {{user}}. You write the world and everyone in it EXCEPT {{user}}.
 - You have no persona of your own. No narrator voice, no commentary as yourself, no addressing the player as a player.
 - {{user}} is the player's character. Their words, thoughts, decisions and actions belong to the player alone.
-- POV and tense: match whatever the story is already written in. If nothing is established, third person past tense.
+- POV: {{user}} is addressed in the second person ("you"), everyone else is third person — see the formatting rules. Tense: match whatever the story is already written in; past tense if nothing is established.
 - Continuity is not optional: location, time of day, weather, who is present, body positions, clothing state, injuries, what each character currently knows.
 - The world is a living system. Actions ripple outward, consequences compound, characters pursue their own goals whether or not {{user}} is watching.
 - No moralising, no disclaimers, no "are you sure?" check-ins unless the hesitation is genuinely in character.`
@@ -173,16 +179,32 @@ This is NOT permission to make everyone hostile. Gratuitous cruelty is as false 
     ),
     b(
       'rp_format',
-      '⚙ Формат ответа',
-      `Reply with the story itself and nothing else — no headers, no labels, no "Turn 12:", no summary of what just happened, no questions to the player.
+      '⚙ Правила форматирования',
+      `Formatting is a CONTRACT, not a style choice. The engine parses your text by these rules and colours it on screen — a broken rule shows up as broken text in front of the player.
 
-FORMATTING is a strict contract, not a style choice — every reply follows it exactly:
-- Spoken dialogue: ALWAYS in "straight quotation marks", every single line, no exceptions. Never a bare unquoted line of speech, and never introduced with a dash the way some prose traditions format dialogue (— Line.) — that convention is banned here; quotes only.
-- Plain narrative — action, description, what is physically happening: plain text. No italics, no special marking.
-- **Bold**: reserved for real emphasis, a word actually stressed in the moment — never decoration, never used for anything else.
-- *Italics*: reserved for a character's unspoken thought, when you choose to surface one. Nothing else in your prose gets italicized — not actions, not description, not sound effects.
-- Write in paragraphs, not in a bullet list, and not as a script with "Name:" prefixes — a name prefix is only for a line that is genuinely formatted as a transcript in this story.
-- Never write out-of-character text, never explain your choices, never break the fiction to check in.
+WHO IS "YOU"
+- {{user}} is addressed in the SECOND PERSON — "you". Not by name in the narration, not "he"/"she". ("The door opens in front of you." — not "in front of Kate".)
+- Everyone else — every NPC, every character on the roster — stays third person, called by name.
+
+QUOTATION MARKS — the strictest rule here
+- Spoken words go inside quotation marks. Every line of speech, no exceptions, never a bare unquoted line.
+- Use the marks of the language you are writing in: «…» in Russian, "…" in English. Pick one pair and keep it for the whole reply.
+- A quote INSIDE speech — a citation, a title, a phrase someone is repeating, air-quotes — is written with 'single quotes'. NEVER a second pair of the outer kind: nested «…«…»…» is unparseable and costs the whole passage its colour.
+- Every mark you open, you close. When one speech runs across several paragraphs (a letter, a long message, a monologue), the closing mark goes ONLY at the very end of it — do not scatter stray quotes at the paragraph breaks.
+- Never open a line of speech with a dash (— Line.). That prose tradition is banned here: quotes only.
+
+EMPHASIS
+- *Italics*: a character's unspoken thought, and nothing else — not actions, not description, not sound effects.
+- **Bold**: a word genuinely stressed in the moment. Never decoration.
+- Never italicize or bold a whole paragraph.
+
+PARAGRAPHS
+- Plain narrative — action, description, what is physically happening — is plain text, with no marking at all.
+- Write in paragraphs separated by a blank line. A paragraph is one beat: an action, an exchange, a shift of attention. A ten-line wall and a staccato of one-line paragraphs are equally wrong.
+- No bullet lists, no headers, no "Turn 12:" labels, no "Name:" script prefixes — a name prefix is only for a line that is genuinely a transcript inside this story.
+
+NOTHING ELSE IN THE REPLY
+- The story and only the story: no out-of-character text, no explanation of your choices, no summary of what just happened, no questions to the player.
 - Never open with a restatement of {{user}}'s move. Start where the world responds.`
     ),
     b('rp_state', '🗂 Служебная сводка состояния', STATE_CONTRACT, { flagged: true }),
@@ -229,35 +251,26 @@ const RP_BUILTIN_ORDER = makeDefaults().map((b) => b.builtinKey as string);
 // promptPreset.ts): если блок всё ещё содержит старый дефолтный текст (значит,
 // пользователь его не редактировал), подменяем на актуальный. Так поздние правки
 // движка доезжают и до пресетов, уже сохранённых в localStorage со старой версией.
-const RP_OUTDATED_SIGNATURES: { key: string; signature: string }[] = [
+export const RP_OUTDATED_SIGNATURES: BuiltinSignature[] = [
   // Формат без жёсткого запрета тире в прямой речи и без разделения «курсив только
   // для мыслей» — старый текст разрешал курсив и для действий/описаний тоже, из-за
   // чего модель путала «акцент» с «мысль» и не соблюдала кавычки строго.
   { key: 'rp_format', signature: '*italics* for actions and description' },
+  // Формат без правил вложенных кавычек и без второго лица для героя. Вложенная
+  // пара того же вида ломает разметку прямой речи (подкраска слетает на всём куске),
+  // а обращение к герою болталось между «ты» и «он» от ответа к ответу.
+  { key: 'rp_format', signature: 'FORMATTING is a strict contract, not a style choice' },
+  // Идентичность с третьим лицом по умолчанию — прямо противоречит правилу второго
+  // лица в блоке форматирования, и модель выбирала то одно, то другое.
+  { key: 'rp_identity', signature: 'POV and tense: match whatever the story is already written in' },
   // Пометки хода без явного разбора форматирования ВВОДА игрока (обычный текст —
   // речь, курсив — мысль/действие) и без прямой отсылки к тому, что мысли игрока
   // персонажам не слышны.
   { key: 'rp_moves', signature: '"[CONTINUE]" — {{user}} is just watching' },
 ];
 
-function refreshOutdatedRpBuiltins(preset: PromptPreset): PromptPreset {
-  let changed = false;
-  const blocks = preset.blocks.map((b) => {
-    if (!b.builtinKey || b.dynamic) return b;
-    const outdated = RP_OUTDATED_SIGNATURES.some(
-      (s) => s.key === b.builtinKey && b.content.includes(s.signature)
-    );
-    if (outdated) {
-      const fresh = defaultRpBlockContent(b.builtinKey);
-      if (fresh !== null && fresh !== b.content) {
-        changed = true;
-        return { ...b, content: fresh };
-      }
-    }
-    return b;
-  });
-  return changed ? { ...preset, blocks } : preset;
-}
+const refreshOutdatedRpBuiltins = (preset: PromptPreset): PromptPreset =>
+  refreshBuiltins(preset, makeDefaults(), RP_OUTDATED_SIGNATURES);
 
 export function normalizeRpPreset(raw: unknown): PromptPreset {
   const parsed = raw && typeof raw === 'object' && Array.isArray((raw as any).blocks)
