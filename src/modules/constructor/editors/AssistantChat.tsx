@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
-import type { Project } from '../../../shared/types';
+import type { Project, RuntimeState } from '../../../shared/types';
 import { Markdown } from '../../../shared/markdown';
 import { runCompletion } from '../../../ai/providers';
 import { usePresetSettings } from '../../../ai/presetSettings';
@@ -28,6 +28,28 @@ import {
 // Личность ассистента — глобальная настройка (это ваш помощник, а не свойство
 // проекта), переписка — проектная (разговор про ЭТОТ сеттинг вне его бессмыслен).
 
+// Быстрые кнопки ИЗ ИГРЫ — про то, чего в конструкторе ещё нет: историю, которая
+// уже случилась. Первая закрывает тот самый случай, ради которого ассистенту и
+// отдали контекст: в партии появился человек, а карточки на него нет.
+const QUICK_IN_GAME: { label: string; text: string }[] = [
+  {
+    label: 'Завести новых',
+    text: 'Посмотри досье движка: кто уже появился в истории, но карточки в проекте не имеет? Перечисли их, а потом заведи карточки по тому, что о них уже написано — имена в точности как в досье. Если кто-то из них проходной и карточка ему не нужна, так и скажи.',
+  },
+  {
+    label: 'Что помнит история',
+    text: 'Коротко: где мы сейчас, что было ключевого и какие линии открыты. Только по слепку прохождения, без пересказа последних ходов.',
+  },
+  {
+    label: 'Противоречия',
+    text: 'Сверь карточки персонажей в проекте с досье движка и последними ходами. Где история уже разошлась с карточкой (характер, речь, отношения)? Назови расхождения; правь только то, что я подтвержу.',
+  },
+  {
+    label: 'Дописать лор',
+    text: 'В истории уже упоминались места, организации или обычаи, которых нет в лорбуке. Найди их по слепку прохождения и предложи записи.',
+  },
+];
+
 const QUICK: { label: string; text: string }[] = [
   { label: 'Персонаж', text: 'Придумай нового персонажа, который органично вписывается в этот мир, и заведи его в проекте. Спроси, если нужна роль.' },
   { label: 'Дожать карточку', text: 'Посмотри карточки персонажей и скажи, где характер заявлен, но не слышен в манере речи. Предложи правки.' },
@@ -42,10 +64,14 @@ const QUICK: { label: string; text: string }[] = [
 export function AssistantChat(props?: {
   project?: Project | null;
   update?: (mutator: (p: Project) => void) => void;
+  /** Состояние текущего прохождения — только из плеера. В конструкторе его нет,
+   * и ассистент работает как раньше, по одному проекту. */
+  state?: RuntimeState | null;
 }) {
   const store = useProjectStore();
   const project = props?.project !== undefined ? props.project : store.project;
   const update = props?.update ?? store.update;
+  const state = props?.state ?? null;
   const cfg = usePresetSettings((s) => s.settings);
   const patchCfg = usePresetSettings((s) => s.patch);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -96,7 +122,7 @@ export function AssistantChat(props?: {
       }));
       let acc = '';
       const raw = await runCompletion({
-        system: buildAssistantSystem(project, cfg.assistantPersona),
+        system: buildAssistantSystem(project, cfg.assistantPersona, state),
         messages,
         temperature: Math.min(cfg.temperature, 1),
         maxTokens: 4000,
@@ -295,7 +321,7 @@ export function AssistantChat(props?: {
 
         <div className="pt-3 mt-3 border-t border-white/10">
           <div className="flex gap-1.5 flex-wrap mb-2">
-            {QUICK.map((q) => (
+            {(state ? [...QUICK_IN_GAME, ...QUICK] : QUICK).map((q) => (
               <button
                 key={q.label}
                 className="chip !px-2.5 !py-1 text-xs"
@@ -382,6 +408,13 @@ export function AssistantChat(props?: {
             заголовки и ключи лорбука, статы. Содержимое записей лорбука — по запросу: иначе каждый
             вопрос стоил бы как целый ход игры.
           </p>
+          {state && (
+            <p className="text-xs text-gray-500 mt-1.5">
+              Плюс <b>текущая партия</b>: часы и место, досье движка на всех, кто в ней появился,
+              журнал эпизодов, ключевые события, связи, открытые линии и последние ходы. Отдельной
+              пометкой — кто уже есть в истории, но карточки в проекте не имеет.
+            </p>
+          )}
         </div>
 
         <div className="card">
@@ -392,6 +425,13 @@ export function AssistantChat(props?: {
             <li>• заменять описание мира, арку, стартовую сцену, правила</li>
             <li>• заводить статы</li>
           </ul>
+          {state && (
+            <p className="text-[11px] text-gray-500 mt-2">
+              Правки уходят <b>в проект</b>, не в текущую партию: новая карточка повлияет на
+              следующие ходы, а не на уже написанные. Досье движка, часы и статусы он не трогает —
+              они принадлежат прохождению и меняются игрой или вручную в Game Master.
+            </p>
+          )}
           <p className="text-[11px] text-gray-500 mt-2">
             Каждая правка показана списком и отменяется кнопкой. Ассеты, спрайты и настройки
             подключения он не трогает.

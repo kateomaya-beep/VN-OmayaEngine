@@ -3,11 +3,13 @@ import type {
   CharacterRole,
   LorebookEntry,
   Project,
+  RuntimeState,
   StatDefinition,
 } from '../shared/types';
 import { emptyRelationship } from '../shared/types';
 import { uid } from '../shared/utils';
 import { logEvent } from '../shared/logStore';
+import { stripStateBlock } from './rpResponse';
 
 // АССИСТЕНТ-СОАВТОР: чат, который видит проект и умеет его править.
 //
@@ -102,6 +104,144 @@ export function projectDigest(project: Project): string {
   return parts.join('\n\n');
 }
 
+// Слепок ТЕКУЩЕГО ПРОХОЖДЕНИЯ — то, чего в проекте нет: часы, досье, связи,
+// журнал эпизодов, последние ходы. Уходит, только когда ассистент открыт из игры.
+//
+// Зачем. Без него ассистент знал сеттинг, но не знал ИСТОРИЮ, и на просьбу «заведи
+// того, кто появился» отвечать ему было нечем: он видел ростер из конструктора, где
+// нового персонажа как раз и нет. Приходилось пересказывать своими словами то, что
+// движок и так помнит, — либо собирать карточку руками в панели Game Master.
+//
+// Что важнее всего: люди, которых история уже знает, а проект — ещё нет. Они
+// помечены явно, потому что это ровно тот случай, ради которого слепок и нужен.
+const MAX_HISTORY_TURNS = 8;
+const MAX_GM_CHARACTERS = 24;
+
+function truncate(s: string, n: number): string {
+  const t = s.replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+
+export function playthroughDigest(project: Project, state: RuntimeState): string {
+  const parts: string[] = [];
+  const gm = state.gm;
+
+  const clock = [gm.clock.day, gm.clock.month, gm.clock.year].filter(Boolean).join(' ');
+  const whereWhen = [clock, gm.clock.time, gm.clock.location].filter(Boolean).join(', ');
+  parts.push(
+    `== ТЕКУЩЕЕ ПРОХОЖДЕНИЕ ==\nХод: ${state.turnCount}` +
+      (whereWhen ? `\nСейчас в истории: ${whereWhen}` : '') +
+      (state.protagonistName ? `\nГерой: ${state.protagonistName}` : '')
+  );
+
+  if (state.memory.storyState?.trim()) {
+    parts.push(`== ПОЛОЖЕНИЕ ДЕЛ (снапшот памяти) ==\n${state.memory.storyState.trim()}`);
+  }
+  const chronicle = state.memory.chronicle.slice(-6);
+  if (chronicle.length) {
+    parts.push(
+      `== ЖУРНАЛ ЭПИЗОДОВ (последние ${chronicle.length}) ==\n` +
+        chronicle.map((c) => `- [ход ${c.atTurn}] ${truncate(c.text, 400)}`).join('\n')
+    );
+  }
+
+  // Ключевые и важные события видны все: их и так немного, а мелочь вытесняется.
+  const events = gm.events.filter((e) => e.level === 'key' || e.level === 'important').slice(-12);
+  if (events.length) {
+    parts.push(
+      `== КЛЮЧЕВЫЕ СОБЫТИЯ ==\n` +
+        events.map((e) => `- [ход ${e.turn}${e.date ? ', ' + e.date : ''}] ${truncate(e.summary, 200)}`).join('\n')
+    );
+  }
+
+  if (gm.characters.length) {
+    const known = new Set(project.characters.map((c) => c.id));
+    // На длинной партии досье набирается на десятки людей, и целиком они съели бы
+    // весь запрос. Режем, но НЕ по свежести: первыми идут те, у кого карточки нет —
+    // ради них слепок и собирается. Дальше по возрасту записи.
+    const carded = (c: (typeof gm.characters)[number]) => !!(c.charId && known.has(c.charId));
+    const ordered = [...gm.characters].sort((a, b) => {
+      if (carded(a) !== carded(b)) return carded(a) ? 1 : -1;
+      return (b.updatedAtTurn ?? 0) - (a.updatedAtTurn ?? 0);
+    });
+    const shown = ordered.slice(0, MAX_GM_CHARACTERS);
+    const cut = gm.characters.length - shown.length;
+    const line = (c: (typeof gm.characters)[number]) => {
+      const carded = c.charId && known.has(c.charId);
+      const bits = [
+        c.dossier && `кто: ${truncate(c.dossier, 160)}`,
+        c.roleToHero && `герою: ${truncate(c.roleToHero, 100)}`,
+        c.appearance && `внешность: ${truncate(c.appearance, 160)}`,
+        c.personality && `характер: ${truncate(c.personality, 160)}`,
+        c.status && `статус: ${truncate(c.status, 80)}`,
+        c.location && `где: ${truncate(c.location, 60)}`,
+        c.tags.length && `знает/помнит: ${c.tags.map((t) => truncate(t, 80)).join('; ')}`,
+      ].filter(Boolean);
+      return (
+        `- «${c.name}»${carded ? ` (карточка #${c.charId})` : ' — КАРТОЧКИ В ПРОЕКТЕ НЕТ'}\n  ` +
+        bits.join('\n  ')
+      );
+    };
+    parts.push(
+      `== ЛЮДИ В ЭТОЙ ИСТОРИИ (досье движка) ==\n` +
+        shown.map(line).join('\n') +
+        (cut > 0 ? `\n(ещё ${cut} — давно не упоминались, спросите, если нужны)` : '')
+    );
+  }
+
+  if (gm.relations.length) {
+    parts.push(
+      `== СВЯЗИ ==\n` +
+        gm.relations.slice(-40).map((r) => `- ${r.from} → ${r.to}: ${r.label}`).join('\n')
+    );
+  }
+  if (gm.locations.length) {
+    parts.push(
+      `== МЕСТА, ГДЕ УЖЕ БЫВАЛИ ==\n` +
+        gm.locations
+          .slice(-24)
+          .map((l) => `- ${l.name}${l.description ? ': ' + truncate(l.description, 160) : ''}`)
+          .join('\n')
+    );
+  }
+  const openTasks = gm.agenda.filter((t) => !t.done);
+  if (openTasks.length) {
+    parts.push(`== ОТКРЫТЫЕ ЛИНИИ ==\n` + openTasks.map((t) => `- ${t.text}`).join('\n'));
+  }
+
+  // Последние ходы дословно: досье говорит, ЧТО есть, а этот кусок — каким тоном
+  // это написано. Без него ассистент правит карточки вслепую по пересказу.
+  //
+  // Служебное вычищаем: <state> в конце хода — это тот же список досье, только
+  // сырым JSON (второй копией он лишь съедает место), а «[VERBATIM]» — пометка
+  // движка, которую ассистенту незачем ни читать, ни повторять.
+  const tail = state.history.slice(-MAX_HISTORY_TURNS);
+  if (tail.length) {
+    parts.push(
+      `== ПОСЛЕДНИЕ ХОДЫ (${tail.length}) ==\n` +
+        tail
+          .map((m) => {
+            const body = stripStateBlock(String(m.content)).replace(/^\s*\[[A-Z ]+\]\s*/, '');
+            return `[${m.role === 'user' ? 'игрок' : 'история'}] ${truncate(body, 700)}`;
+          })
+          .filter((l) => l.split('] ')[1])
+          .join('\n')
+    );
+  }
+  return parts.join('\n\n');
+}
+
+// Добавка к протоколу для работы ИЗ ИГРЫ. Отдельным куском, потому что в
+// конструкторе прохождения ещё нет и половина этих правил там бессмысленна.
+const IN_GAME_PROTOCOL = `ТЫ ОТКРЫТ ПРЯМО ВО ВРЕМЯ ИГРЫ.
+
+Выше слепок текущего прохождения: часы, досье движка, журнал эпизодов, связи и последние ходы. Пользуйся им как первоисточником о том, ЧТО уже произошло, — он свежее, чем описание мира в проекте.
+
+- Персонаж с пометкой «КАРТОЧКИ В ПРОЕКТЕ НЕТ» появился в истории, но постоянной карточки у него нет: досье движка живёт в прохождении и в другую партию не переедет. Если автор просит его завести — собери character.create ПО ТОМУ, ЧТО УЖЕ НАПИСАНО в досье и в последних ходах, а не выдумывай заново. Имя бери в точности как в досье: движок связывает карточку с досье по имени.
+- Правки уходят В ПРОЕКТ (в сеттинг), а не в текущую партию. Отредактировать сам ход истории отсюда нельзя — карточка повлияет на следующие ходы, а не на уже написанные.
+- Досье, часы, статусы и связи ты НЕ правишь: они принадлежат прохождению и меняются самой игрой (и вручную — в панели Game Master). Заметил в них противоречие — скажи словами, не пытайся исправить операцией.
+- Не пересказывай автору его же историю. Он её только что прочитал.`;
+
 export const DEFAULT_ASSISTANT_PERSONA = `Ты — соавтор и редактор этого проекта. Спокойный, конкретный, с хорошим вкусом к прозе.
 Говоришь коротко и по делу, без комплиментов и воды. Если задумка слабая — говоришь прямо и предлагаешь, чем заменить.
 Не пишешь за автора то, о чём не просили, и не «улучшаешь» молча уже написанное.`;
@@ -134,9 +274,19 @@ ${ASSIST_CLOSE}
 - Всё, что ты пишешь в поля, — на языке проекта (том же, на котором написан лор).
 - Ничего, кроме прозы ответа и одного блока в конце. Никаких комментариев внутри JSON.`;
 
-export function buildAssistantSystem(project: Project, persona: string): string {
+// state передаётся, только когда ассистент открыт из игры: в конструкторе
+// прохождения нет, и слепок был бы пустым разделом на пустом месте.
+export function buildAssistantSystem(
+  project: Project,
+  persona: string,
+  state?: RuntimeState | null
+): string {
   const who = persona.trim() || DEFAULT_ASSISTANT_PERSONA;
-  return [who, projectDigest(project), PROTOCOL].join('\n\n---\n\n');
+  const parts = [who, projectDigest(project)];
+  if (state) parts.push(playthroughDigest(project, state));
+  parts.push(PROTOCOL);
+  if (state) parts.push(IN_GAME_PROTOCOL);
+  return parts.join('\n\n---\n\n');
 }
 
 // ---- Разбор ответа --------------------------------------------------------
