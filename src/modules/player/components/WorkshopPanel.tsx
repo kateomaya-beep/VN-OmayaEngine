@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Modal, AssetImage } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
-import { themeVars } from '../playerTheme';
+import { themeVars, saveGlobalTheme } from '../playerTheme';
 import {
   DEFAULT_PLAYER_THEME,
   spriteDisplayOf,
@@ -14,6 +14,9 @@ import {
 import { resolveSprite } from '../../../shared/outfits';
 import { uploadAsset } from '../../../storage/assetOps';
 import { pushToast } from '../../../shared/toast';
+import { downloadBlob } from '../../../storage/zip';
+import { listProjects, saveProject } from '../../../storage/db';
+import { normalizePlayerTheme } from '../../../shared/types';
 import type { AssetMeta } from '../../../shared/types';
 
 // Мини-мастерская оформления плеера: акцент, поверхности (окна/панели, кнопки выбора,
@@ -586,6 +589,8 @@ export function WorkshopPanel({
         </div>
         )}
 
+        <ThemeIO theme={theme} set={set} project={project} L={L} />
+
         <div className="flex justify-between items-center mt-5">
           <button className="btn-ghost text-sm" onClick={() => set({ ...DEFAULT_PLAYER_THEME })}>
             {L('Сбросить', 'Reset')}
@@ -884,6 +889,137 @@ function ChatBgPicker({
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ПЕРЕНОС ТЕМЫ между проектами: файл, дефолт для новых, применение ко всем.
+//
+// Тема живёт В ПРОЕКТЕ и уезжает с ним при экспорте — это правильно, но означает,
+// что настроенное однажды оформление приходится собирать заново в каждой новой
+// истории. Здесь три разных ответа на это, и они НЕ взаимозаменяемы:
+//   файл      — отдать тему другому человеку или перенести между устройствами;
+//   дефолт    — с неё начинаются НОВЫЕ проекты, уже настроенные не трогаются;
+//   ко всем   — разово переписать оформление всех существующих историй.
+// Последнее необратимо, поэтому спрашиваем подтверждение и говорим число.
+function ThemeIO({
+  theme,
+  set,
+  project,
+  L,
+}: {
+  theme: PlayerTheme;
+  set: (patch: Partial<PlayerTheme>) => void;
+  project?: Project | null;
+  L: (ru: string, en: string) => string;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  function exportTheme() {
+    downloadBlob(
+      new Blob([JSON.stringify(theme, null, 2)], { type: 'application/json' }),
+      'omaya-theme.json'
+    );
+  }
+
+  async function importTheme(file: File) {
+    try {
+      const raw = JSON.parse(await file.text()) as Record<string, unknown>;
+      // normalizePlayerTheme проглотит что угодно и вернёт дефолт — то есть чужой
+      // файл (например, экспорт проекта) молча «применился» бы как сброс темы.
+      // Поэтому сначала убеждаемся, что это вообще тема.
+      if (!raw || typeof raw !== 'object' || typeof raw.accent !== 'string') {
+        pushToast('error', 'Это не файл темы — в нём нет настроек оформления.');
+        return;
+      }
+      const next = normalizePlayerTheme(raw);
+      // Картинка фона — ассет ТОГО проекта, откуда тему выгрузили. В чужом проекте
+      // такого ассета нет, и ссылка на него означала бы «фон включён, но пустой».
+      // Честнее снять её и сказать об этом, чем оставить битую.
+      const missing = next.chatBgAssetId && !project?.assets.some((a) => a.id === next.chatBgAssetId);
+      if (missing) next.chatBgAssetId = undefined;
+      set(next);
+      pushToast(
+        'success',
+        missing
+          ? 'Тема применена. Картинку фона перенести не удалось — она хранится в том проекте; выберите её заново.'
+          : 'Тема применена.'
+      );
+    } catch (e) {
+      pushToast('error', 'Не удалось прочитать файл темы: ' + (e as Error).message);
+    }
+  }
+
+  async function applyToAll() {
+    const all = await listProjects();
+    if (!all.length) return;
+    if (
+      !confirm(
+        `Поставить это оформление во ВСЕ истории (${all.length})? Их собственные настройки внешнего вида будут перезаписаны — отменить это нельзя.`
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      for (const p of all) {
+        // Картинку фона переносим только туда, где такой ассет есть, — иначе фон
+        // окажется «включён, но пуст».
+        const bgOk = !theme.chatBgAssetId || p.assets.some((a) => a.id === theme.chatBgAssetId);
+        await saveProject({
+          ...p,
+          playerTheme: bgOk ? { ...theme } : { ...theme, chatBgAssetId: undefined },
+        });
+      }
+      pushToast('success', `Оформление применено ко всем историям (${all.length}).`);
+    } catch (e) {
+      pushToast('error', 'Не удалось применить ко всем: ' + (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-5 rounded-xl border border-white/10 bg-black/20 p-3">
+      <label className="label">{L('Перенос оформления', 'Move this theme around')}</label>
+      <div className="flex gap-2 flex-wrap">
+        <button className="btn-ghost !py-1.5 !px-3 text-xs" onClick={exportTheme}>
+          {L('Сохранить в файл', 'Save to file')}
+        </button>
+        <button className="btn-ghost !py-1.5 !px-3 text-xs" onClick={() => fileRef.current?.click()}>
+          {L('Загрузить из файла', 'Load from file')}
+        </button>
+        <button
+          className="btn-ghost !py-1.5 !px-3 text-xs"
+          onClick={() => {
+            saveGlobalTheme(theme);
+            pushToast('success', 'Это оформление теперь по умолчанию — с него начнутся новые истории.');
+          }}
+        >
+          {L('Сделать по умолчанию', 'Make it the default')}
+        </button>
+        <button className="btn-ghost !py-1.5 !px-3 text-xs" disabled={busy} onClick={applyToAll}>
+          {busy ? L('Применяю…', 'Applying…') : L('Применить ко всем историям', 'Apply to all stories')}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".json"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void importTheme(f);
+            e.target.value = '';
+          }}
+        />
+      </div>
+      <p className="text-[11px] text-gray-500 mt-2">
+        {L(
+          '«По умолчанию» действует на НОВЫЕ истории и на те, где оформление ещё не трогали; уже настроенные останутся при своём. Чтобы переписать и их — «Применить ко всем историям», это необратимо. Настройки общие для обоих режимов: лишнее просто не используется (лента чата в новелле, спрайты в РП).',
+          '"Default" applies to NEW stories and to those whose look was never touched; already-styled ones keep theirs. To overwrite those too, use "Apply to all stories" — that cannot be undone. The settings are shared by both modes: whatever does not apply is simply ignored.'
+        )}
+      </p>
     </div>
   );
 }

@@ -8,7 +8,21 @@ import { DEFAULT_PLAYER_THEME, normalizePlayerTheme, type PlayerTheme } from '..
 export { DEFAULT_PLAYER_THEME, normalizePlayerTheme };
 export type { PlayerTheme };
 
+// Ключ ГЛОБАЛЬНОЙ темы. Исторически он появился как back-compat со временем, когда
+// тема была одна на всё приложение; теперь это ещё и «тема по умолчанию» — с неё
+// начинается каждый проект, у которого своей темы пока нет.
 const LEGACY_LS_KEY = 'nf_player_theme';
+
+// Запомнить тему как ДЕФОЛТНУЮ: её получат новые проекты и все, у кого своей нет.
+// Уже настроенные проекты она не трогает — их тема лежит в самом проекте и уезжает
+// вместе с ним при экспорте, поэтому молча переписывать её отсюда нельзя.
+export function saveGlobalTheme(theme: PlayerTheme): void {
+  try {
+    localStorage.setItem(LEGACY_LS_KEY, JSON.stringify(theme));
+  } catch {
+    /* приватный режим — переживём */
+  }
+}
 
 // Back-compat: если у проекта темы нет, берём прежнюю глобальную (localStorage) как
 // стартовую точку, иначе дефолт. Так старый выбор пользователя не теряется.
