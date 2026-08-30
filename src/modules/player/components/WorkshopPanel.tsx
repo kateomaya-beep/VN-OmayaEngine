@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Modal, AssetImage } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
 import { themeVars } from '../playerTheme';
@@ -12,6 +12,9 @@ import {
   type SpriteDisplay,
 } from '../../../shared/types';
 import { resolveSprite } from '../../../shared/outfits';
+import { uploadAsset } from '../../../storage/assetOps';
+import { pushToast } from '../../../shared/toast';
+import type { AssetMeta } from '../../../shared/types';
 
 // Мини-мастерская оформления плеера: акцент, поверхности (окна/панели, кнопки выбора,
 // премиум-выборы) с цветом и плотностью, шрифт (ссылкой), размер текста. Пер-проектная
@@ -175,6 +178,7 @@ export function WorkshopPanel({
   onChange,
   project,
   onPatchCharacter,
+  onAddAsset,
 }: {
   open: boolean;
   onClose: () => void;
@@ -183,6 +187,8 @@ export function WorkshopPanel({
   /** Нужен для личной подгонки спрайтов: список персонажей и их картинки. */
   project?: Project | null;
   onPatchCharacter?: (characterId: string, display: SpriteDisplay) => void;
+  /** Положить новый ассет в проект — для своей картинки на фон ленты. */
+  onAddAsset?: (asset: AssetMeta) => void;
 }) {
   const { lang } = useLang();
   const L = (ru: string, en: string) => (lang === 'en' ? en : ru);
@@ -259,6 +265,15 @@ export function WorkshopPanel({
                 value={theme.chatBgColor}
                 onChange={(chatBgColor) => set({ chatBgColor })}
               />
+              {onAddAsset && (
+                <ChatBgPicker
+                  project={project}
+                  theme={theme}
+                  set={set}
+                  onAddAsset={onAddAsset}
+                  L={L}
+                />
+              )}
             </div>
             <SurfaceControl
               label={L('Бабл рассказчика', 'Narrator bubble')}
@@ -767,6 +782,108 @@ function Slider({
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-[var(--pl-accent,#b18cff)]"
       />
+    </div>
+  );
+}
+
+
+// Своя картинка на фон ленты. Кладётся обычным ассетом проекта (тип 'icon') —
+// так она уезжает вместе с ним при экспорте и копировании, без отдельной ветки
+// в хранилище. Затемнение обязательно рядом: на светлой или пёстрой картинке
+// текст истории читаться перестаёт, и подбирать под неё цвет текста вручную —
+// работа, которой быть не должно.
+function ChatBgPicker({
+  project,
+  theme,
+  set,
+  onAddAsset,
+  L,
+}: {
+  project?: Project | null;
+  theme: PlayerTheme;
+  set: (patch: Partial<PlayerTheme>) => void;
+  onAddAsset: (asset: AssetMeta) => void;
+  L: (ru: string, en: string) => string;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const current = project?.assets.find((a) => a.id === theme.chatBgAssetId);
+
+  async function pick(file: File) {
+    setBusy(true);
+    try {
+      const asset = await uploadAsset(file, 'icon');
+      onAddAsset(asset);
+      set({ chatBgAssetId: asset.id });
+    } catch (e) {
+      pushToast('error', 'Не удалось загрузить картинку: ' + (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        {current?.blobKey && (
+          <AssetImage
+            blobKey={current.blobKey}
+            className="w-16 h-10 rounded-md object-cover border border-white/15"
+          />
+        )}
+        <button
+          className="btn-ghost !py-1.5 !px-3 text-xs"
+          disabled={busy}
+          onClick={() => fileRef.current?.click()}
+        >
+          {busy
+            ? L('Загружаю…', 'Uploading…')
+            : theme.chatBgAssetId
+              ? L('Заменить картинку', 'Replace image')
+              : L('Своя картинка на фон', 'Custom background image')}
+        </button>
+        {theme.chatBgAssetId && (
+          <button
+            className="btn-ghost !py-1.5 !px-3 text-xs"
+            onClick={() => set({ chatBgAssetId: undefined })}
+          >
+            {L('Убрать', 'Remove')}
+          </button>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void pick(f);
+            e.target.value = '';
+          }}
+        />
+      </div>
+      {theme.chatBgAssetId && (
+        <div className="mt-2">
+          <div className="text-xs text-gray-400 mb-1">
+            {L('Затемнение', 'Dimming')}: {Math.round(theme.chatBgDim * 100)}%
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={0.9}
+            step={0.05}
+            value={theme.chatBgDim}
+            onChange={(e) => set({ chatBgDim: Number(e.target.value) })}
+            className="w-full accent-[var(--pl-accent,#b18cff)]"
+          />
+          <p className="text-[11px] text-gray-500 mt-1">
+            {L(
+              'Картинка тянется на весь экран и не скроллится вместе с текстом. Затемнение — чтобы текст оставался читаемым.',
+              'The image covers the screen and does not scroll with the text. Dimming keeps the text readable.'
+            )}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -212,6 +212,10 @@ export interface AssetMeta {
 export interface AdvancedPromptBlock {
   content: string;
   depth: number; // глубина от конца истории (0 = сразу перед ходом игрока)
+  // В каком режиме вставлять. Пусто — в обоих (так вели себя все блоки раньше).
+  // Разделение нужно потому, что блок, написанный под новеллу (биты, спрайты,
+  // выборы), в текстовом РП тянет ответ обратно к формату новеллы — и наоборот.
+  mode?: NarrativeMode;
 }
 
 // Переиспользуемое подключение: игра / саммари / эмбеддинги / картинки (см. CR v2 §G).
@@ -986,6 +990,13 @@ export interface PlayerTheme {
   // экрана, где применяться: там свой DialogueBox и своя «Окна/панели» поверхность. ---
   // Фон ленты переписки — под сообщениями, не путать с фоном сцены новеллы.
   chatBgColor: string;
+  // Своя картинка на фон ленты. Лежит обычным ассетом проекта (тип 'icon'),
+  // поэтому уезжает вместе с ним при экспорте и копировании.
+  chatBgAssetId?: string;
+  // Затемнение поверх картинки, 0..1. Не украшение: на светлом или пёстром фоне
+  // текст истории читаться перестаёт, а подбирать цвет текста под каждую картинку
+  // — работа, которой не должно быть.
+  chatBgDim: number;
   // Бабл рассказчика — отдельно от общей поверхности «окна/панели» (та же
   // поверхность ещё красит панель ввода и HUD, трогать её ради одного бабла нельзя).
   narratorBubbleColor: string;
@@ -1023,6 +1034,7 @@ export const DEFAULT_PLAYER_THEME: PlayerTheme = {
   spriteOffsetY: 0,
   showMessageNumbers: false,
   chatBgColor: '#000000',
+  chatBgDim: 0.45,
   narratorBubbleColor: '#100d18',
   narratorBubbleOpacity: 0.72,
   userBubbleColor: '#b18cff',
@@ -1061,6 +1073,8 @@ export function normalizePlayerTheme(p: unknown): PlayerTheme {
     spriteOffsetY: numIn(o.spriteOffsetY, 0, -100, 100),
     showMessageNumbers: typeof o.showMessageNumbers === 'boolean' ? o.showMessageNumbers : D.showMessageNumbers,
     chatBgColor: strOr(o.chatBgColor, D.chatBgColor),
+    chatBgAssetId: typeof o.chatBgAssetId === 'string' ? o.chatBgAssetId : undefined,
+    chatBgDim: numIn(o.chatBgDim, D.chatBgDim, 0, 1),
     narratorBubbleColor: strOr(o.narratorBubbleColor, D.narratorBubbleColor),
     narratorBubbleOpacity: numIn(o.narratorBubbleOpacity, D.narratorBubbleOpacity, 0, 1),
     userBubbleColor: strOr(o.userBubbleColor, D.userBubbleColor),

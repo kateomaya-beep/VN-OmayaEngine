@@ -207,7 +207,11 @@ function load(): PresetSettings {
       advancedBlocks: Array.isArray(v.advancedBlocks)
         ? v.advancedBlocks
             .filter((b: any) => b && typeof b.content === 'string')
-            .map((b: any) => ({ content: b.content, depth: num(b.depth, 0) }))
+            .map((b: any) => ({
+              content: b.content,
+              depth: num(b.depth, 0),
+              mode: b.mode === 'rp' || b.mode === 'vn' ? b.mode : undefined,
+            }))
         : [],
     };
   } catch {

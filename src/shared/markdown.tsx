@@ -29,8 +29,13 @@ function inline(escaped: string): string {
     .replace(/&quot;((?:(?!&quot;)[\s\S])*?)&quot;/g, '<span class="md-quote">&quot;$1&quot;</span>');
 }
 
-// Блочный рендер: заголовки #/##/###, списки - / *, цитаты >, абзацы с <br>.
-export function renderMarkdown(text: string): string {
+// Блочный рендер: заголовки #/##/###, списки - / *, цитаты >, абзацы.
+//
+// lineAsParagraph — каждая непустая строка становится ОТДЕЛЬНЫМ абзацем, как в
+// Таверне. Иначе строки внутри абзаца склеиваются через <br>, и текст, который
+// модель разбила одиночными переводами строк (а так делает большинство), приезжал
+// сплошной простынёй: <br> не даёт вертикального отступа, в отличие от абзаца.
+export function renderMarkdown(text: string, opts?: { lineAsParagraph?: boolean }): string {
   const lines = escapeHtml(text).split('\n');
   const out: string[] = [];
   let i = 0;
@@ -45,6 +50,10 @@ export function renderMarkdown(text: string): string {
   };
   const flushPara = (items: string[]) => {
     if (!items.length) return;
+    if (opts?.lineAsParagraph) {
+      for (const it of items) out.push(`<p>${inline(it)}</p>`);
+      return;
+    }
     out.push(`<p>${items.map(inline).join('<br>')}</p>`);
   };
 
@@ -110,13 +119,20 @@ export function Markdown({
   text,
   className,
   style,
+  lineAsParagraph,
 }: {
   text: string;
   className?: string;
   style?: CSSProperties;
+  /** Каждая строка — отдельный абзац (как в Таверне). См. renderMarkdown. */
+  lineAsParagraph?: boolean;
 }) {
   return (
-    <span className={className} style={style} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />
+    <span
+      className={className}
+      style={style}
+      dangerouslySetInnerHTML={{ __html: renderMarkdown(text, { lineAsParagraph }) }}
+    />
   );
 }
 

@@ -12,6 +12,7 @@ import { StateInfobox } from './StateInfobox';
 import { MessageMenu, type MessageMenuItem } from '../../../shared/MessageMenu';
 import { copyToClipboard } from '../../../shared/utils';
 import { loadGlobalTheme } from '../playerTheme';
+import { useAssetUrl } from '../../../shared/ui';
 
 // ЛЕНТА ПЕРЕПИСКИ — экран режима «классический РП».
 //
@@ -61,6 +62,8 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
   // Тот же фолбэк, что и в PlayerPage: у проекта своя тема, а нет — прежняя
   // глобальная (localStorage), чтобы старый выбор не терялся.
   const theme = project?.playerTheme ?? loadGlobalTheme();
+  const bgKey = project?.assets.find((a) => a.id === theme.chatBgAssetId)?.blobKey;
+  const bgUrl = useAssetUrl(bgKey);
 
   // Разбор всей ленты — заметная работа (регэкспы плюс JSON сводки на каждое
   // сообщение), поэтому считаем один раз на изменение истории, а не на каждый кадр
@@ -134,7 +137,16 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
 
   return (
     <div className="absolute inset-0 pt-14 flex flex-col" style={{ background: 'var(--pl-chat-bg)' }}>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-4 py-5">
+      {/* Своя картинка на фон. Отдельным слоем под лентой, а не background у неё:
+          так она не съезжает вместе с прокруткой и не перерисовывается на каждом
+          куске потока. Затемнение — сверху, чтобы текст оставался читаемым. */}
+      {bgUrl && (
+        <div className="absolute inset-0 pointer-events-none" aria-hidden>
+          <img src={bgUrl} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${theme.chatBgDim})` }} />
+        </div>
+      )}
+      <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-3 sm:px-4 py-5">
         <div className="max-w-3xl mx-auto flex flex-col" style={{ gap: 'var(--pl-msg-gap)' }}>
           {history.length === 0 && !s.pendingMove && (
             <p className="text-center text-sm text-gray-500 py-10">
@@ -401,10 +413,19 @@ function Message({
         </div>
       ) : (
         <>
+          {/* md-content ОБЯЗАТЕЛЕН, а не украшение: Tailwind обнуляет отступы у всех
+              элементов, и без этого класса абзацы слипались в сплошную простыню, а
+              заодно молча не работали три настройки оформления — отступ между
+              абзацами, цвет прямой речи и цвет курсива (все они висят на .md-content).
+              lineAsParagraph — разбивка по одиночным переводам строк, как в Таверне. */}
           <Markdown
             text={text}
-            className="block whitespace-pre-wrap text-[color:var(--pl-text)]"
-            style={{ lineHeight: 'var(--pl-line-height)' }}
+            lineAsParagraph
+            className="block md-content text-[color:var(--pl-text)]"
+            style={{
+              lineHeight: 'var(--pl-line-height)',
+              fontSize: 'calc(15px * var(--pl-font-scale, 1))',
+            }}
           />
           {streaming && (
             <span className="inline-block w-1.5 h-4 align-text-bottom ml-0.5 bg-[var(--pl-accent)] animate-pulse" />

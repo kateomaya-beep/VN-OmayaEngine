@@ -1179,7 +1179,12 @@ export async function buildRequest(
       : [...presetMessages.slice(0, historyAt), ...window, ...presetMessages.slice(historyAt)];
 
   // Продвинутые кастомные вставки на заданной глубине от конца (author's note style).
-  const blocks = (ps.advancedBlocks || []).filter((b) => b.content.trim());
+  // Блоки без режима — общие (так вели себя все до появления второго режима);
+  // с режимом — только в своём. Без этого блок, написанный под новеллу, молча
+  // уезжал и в РП и тянул ответ обратно к формату новеллы.
+  const blocks = (ps.advancedBlocks || []).filter(
+    (b) => b.content.trim() && (!b.mode || b.mode === mode)
+  );
   const withMove: LlmMessage[] = [...messages, { role: 'user', content: rx(playerMove, 'user') }];
   for (const b of blocks) {
     const depth = Math.max(0, Math.floor(b.depth));

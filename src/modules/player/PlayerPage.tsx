@@ -263,6 +263,7 @@ export function PlayerPage() {
       <WorkshopPanel
         open={workshopOpen}
         onClose={() => setWorkshopOpen(false)}
+        onAddAsset={(asset) => void s.patchProject((p) => { p.assets = [...p.assets, asset]; })}
         theme={theme}
         onChange={(patch) =>
           s.patchProject((p) => {

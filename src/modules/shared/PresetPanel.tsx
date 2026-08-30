@@ -520,7 +520,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
                 patchAdvBlocks(next);
               }}
             />
-            <div className="w-20">
+            <div className="w-28">
               <label className="label">Глубина</label>
               <input
                 type="number"
@@ -533,6 +533,24 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
                   patchAdvBlocks(next);
                 }}
               />
+              {/* Режим: блок, написанный под новеллу (биты, спрайты, выборы), в
+                  текстовом РП тянет ответ обратно к формату новеллы — и наоборот.
+                  Пусто = в обоих, как вели себя все блоки до появления режимов. */}
+              <label className="label mt-1">Режим</label>
+              <select
+                className="input !py-1 text-xs"
+                value={b.mode ?? ''}
+                onChange={(e) => {
+                  const next = [...(cfg.advancedBlocks || [])];
+                  const v = e.target.value;
+                  next[i] = { ...next[i], mode: v === 'vn' || v === 'rp' ? v : undefined };
+                  patchAdvBlocks(next);
+                }}
+              >
+                <option value="">оба</option>
+                <option value="vn">🎭 новелла</option>
+                <option value="rp">💬 РП</option>
+              </select>
               <button
                 className="btn-danger !px-2 !py-1 text-xs mt-1 w-full"
                 onClick={() => patchAdvBlocks((cfg.advancedBlocks || []).filter((_, j) => j !== i))}
