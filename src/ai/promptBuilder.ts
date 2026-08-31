@@ -996,14 +996,24 @@ export async function buildRequest(
 
   // Авторитетная длина хода (ползунок/ввод в пресете) — переопределяет любые числа
   // в тексте блоков. Ставим последней в системном промпте, чтобы имела приоритет.
-  // ТОЛЬКО новелла: язык про биты/characterId/спрайты не имеет смысла в РП, где ответ
-  // — обычная проза, а не JSON-массив бит.
+  //
+  // Вариантов ДВА, и это не косметика. Одно время в РП этой директивы не было вовсе
+  // (её сняли вместе с языком про биты, characterId и спрайты — в РП ответ обычная
+  // проза, и биты там ни при чём), а от длины оставалась одна строка-напоминание в
+  // хвосте. Строка проигрывала пресету: «write a substantial reply», «let scenes
+  // breathe» звучат авторитетнее вежливого «stay within», и ход выходил одинаково
+  // средним, куда бы ни двигали ползунок. Поэтому в РП стоит своя директива — с тем
+  // же весом, что в новелле, но про абзацы прозы вместо бит.
   const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
-  if (mode !== 'rp') {
-    systemParts.push(
-      `TURN LENGTH & BEAT SIZE (authoritative — overrides any other length/beat guidance above): land the turn WITHIN ${tl.min}–${tl.max} words TOTAL — that is the target, do NOT overshoot it; once you reach a natural pause inside the range, stop rather than padding. Split the turn into medium beats: each beat a readable 1–3 sentence chunk (a short paragraph) — never a wall of text, never a bare one-liner. Fill the range with the NUMBER of medium beats, not by inflating any single beat. Keep a real mix of dialogue and narration: characters who are present must actually SPEAK — emit "dialogue" beats with that character's characterId (a dialogue beat with a valid characterId is what puts the character's sprite on screen), interleaved with narration/thought.`
-    );
-  }
+  systemParts.push(
+    mode === 'rp'
+      ? `TURN LENGTH (authoritative — this OVERRIDES every other length, pacing or "let it breathe" instruction above, including anything in the preset asking for a substantial or immersive reply): land the turn WITHIN ${tl.min}–${tl.max} words of story TOTAL.
+- ${tl.max} is a hard ceiling. Reaching a natural pause inside the range and stopping there is correct; padding to fill the range is not.
+- ${tl.min} is a real floor, not a suggestion. Under it, the scene has not been given its room — add another beat that MOVES something (someone acts, something is revealed, the situation shifts). Never pad with restatement, extra adjectives, or a summary of the mood.
+- Fill the range with the NUMBER of paragraphs, not by inflating any single one.
+- This range is the author's setting for how this story is played. A short range means fast exchanges and that is intended; a long one means a full scene. Do not "correct" it toward what feels like a normal reply length.`
+      : `TURN LENGTH & BEAT SIZE (authoritative — overrides any other length/beat guidance above): land the turn WITHIN ${tl.min}–${tl.max} words TOTAL — that is the target, do NOT overshoot it; once you reach a natural pause inside the range, stop rather than padding. Split the turn into medium beats: each beat a readable 1–3 sentence chunk (a short paragraph) — never a wall of text, never a bare one-liner. Fill the range with the NUMBER of medium beats, not by inflating any single beat. Keep a real mix of dialogue and narration: characters who are present must actually SPEAK — emit "dialogue" beats with that character's characterId (a dialogue beat with a valid characterId is what puts the character's sprite on screen), interleaved with narration/thought.`
+  );
   // Частота выборов. По умолчанию (gap = 0) выборы обязательны КАЖДЫЙ ход — иначе
   // игрок упирается в экран без вариантов. Ползунок в пресете (gap > 0) — осознанный
   // отказ пользователя от этого: тогда просим модель придерживать выборы.

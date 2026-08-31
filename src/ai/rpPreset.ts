@@ -211,7 +211,8 @@ NOTHING ELSE IN THE REPLY
     b(
       'rp_style',
       '✎ Style / Tone',
-      `Match the project's genre and tone. Write a substantial reply — a real stretch of scene, not two lines — and keep the pacing adaptive: long and immersive when the scene has room, tighter when the exchange is fast.`
+      `Match the project's genre and tone.
+Pacing is adaptive WITHIN the length the engine sets for this story: nearer the top of that range when the scene has room, nearer the bottom when the exchange is fast and physical. Never past either end — the engine's turn length is the author's decision about how this story is played, and it outranks any instinct for how long a reply "should" be.`
     ),
     // Пустые слоты под усмотрение пользователя. Пусто = ничего не отправляется.
     b('jailbreak', '🔓 Jailbreak (свой)', ''),
@@ -263,6 +264,10 @@ export const RP_OUTDATED_SIGNATURES: BuiltinSignature[] = [
   // Идентичность с третьим лицом по умолчанию — прямо противоречит правилу второго
   // лица в блоке форматирования, и модель выбирала то одно, то другое.
   { key: 'rp_identity', signature: 'POV and tense: match whatever the story is already written in' },
+  // Стиль, ТРЕБОВАВШИЙ «substantial reply». Пока в РП не было авторитетной директивы
+  // длины, эта строка была самой уверенной фразой про объём во всём запросе — и ход
+  // выходил одинаково средним при любом положении ползунка.
+  { key: 'rp_style', signature: 'Write a substantial reply — a real stretch of scene' },
   // Пометки хода без явного разбора форматирования ВВОДА игрока (обычный текст —
   // речь, курсив — мысль/действие) и без прямой отсылки к тому, что мысли игрока
   // персонажам не слышны.

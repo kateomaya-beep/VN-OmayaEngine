@@ -346,15 +346,35 @@ export const usePresetSettings = create<PresetStore>((set) => ({
       current.modelProfile === 'universal'
         ? (Object.fromEntries(PROFILE_KEYS.map((k) => [k, current[k]])) as Partial<PresetSettings>)
         : current.cloudBackup;
-    // Отложенное накатываем ПЕРЕД профильным всегда, а не только при возврате:
-    // иначе профили наслаивались бы друг на друга — переход deepseek → local
-    // оставлял бы висеть штрафы за повтор, которых в локальном профиле нет.
-    const base = { ...current, ...(backup ?? {}), ...PROFILE_DEFAULTS[profile] };
+    // Отложенное накатываем ПЕРЕД профильным — иначе профили наслаивались бы друг
+    // на друга: переход deepseek → local оставлял бы висеть штрафы за повтор,
+    // которых в локальном профиле нет.
+    //
+    // Но накатываем НЕ ЦЕЛИКОМ, а только то, что подменял ПОКИДАЕМЫЙ профиль. Иначе
+    // смена профиля откатывала и то, чего профили не касаются: выставил длину хода
+    // «полотно», сходил в другой профиль и обратно — и она молча вернулась к
+    // отложенной. Со стороны это выглядит как «настройка не работает, ход всегда
+    // одинаковый», и найти причину невозможно: поле в панели показывает уже
+    // откаченное значение.
+    const leaving = PROFILE_DEFAULTS[current.modelProfile];
+    const restore = Object.fromEntries(
+      Object.keys(leaving)
+        .filter((k) => backup && k in backup)
+        .map((k) => [k, (backup as any)[k]])
+    ) as Partial<PresetSettings>;
+    const base = { ...current, ...restore, ...PROFILE_DEFAULTS[profile] };
+    // Отложенное тоже подтягиваем: поля, которые покидаемый профиль НЕ подменял,
+    // пользователь правил сам — значит это и есть его значение, и вернуть его при
+    // следующем возврате надо именно таким.
+    const ownEdits = Object.fromEntries(
+      PROFILE_KEYS.filter((k) => !(k in leaving)).map((k) => [k, current[k]])
+    ) as Partial<PresetSettings>;
+    const nextBackup = backup ? { ...backup, ...ownEdits } : backup;
     current = {
       ...base,
       modelProfile: profile,
       localMode: profile === 'local',
-      cloudBackup: profile === 'universal' ? undefined : backup,
+      cloudBackup: profile === 'universal' ? undefined : nextBackup,
     };
     localStorage.setItem(LS_KEY, JSON.stringify(current));
     set({ settings: current });
