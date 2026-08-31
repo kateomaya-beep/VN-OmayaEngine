@@ -70,11 +70,16 @@ export function ConstructorPage() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
-      <div className="flex items-center gap-3 mb-4">
+      {/* На телефоне этот ряд не помещался в ширину: «Назад», заголовок, ярлык
+          режима, «сохранено» и «Играть» в одну строку — это ~500 px, и «Играть»
+          уезжала за край экрана вместе с остальной страницей (появлялась
+          горизонтальная прокрутка). Поэтому ряд переносится, а распорка
+          flex-1 работает только когда всё встало в одну строку. */}
+      <div className="flex items-center gap-2 sm:gap-3 mb-4 flex-wrap">
         <button className="btn-ghost !px-3 !py-1.5" onClick={() => nav('/library')}>
           {tr('constructor.back')}
         </button>
-        <h1 className="text-xl font-bold truncate">{project.meta.title}</h1>
+        <h1 className="text-lg sm:text-xl font-bold truncate min-w-0 flex-1 sm:flex-none">{project.meta.title}</h1>
         {/* Ярлык режима, не переключатель: у проекта он один и меняется только
             адаптацией (копией) из библиотеки. */}
         <span
@@ -87,12 +92,12 @@ export function ConstructorPage() {
         >
           {rp ? L('💬 Классический РП', '💬 Classic RP') : L('🎭 Визуальная новелла', '🎭 Visual novel')}
         </span>
-        <span className="flex-1" />
-        <span className="text-xs text-gray-500">
+        <span className="hidden sm:block flex-1" />
+        <span className="text-xs text-gray-500 ml-auto sm:ml-0">
           {dirty ? tr('constructor.saving') : tr('constructor.saved')}
         </span>
         <button
-          className="btn-primary"
+          className="btn-primary shrink-0"
           disabled={errors.length > 0}
           onClick={async () => {
             await persist();

@@ -14,8 +14,13 @@ import type { Project } from '../shared/types';
 
 // Единая постоянная верхняя панель. Неоново-стеклянный дизайн (см. импорт дизайна
 // «VN Engine Library»). Вместо текста — иконки с подсказками на выбранном языке.
-// Иконки: слева-направо — Пресет · API · [в игре: Game Master · Расширения] ·
-// Логи · Язык. Смена темы убрана; Game Master доступен ТОЛЬКО в плеере.
+//
+// НА ПАНЕЛИ — только то, что открывают часто: режим, Пресет, API и (в игре)
+// Game Master. Всё остальное — в одном меню ☰: сначала пункты игры (их отдаёт
+// плеер через menuItems), потом Расширения, Логи и Язык. Раньше меню было два —
+// «шестерёнчатый» ряд иконок и отдельный бургер игры, — и на телефоне ряд из семи
+// кнопок плюс логотип просто не помещался в ширину экрана: на 360 px он вылезал
+// за край, а на аппаратах со скруглёнными углами крайняя кнопка ещё и срезалась.
 
 const ICON_STROKE = '#d6cdf0';
 
@@ -56,43 +61,29 @@ const Icons = {
       <circle cx="14.6" cy="11.4" r="0.95" fill={ICON_STROKE} />
     </Svg>
   ),
-  ext: (
-    <Svg>
-      <rect x="3.3" y="3.3" width="5.4" height="5.4" rx="1.6" stroke={ICON_STROKE} strokeWidth="1.4" />
-      <rect x="11.3" y="3.3" width="5.4" height="5.4" rx="1.6" stroke={ICON_STROKE} strokeWidth="1.4" />
-      <rect x="3.3" y="11.3" width="5.4" height="5.4" rx="1.6" stroke={ICON_STROKE} strokeWidth="1.4" />
-      <rect x="11.3" y="11.3" width="5.4" height="5.4" rx="1.6" stroke={ICON_STROKE} strokeWidth="1.4" />
-    </Svg>
-  ),
-  logs: (
-    <Svg>
-      <path
-        d="M6 2.5h5.5L15 6v11.5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Z"
-        stroke={ICON_STROKE}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path d="M8 10h4M8 13h4" stroke={ICON_STROKE} strokeWidth="1.4" strokeLinecap="round" />
-    </Svg>
-  ),
-  lang: (
-    <Svg>
-      <path
-        d="M3 5h7M6.5 3.3v1.9M4.3 5c0 3.6 2.1 5.9 4.7 7M8.7 5c-.6 3.1-2.7 5.8-5.7 7.2"
-        stroke={ICON_STROKE}
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <path
-        d="m12 17 2.6-6.6L17.2 17M12.9 14.6h3.4"
-        stroke={ICON_STROKE}
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Svg>
-  ),
 };
+
+// Пункт выпадающего меню. Живёт здесь, а не в плеере: меню одно на всё
+// приложение, и пункты в него кладут с двух сторон.
+export function MenuItem({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-[rgba(160,110,255,0.16)] text-left"
+    >
+      <span className="w-5 text-center">{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
 
 function IconBtn({
   title,
@@ -130,6 +121,7 @@ export function TopBar({
   onPatchProject,
   left,
   menuSlot,
+  menuItems,
   right,
 }: {
   variant?: 'app' | 'player';
@@ -137,6 +129,8 @@ export function TopBar({
   onPatchProject?: (mutator: (p: Project) => void) => void;
   left?: ReactNode;
   menuSlot?: ReactNode;
+  /** Пункты, которые уходят В НАЧАЛО общего меню ☰ (плеер кладёт сюда игровые). */
+  menuItems?: ReactNode;
   right?: ReactNode;
 }) {
   const container =
@@ -145,8 +139,11 @@ export function TopBar({
       : 'sticky top-0 z-20 bg-[rgba(18,16,28,0.55)] backdrop-blur-xl border-b border-[rgba(180,150,255,0.14)] shadow-[0_1px_20px_rgba(140,90,255,0.06)]';
 
   return (
-    <header className={container}>
-      <div className="max-w-6xl mx-auto px-4 sm:px-5 h-14 flex items-center gap-3">
+    // inset-t-safe / inset-x-safe — вырез и скруглённые углы телефона: страница
+    // рисуется под ними (viewport-fit=cover), и без отступа крайняя кнопка панели
+    // уезжает под скругление.
+    <header className={`${container} inset-t-safe inset-x-safe`}>
+      <div className="max-w-6xl mx-auto px-3 sm:px-5 h-14 flex items-center gap-2 sm:gap-3 min-w-0">
         <Link to="/library" className="flex items-center gap-2.5 shrink-0 group">
           <span className="w-9 h-9 rounded-[11px] flex items-center justify-center shrink-0 bg-[rgba(150,110,255,0.12)] border border-[rgba(180,150,255,0.35)] shadow-[0_0_16px_rgba(160,110,255,0.35),inset_0_0_10px_rgba(180,150,255,0.12)]">
             <svg width="19" height="19" viewBox="0 0 20 20" fill="none">
@@ -160,7 +157,10 @@ export function TopBar({
               <path d="M4 6.1V13.9" stroke="#d3b8ff" strokeWidth="1.1" strokeLinecap="round" />
             </svg>
           </span>
-          <span className="flex flex-col leading-none">
+          {/* Словесный логотип прячем на узком экране: на 360 px он занимал почти
+              половину ширины, и ряд кнопок уезжал за край — именно из-за него,
+              а не из-за числа кнопок. Значок остаётся и остаётся ссылкой домой. */}
+          <span className="hidden sm:flex flex-col leading-none">
             <span className="font-brand font-extrabold text-[16px] tracking-[0.2px] text-[#f5f2fc]">
               VN Studio
             </span>
@@ -170,9 +170,14 @@ export function TopBar({
           </span>
         </Link>
         {left}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
           {menuSlot}
-          <TopBarControls variant={variant} project={project} onPatchProject={onPatchProject} />
+          <TopBarControls
+            variant={variant}
+            project={project}
+            onPatchProject={onPatchProject}
+            menuItems={menuItems}
+          />
           {right}
         </div>
       </div>
@@ -184,10 +189,12 @@ export function TopBarControls({
   variant = 'app',
   project,
   onPatchProject,
+  menuItems,
 }: {
   variant?: 'app' | 'player';
   project?: Project | null;
   onPatchProject?: (mutator: (p: Project) => void) => void;
+  menuItems?: ReactNode;
 }) {
   const { lang, setLang } = useLang();
   const L = (ru: string, en: string) => (lang === 'en' ? en : ru);
@@ -196,6 +203,7 @@ export function TopBarControls({
   const [presetOpen, setPresetOpen] = useState(false);
   const [gmOpen, setGmOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const errorCount = useLogs((s) => s.logs.reduce((n, l) => n + (l.level === 'error' ? 1 : 0), 0));
   const mode = useAppMode((s) => s.mode);
   const setMode = useAppMode((s) => s.setMode);
@@ -203,15 +211,6 @@ export function TopBarControls({
   const other: NarrativeMode = mode === 'rp' ? 'vn' : 'rp';
 
   const inPlayer = variant === 'player';
-
-  const langBtn = (
-    <IconBtn
-      title={L(`Язык интерфейса: ${lang === 'ru' ? 'сменить на English' : 'switch to Русский'}`, `UI language: switch to ${lang === 'en' ? 'Русский' : 'English'}`)}
-      onClick={() => setLang(lang === 'ru' ? 'en' : 'ru')}
-    >
-      {Icons.lang}
-    </IconBtn>
-  );
 
   // Режим приложения — первым в ряду, потому что от него зависит смысл всего
   // остального: какая библиотека, какой конструктор, какой пресет уйдёт в запрос.
@@ -239,10 +238,9 @@ export function TopBarControls({
   return (
     <>
       {modeBtn}
-      {/* Порядок app: Пресет · API · Логи · Язык.
-          Порядок player: Язык · Пресет · API · GM · Расширения · Логи (бургер идёт
-          последним из PlayerPage) — язык и бургер переставлены местами (импорт «VN Player»). */}
-      {inPlayer && langBtn}
+      {/* На панели остаются только частые: Пресет · API · [в игре Game Master].
+          Редкие (Расширения, Логи, Язык) ушли в меню ☰ — вместе с игровыми
+          пунктами, которые кладёт плеер. */}
       <IconBtn title={L('Пресет промпта', 'Prompt preset')} onClick={() => setPresetOpen(true)}>
         {Icons.preset}
       </IconBtn>
@@ -250,19 +248,55 @@ export function TopBarControls({
         {Icons.api}
       </IconBtn>
       {inPlayer && (
-        <>
-          <IconBtn title={L('Game Master', 'Game Master')} onClick={() => setGmOpen(true)}>
-            {Icons.gm}
-          </IconBtn>
-          <IconBtn title={L('Расширения', 'Extensions')} onClick={() => setExtOpen(true)}>
-            {Icons.ext}
-          </IconBtn>
-        </>
+        <IconBtn title={L('Game Master', 'Game Master')} onClick={() => setGmOpen(true)}>
+          {Icons.gm}
+        </IconBtn>
       )}
-      <IconBtn title={L('Логи (события и ошибки)', 'Logs (events & errors)')} onClick={() => setLogsOpen(true)} badge={errorCount}>
-        {Icons.logs}
-      </IconBtn>
-      {!inPlayer && langBtn}
+
+      {/* ОБЩЕЕ МЕНЮ. Счётчик ошибок переехал сюда с кнопки логов: сами логи внутри,
+          но знать, что там ошибка, надо не открывая меню. */}
+      <div className="relative">
+        <IconBtn
+          title={L('Меню', 'Menu')}
+          onClick={() => setMenuOpen((v) => !v)}
+          badge={errorCount}
+        >
+          <span className="text-[15px] leading-none text-[#e5deF7]">☰</span>
+        </IconBtn>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+            <div
+              className="absolute right-0 mt-1.5 z-40 w-56 max-w-[calc(100vw-1.5rem)] rounded-[14px] py-1.5 text-sm bg-[rgba(16,13,24,0.92)] border border-[rgba(180,150,255,0.2)] shadow-[0_20px_60px_rgba(0,0,0,0.6)] backdrop-blur-xl"
+              onClick={() => setMenuOpen(false)}
+            >
+              {menuItems}
+              {menuItems && <div className="my-1 border-t border-white/10" />}
+              {inPlayer && (
+                <MenuItem
+                  icon="🧩"
+                  label={L('Расширения', 'Extensions')}
+                  onClick={() => setExtOpen(true)}
+                />
+              )}
+              <MenuItem
+                icon="📋"
+                label={
+                  errorCount > 0
+                    ? L(`Логи (ошибок: ${errorCount})`, `Logs (${errorCount} errors)`)
+                    : L('Логи', 'Logs')
+                }
+                onClick={() => setLogsOpen(true)}
+              />
+              <MenuItem
+                icon="🌐"
+                label={lang === 'ru' ? 'Язык: Русский → English' : 'Language: English → Русский'}
+                onClick={() => setLang(lang === 'ru' ? 'en' : 'ru')}
+              />
+            </div>
+          </>
+        )}
+      </div>
 
       <ConnectionPanel open={connOpen} onClose={() => setConnOpen(false)} />
       <PresetPanel open={presetOpen} onClose={() => setPresetOpen(false)} />

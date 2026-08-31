@@ -74,7 +74,7 @@ export function DialogueBox({
   const isThought = beat.type === 'thought';
 
   return (
-    <div className="px-4 sm:px-6 cursor-pointer select-none" onClick={handleClick}>
+    <div className="px-4 sm:px-6 inset-x-safe cursor-pointer select-none" onClick={handleClick}>
       <div className="max-w-4xl mx-auto">
         {speaker && (
           <div

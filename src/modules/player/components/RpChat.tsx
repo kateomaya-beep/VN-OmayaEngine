@@ -136,7 +136,10 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
   const swipeAt = last?.swipe ?? 0;
 
   return (
-    <div className="absolute inset-0 pt-14 flex flex-col" style={{ background: 'var(--pl-chat-bg)' }}>
+    <div
+      className="absolute inset-0 flex flex-col"
+      style={{ background: 'var(--pl-chat-bg)', paddingTop: 'var(--topbar-h)' }}
+    >
       {/* Своя картинка на фон. Отдельным слоем под лентой, а не background у неё:
           так она не съезжает вместе с прокруткой и не перерисовывается на каждом
           куске потока. Затемнение — сверху, чтобы текст оставался читаемым. */}
@@ -146,7 +149,7 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
           <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${theme.chatBgDim})` }} />
         </div>
       )}
-      <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-3 sm:px-4 py-5">
+      <div ref={scrollRef} className="relative flex-1 overflow-y-auto px-3 sm:px-4 py-5 inset-x-safe">
         <div className="max-w-3xl mx-auto flex flex-col" style={{ gap: 'var(--pl-msg-gap)' }}>
           {history.length === 0 && !s.pendingMove && (
             <p className="text-center text-sm text-gray-500 py-10">

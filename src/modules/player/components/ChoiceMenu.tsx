@@ -16,7 +16,7 @@ export function ChoiceMenu({
 }) {
   if (!choices.length) return null;
   return (
-    <div className="px-4 sm:px-6">
+    <div className="px-4 sm:px-6 inset-x-safe">
       <div className="max-w-2xl mx-auto flex flex-col gap-2">
         {choices.map((c) => {
           // Метка стоимости: для баланса телефона — валюта; иначе — имя стата.

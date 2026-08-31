@@ -50,7 +50,7 @@ export function Console({
     'text-[#d6cdf0] bg-white/[0.04] border-[rgba(180,150,255,0.22)] hover:bg-[var(--pl-accent-soft)] hover:border-[rgba(190,150,255,0.5)]';
 
   return (
-    <div className="bg-[var(--pl-bubble-bg)] backdrop-blur-lg border-t border-[rgba(180,150,255,0.14)] px-3 sm:px-4 pt-3 pb-4">
+    <div className="bg-[var(--pl-bubble-bg)] backdrop-blur-lg border-t border-[rgba(180,150,255,0.14)] px-3 sm:px-4 pt-3 pb-safe inset-x-safe">
       <div className="max-w-4xl mx-auto flex items-end gap-2.5">
         <button
           className={`${iconBtn} ${iconIdle}`}

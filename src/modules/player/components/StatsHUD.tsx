@@ -54,7 +54,7 @@ export function StatsHUD({
   if (!hasCal && visible.length === 0) return null;
 
   return (
-    <div className="absolute top-16 left-3 right-3 z-10 flex flex-col gap-2 items-start">
+    <div className="absolute top-[calc(var(--topbar-h)+0.5rem)] left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] z-10 flex flex-col gap-2 items-start">
       {hasCal && (
         <div className={`${PILL} gap-2 pl-2.5 pr-3 py-1.5 max-w-full`}>
           {leftText && (

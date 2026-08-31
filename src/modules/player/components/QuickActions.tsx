@@ -71,7 +71,7 @@ export function QuickActions({ open, onClose }: { open: boolean; onClose: () => 
 
   return (
     <div
-      className="absolute top-14 right-3 z-30 w-80 glass-panel p-4"
+      className="absolute top-[var(--topbar-h)] right-[max(0.75rem,env(safe-area-inset-right))] z-30 w-80 max-w-[calc(100vw-1.5rem)] glass-panel p-4"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between mb-3">

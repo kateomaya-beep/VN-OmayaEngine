@@ -32,7 +32,7 @@ export function AppLayout() {
         />
       </div>
       <TopBar variant="app" project={project} onPatchProject={update} />
-      <main className="flex-1 relative z-[1]">
+      <main className="flex-1 relative z-[1] inset-x-safe">
         <Outlet />
       </main>
     </div>

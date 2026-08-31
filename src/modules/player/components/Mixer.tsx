@@ -11,7 +11,7 @@ export function Mixer({ open, onClose }: { open: boolean; onClose: () => void })
 
   return (
     <div
-      className="absolute top-14 right-3 z-30 w-72 glass-panel p-4"
+      className="absolute top-[var(--topbar-h)] right-[max(0.75rem,env(safe-area-inset-right))] z-30 w-72 max-w-[calc(100vw-1.5rem)] glass-panel p-4"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between mb-3">

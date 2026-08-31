@@ -2,6 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ЭКРАНЫ С ВЫРЕЗОМ И СКРУГЛЁННЫМИ УГЛАМИ.
+   В index.html стоит viewport-fit=cover — страница намеренно рисуется во весь
+   экран, под «чёлку» и под скругления. Плата за это: всё, что прижато к краю,
+   физически срезается углом корпуса. Отсюда классы ниже — они ДОБАВЛЯЮТ отступ
+   ровно на величину выреза (0 на обычном экране), поэтому их вешают на обёртки,
+   у которых своих горизонтальных отступов нет: свой padding и системный тогда
+   складываются, а не спорят за одно свойство.
+   --topbar-h — высота верхней панели вместе с верхним вырезом: на неё
+   отступает контент, который лежит ПОД абсолютной панелью плеера. */
+:root {
+  --topbar-h: calc(3.5rem + env(safe-area-inset-top));
+}
+
+.inset-x-safe {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.inset-t-safe {
+  padding-top: env(safe-area-inset-top);
+}
+.inset-b-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* Нижняя панель ввода: свой отступ 1rem плюс полоса-«домой». */
+.pb-safe {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+}
+
 /* Тема приложения (см. CR v2 §H.3) — переключается src/shared/theme.ts через
    [data-theme] на <html>. Игровая сцена плеера намеренно остаётся тёмной (см.
    theme.ts) — это иммерсивный экран поверх пользовательского арта, не UI-хром. */

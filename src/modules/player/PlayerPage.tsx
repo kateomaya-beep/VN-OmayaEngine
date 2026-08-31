@@ -24,7 +24,7 @@ import { AssistantPanel } from './components/AssistantPanel';
 import { themeVars, ensureFontLink, loadGlobalTheme } from './playerTheme';
 import { useT } from '../../shared/i18n';
 import { useGlobalNotes } from '../../shared/globalNotes';
-import { TopBar } from '../../app/TopBar';
+import { TopBar, MenuItem } from '../../app/TopBar';
 import { useAppMode } from '../../app/appMode';
 
 type Setup = 'launch' | 'play';
@@ -41,7 +41,6 @@ export function PlayerPage() {
   const [genOpen, setGenOpen] = useState(false);
   const [cgStudioOpen, setCgStudioOpen] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [workshopOpen, setWorkshopOpen] = useState(false);
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
@@ -112,46 +111,33 @@ export function PlayerPage() {
         variant="player"
         project={s.project}
         onPatchProject={s.patchProject}
-        right={
-          <div className="relative">
-            <button
-              className="w-[34px] h-[34px] rounded-[10px] flex items-center justify-center text-[#e5deF7] transition-colors bg-white/[0.04] border border-[rgba(180,150,255,0.22)] hover:bg-[rgba(160,110,255,0.16)] hover:border-[rgba(190,150,255,0.55)] hover:shadow-[0_0_12px_rgba(170,120,255,0.35)]"
-              title="Меню игры"
-              onClick={() => setMenuOpen((v) => !v)}
-            >
-              ☰
-            </button>
-            {menuOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-                <div
-                  className="absolute right-0 mt-1.5 z-40 w-52 rounded-[14px] py-1.5 text-sm bg-[rgba(16,13,24,0.92)] border border-[rgba(180,150,255,0.2)] shadow-[0_20px_60px_rgba(0,0,0,0.6)] backdrop-blur-xl"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  {/* Отношения/память/история переехали в Game Master (🎮) на верхней панели. */}
-                  <MenuItem icon="📜" label="История" onClick={() => setPanel('history')} />
-                  <MenuItem icon="💾" label={t('player.saves')} onClick={() => setPanel('saves')} />
-                  {!rp && <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />}
-                  {/* Спрайты, фоны, музыка и телефон живут в сцене — в текстовом
-                      режиме их попросту некуда показать. */}
-                  {!rp && <MenuItem icon="👗" label="Гардероб" onClick={() => setWardrobeOpen(true)} />}
-                  <MenuItem icon="🎨" label="Оформление" onClick={() => setWorkshopOpen(true)} />
-                  <MenuItem icon="🪄" label="Ассистент" onClick={() => setAssistantOpen(true)} />
-                  {!rp && <MenuItem icon="🎬" label="CG-студия" onClick={() => setCgStudioOpen(true)} />}
-                  {!rp && <MenuItem icon="📱" label="Телефон" onClick={() => setPhoneOpen(true)} />}
-                  {!rp && <MenuItem icon="🖼" label="Генерация фонов" onClick={() => setGenOpen((v) => !v)} />}
-                  <MenuItem icon="✎" label="Правка в игре" onClick={() => setPanel('edit')} />
-                  {/* В РП перегенерация не выбрасывает прошлый ответ, а добавляет
-                      вариант — прошлый остаётся, между ними можно ходить стрелками. */}
-                  <MenuItem
-                    icon="↻"
-                    label={rp ? 'Ещё вариант ответа' : t('player.regen')}
-                    onClick={() => (rp ? s.addSwipe() : s.regenerate())}
-                  />
-                </div>
-              </>
-            )}
-          </div>
+        // Игровые пункты уходят в ОБЩЕЕ меню панели, а не в свой отдельный бургер:
+        // двух меню рядом на телефоне не помещалось, да и разделение «настройки
+        // движка / действия игры» пользователю ничего не давало — он ищет пункт,
+        // а не ведомство.
+        menuItems={
+          <>
+            {/* Отношения/память/история переехали в Game Master (🎮) на верхней панели. */}
+            <MenuItem icon="📜" label="История" onClick={() => setPanel('history')} />
+            <MenuItem icon="💾" label={t('player.saves')} onClick={() => setPanel('saves')} />
+            {!rp && <MenuItem icon="🔊" label={t('player.mixer')} onClick={() => setMixerOpen((v) => !v)} />}
+            {/* Спрайты, фоны, музыка и телефон живут в сцене — в текстовом
+                режиме их попросту некуда показать. */}
+            {!rp && <MenuItem icon="👗" label="Гардероб" onClick={() => setWardrobeOpen(true)} />}
+            <MenuItem icon="🎨" label="Оформление" onClick={() => setWorkshopOpen(true)} />
+            <MenuItem icon="🪄" label="Ассистент" onClick={() => setAssistantOpen(true)} />
+            {!rp && <MenuItem icon="🎬" label="CG-студия" onClick={() => setCgStudioOpen(true)} />}
+            {!rp && <MenuItem icon="📱" label="Телефон" onClick={() => setPhoneOpen(true)} />}
+            {!rp && <MenuItem icon="🖼" label="Генерация фонов" onClick={() => setGenOpen((v) => !v)} />}
+            <MenuItem icon="✎" label="Правка в игре" onClick={() => setPanel('edit')} />
+            {/* В РП перегенерация не выбрасывает прошлый ответ, а добавляет
+                вариант — прошлый остаётся, между ними можно ходить стрелками. */}
+            <MenuItem
+              icon="↻"
+              label={rp ? 'Ещё вариант ответа' : t('player.regen')}
+              onClick={() => (rp ? s.addSwipe() : s.regenerate())}
+            />
+          </>
         }
       />
 
@@ -285,22 +271,3 @@ export function PlayerPage() {
   );
 }
 
-function MenuItem({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: string;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-[rgba(160,110,255,0.16)] text-left"
-    >
-      <span className="w-5 text-center">{icon}</span>
-      <span>{label}</span>
-    </button>
-  );
-}
