@@ -147,6 +147,15 @@ function defaults(): PresetSettings {
     contextBudget: 80000,
     turnLength: { ...DEFAULT_TURN_LENGTH },
     choiceMinGap: 0,
+    // Глубина размышления по умолчанию — «выкл», а НЕ «авто». Разница не
+    // косметическая: «авто» = не слать параметр вовсе, а у моделей, которые думают
+    // всегда (Gemini 3, GLM-5.x, Kimi), это означает их собственный дефолт —
+    // среднюю или максимальную глубину. То есть ход обдумывается по минуте, на
+    // экране при этом пусто: мысли такие шлюзы наружу не отдают. Для длинной
+    // прозы каждый ход это почти никогда не то, что нужно, а кому нужно — ступень
+    // выбирается в панели явно. Само значение 'none' движок дальше приводит к
+    // ближайшей ДОПУСТИМОЙ для конкретной модели ступени (см. effortFor).
+    reasoningEffort: 'none',
     guidedThinking: false,
     advancedBlocks: [],
   };
@@ -198,9 +207,12 @@ function load(): PresetSettings {
         : num(v.contextBudget, d.contextBudget),
       turnLength: v.turnLength ? normalizeTurnLength(v.turnLength) : d.turnLength,
       choiceMinGap: Math.max(0, Math.min(20, Math.round(num(v.choiceMinGap, 0)))),
+      // Ключа нет (настройки сохранены до появления дефолта) — берём 'none', а не
+      // undefined: undefined означает «не слать параметр», и на всегда думающих
+      // моделях это самый медленный из возможных режимов.
       reasoningEffort: ['none', 'low', 'medium', 'high', 'max'].includes(v.reasoningEffort)
         ? v.reasoningEffort
-        : undefined,
+        : d.reasoningEffort,
       guidedThinking: !!v.guidedThinking,
       // План размышления: если лежит РОВНО прежний дефолт — автор его не писал, он
       // просто сохранился при открытии панели; обновляем на новый чек-лист. Всё,

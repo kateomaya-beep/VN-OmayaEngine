@@ -3,7 +3,8 @@ import { Modal } from '../../shared/ui';
 import { ApiConnectionField } from '../constructor/editors/ApiConnectionField';
 import { useConnection } from '../../ai/connection';
 import { useConnectionPresets } from '../../ai/connectionPresets';
-import { isProxyActive } from '../../ai/providers';
+import { isProxyActive, forgetLearnedModelQuirks } from '../../ai/providers';
+import { pushToast } from '../../shared/toast';
 
 // Глобальное основное подключение к LLM (Batch 3 §2): единый источник истины для
 // всей игровой генерации, не на проект. Живёт в верхней панели везде.
@@ -124,6 +125,30 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
         keyRole={connection.provider}
         onChange={(conn) => setConnection(conn)}
       />
+
+      {/* Движок сам подстраивается под капризы модели — не приняла глубину
+          размышления, не приняла префилл — и ЗАПОМИНАЕТ это, чтобы не платить
+          лишним кругом запросов каждый ход. Обратная сторона: одна неудачная
+          догадка залипает навсегда, и со стороны это выглядит как «модель вдруг
+          стала думать по минуте». Кнопка — выход из такого состояния. */}
+      <div className="mt-4 pt-3 border-t border-white/10">
+        <button
+          className="btn-ghost !px-3 !py-1 text-xs"
+          onClick={() => {
+            forgetLearnedModelQuirks();
+            pushToast('success', 'Выученное про модели сброшено — движок определит их заново.');
+          }}
+        >
+          Забыть выученное про модели
+        </button>
+        <p className="text-[11px] text-gray-500 mt-1.5">
+          Движок запоминает, что именно ваш шлюз не принял у конкретной модели (глубину
+          размышления, префилл, поле гашения думалки), — чтобы не тратить лишний запрос на
+          каждом ходу. Если провайдер обновил модель и она стала вести себя иначе (типичный
+          симптом: ответ вдруг идёт минуту и на экране пусто), нажмите — движок проверит всё
+          заново.
+        </p>
+      </div>
     </Modal>
   );
 }

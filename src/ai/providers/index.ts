@@ -425,6 +425,52 @@ function loadLsSet(key: string): Set<string> {
     return new Set();
   }
 }
+// ЗАБЫТЬ ВЫУЧЕННОЕ ПРО МОДЕЛЬ. Наборы ниже самообучаемы и живут в localStorage —
+// это правильно (иначе каждый ход стоил бы лишнего круга запросов), но у этого
+// есть обратная сторона: одна неудачная догадка залипает навсегда. Так и вышло с
+// Gemini 3. Её 400 на reasoning_effort:'none' раньше не распознавался как «модель
+// думает всегда», срабатывала общая ветка «параметр не понят» — и модель попадала
+// в noEffortTargets. После этого ступень ей не слалась ВООБЩЕ, то есть она каждый
+// ход брала свой дефолт (medium) и думала подолгу молча. Обновление кода само по
+// себе такую запись не лечит: она уже лежит в браузере. Поэтому — разовая чистка.
+const LEARNED_V_KEY = 'nf_learned_targets_v';
+const LEARNED_V = 2;
+
+function forgetStaleLearned(): void {
+  try {
+    if (Number(localStorage.getItem(LEARNED_V_KEY) || 0) >= LEARNED_V) return;
+    const raw = localStorage.getItem(NO_EFFORT_LS_KEY);
+    if (raw) {
+      const kept = (JSON.parse(raw) as unknown[]).filter(
+        (x) => typeof x === 'string' && !/gemini/i.test(x)
+      );
+      localStorage.setItem(NO_EFFORT_LS_KEY, JSON.stringify(kept));
+    }
+    localStorage.setItem(LEARNED_V_KEY, String(LEARNED_V));
+  } catch {
+    /* приватный режим — переживём */
+  }
+}
+
+// Полный сброс выученного — руками из «Подключение к ИИ». Нужен, когда провайдер
+// сменил поведение (или мы починили распознавание) и залипшая догадка мешает.
+export function forgetLearnedModelQuirks(): void {
+  for (const k of [NO_EFFORT_LS_KEY, ALWAYS_THINK_LS_KEY, NO_THINKING_FIELD_LS_KEY, NO_PREFILL_LS_KEY]) {
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      /* ignore */
+    }
+    // Наборы уже загружены в память — чистим и их, иначе сброс подействовал бы
+    // только после перезагрузки вкладки.
+  }
+  noEffortTargets.clear();
+  alwaysThinkTargets.clear();
+  noThinkingField.clear();
+  noPrefillTargets.clear();
+  logEvent('info', 'llm', 'Выученные особенности моделей сброшены — движок определит их заново.');
+}
+
 function saveLsSet(key: string, set: Set<string>): void {
   try {
     localStorage.setItem(key, JSON.stringify([...set]));
@@ -438,7 +484,22 @@ function saveLsSet(key: string, set: Set<string>): void {
 // rememberAlwaysThink), но ждать первого отказа — значит подарить пользователю
 // один пыточно медленный ход на каждом новом браузере. Ошибка затравки дёшева:
 // управляемое размышление просто уступит место родному, и ход всё равно пройдёт.
-const ALWAYS_THINK_PATTERNS = /glm-?5|kimi-?k?[23]|deepseek-?(r1|reasoner)|minimax-?m[12]/i;
+const ALWAYS_THINK_PATTERNS = /glm-?5|kimi-?k?[23]|deepseek-?(r1|reasoner)|minimax-?m[12]|gemini-?3/i;
+
+// GEMINI 3. Отдельный случай внутри «всегда думающих», и разница существенная.
+//
+// У Gemini 2.5 размышление выключалось (thinking_budget = 0), и наше 'none'
+// доезжало как есть — модель отвечала сразу. У Gemini 3 выключить его НЕЛЬЗЯ:
+// ступени low / medium / high, ПО УМОЛЧАНИЮ medium, а «none» такой ступени просто
+// нет. Дальше происходило вот что: шлюз отвечал 400 (или молча игнорировал),
+// общая починка убирала параметр, и модель брала свой дефолт — medium. То есть
+// попытка сказать «не думай» приводила ровно к обратному: думает всегда и
+// подолгу, а на OpenAI-совместимой ручке Google мысли наружу не отдаёт — на
+// экране просто ничего не происходит минуту.
+//
+// Ступени тоже свои: 'max' у Gemini нет (потолок — high), а 'minimal' новые Flash
+// (3.8) уже не принимают, поэтому самая низкая безопасная ступень — 'low'.
+const GEMINI3_RE = /gemini-?3/i;
 
 const alwaysThinkTargets = loadLsSet(ALWAYS_THINK_LS_KEY);
 function rememberAlwaysThink(key: string): void {
@@ -452,6 +513,9 @@ function rememberAlwaysThink(key: string): void {
 // слать нельзя, глубину размышления придётся оставить на усмотрение модели.
 // Запоминаем, чтобы не платить лишним кругом запросов на каждом ходу.
 const NO_EFFORT_LS_KEY = 'nf_no_effort_targets';
+// Чистка ДО загрузки набора: иначе залипшая запись про Gemini доехала бы до
+// памяти и продолжила действовать весь сеанс (см. forgetStaleLearned).
+forgetStaleLearned();
 const noEffortTargets = loadLsSet(NO_EFFORT_LS_KEY);
 
 const noThinkingField = loadLsSet(NO_THINKING_FIELD_LS_KEY);
@@ -471,7 +535,12 @@ function isThinkingRequiredError(text: string): boolean {
     /1210/.test(text) ||
     /always\s+(engages?\s+in\s+)?think/i.test(text) ||
     /think\w*.{0,40}can\s?not\s+be\s+disabled?/i.test(text) ||
-    /use\s+low,?\s*high,?\s*(or\s*)?max/i.test(text)
+    /use\s+low,?\s*high,?\s*(or\s*)?max/i.test(text) ||
+    // Gemini 3: «thinking level minimal is not supported», «thinking_level must be
+    // one of low, medium, high». Отдельные формулировки — потому что итог тот же:
+    // параметр убирать нельзя, надо подменить ступень.
+    /thinking[_ ]?level/i.test(text) ||
+    /(minimal|none)\b.{0,40}not\s+supported/i.test(text)
   );
 }
 
@@ -481,9 +550,14 @@ function isThinkingRequiredError(text: string): boolean {
 function effortFor(target: string, effort: string | undefined): string | undefined {
   if (noEffortTargets.has(target)) return undefined;
   if (!effort || !alwaysThinks(target)) return effort;
-  if (effort === 'none') return 'low';
-  if (effort === 'medium') return 'high';
-  return effort;
+  // 'none' такая модель всё равно не примет, а МОЛЧАТЬ нельзя: без параметра она
+  // берёт свой дефолт, который заведомо глубже. Берём самую низкую ступень.
+  const e = effort === 'none' ? 'low' : effort;
+  // У Gemini 3 ступени low/medium/high: medium допустим (и это её дефолт), а 'max'
+  // не существует — потолок high.
+  if (GEMINI3_RE.test(target)) return e === 'max' ? 'high' : e;
+  // GLM-5.x, Kimi и прочие: только low / high / max, medium они не понимают.
+  return e === 'medium' ? 'high' : e;
 }
 
 function alwaysThinks(target: string): boolean {
