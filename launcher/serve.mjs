@@ -60,6 +60,21 @@ function handleProxy(req, res) {
     res.writeHead(400, { 'content-type': 'application/json', 'x-vn-proxy': '1' });
     return res.end(JSON.stringify({ error: 'bad_target', message: 'missing/invalid x-target-url' }));
   }
+  // Сокет браузера умирает раньше нас постоянно: игрок нажал «стоп», ушёл со
+  // страницы, сработал наш сторож зависшего потока. Писать в мёртвый сокет —
+  // ошибка, а необработанная ошибка на ответе роняет процесс.
+  res.on('error', () => {});
+  // Ушёл клиент — обрываем и запрос к провайдеру. Иначе генерация продолжает
+  // идти (и тарифицироваться) в никуда, а мы пишем ответ в закрытый сокет.
+  //
+  // Слушаем ОТВЕТ, а не запрос: у IncomingMessage 'close' срабатывает, когда
+  // получен весь запрос, — то есть на каждом запросе сразу, и обрывалось бы всё
+  // подряд. У ServerResponse 'close' — это конец ответа: либо мы дописали
+  // (writableEnded), либо соединение оборвалось, и вот тогда обрывать пора.
+  const ac = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) ac.abort();
+  });
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
   req.on('end', async () => {
@@ -74,6 +89,7 @@ function handleProxy(req, res) {
         method: req.method,
         headers,
         body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
+        signal: ac.signal,
       });
       const out = {};
       upstream.headers.forEach((v, k) => {
@@ -105,17 +121,36 @@ function handleProxy(req, res) {
         out['x-accel-buffering'] = 'no';
         res.writeHead(upstream.status, out);
         const reader = upstream.body.getReader();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(Buffer.from(value));
+        // Своя обработка ошибок, а НЕ общий catch ниже. Заголовки уже ушли, и
+        // попытка ответить 502 здесь бросала ERR_HTTP_HEADERS_SENT — необработанный,
+        // то есть роняющий весь сервер. Именно так «отваливался прокси»: провайдер
+        // рвал поток на середине (обычное дело у перегруженных шлюзов), и вместе
+        // с одним ходом умирал лаунчер целиком, до перезапуска руками.
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (res.writableEnded || res.destroyed) break;
+            res.write(Buffer.from(value));
+          }
+        } catch (e) {
+          if (!ac.signal.aborted) {
+            console.warn('  ⚠ поток от провайдера оборвался:', String((e && e.message) || e));
+          }
         }
-        return res.end();
+        if (!res.writableEnded) res.end();
+        return;
       }
       const buf = Buffer.from(await upstream.arrayBuffer());
       res.writeHead(upstream.status, out);
       res.end(buf);
     } catch (e) {
+      // Ответ мог уже начаться (или клиент уже ушёл) — тогда статус слать некуда,
+      // просто закрываем. Ошибка ЗДЕСЬ и убивала процесс.
+      if (res.headersSent || res.writableEnded || res.destroyed) {
+        if (!res.writableEnded) res.end();
+        return;
+      }
       res.writeHead(502, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'x-vn-proxy': '1' });
       res.end(JSON.stringify({ error: 'proxy_failed', message: String((e && e.message) || e) }));
     }
@@ -274,6 +309,22 @@ const server = http.createServer((req, res) => {
   return serveStatic(url.pathname, res);
 });
 
+// Локальный сервер на одного человека не имеет права умирать из-за одного
+// неудачного запроса: он раздаёт ещё и само приложение, и файловое хранилище.
+// Падал он молча, в фоне — и со стороны это выглядело как «прокси вдруг
+// отвалился», хотя на самом деле процесса уже не было. Конкретные причины
+// закрыты выше; это страховка на всё, что мы не предусмотрели.
+process.on('uncaughtException', (e) => {
+  console.error('  ⚠ необработанная ошибка (сервер продолжает работать):', e);
+});
+process.on('unhandledRejection', (e) => {
+  console.error('  ⚠ необработанный сбой запроса (сервер продолжает работать):', e);
+});
+// Мусор в сокете (кривой запрос, сканер портов) тоже не должен ронять сервер.
+server.on('clientError', (err, socket) => {
+  if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+});
+
 server.on('error', (e) => {
   if (e && e.code === 'EADDRINUSE') {
     console.error(`\n✖ Порт ${PORT} уже занят. Закройте прошлый сервер или задайте PORT=<другой>.\n`);
@@ -282,6 +333,14 @@ server.on('error', (e) => {
   }
   process.exit(1);
 });
+
+// Ход в РП с большим контекстом идёт минутами. Таймауты Node по умолчанию
+// рассчитаны на публичный сервер под нагрузкой, здесь они только мешают: обрыв
+// на их срабатывании неотличим от «провайдер отвалился».
+server.requestTimeout = 0;
+server.headersTimeout = 0;
+server.timeout = 0;
+server.keepAliveTimeout = 72_000;
 
 server.listen(PORT, HOST, () => {
   console.log(`▸ VN Studio: http://localhost:${PORT}/`);

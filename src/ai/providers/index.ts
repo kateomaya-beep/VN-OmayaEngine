@@ -166,23 +166,40 @@ const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com/v1';
 // напрямую из браузера (тогда возможен CORS). Детект один раз.
 let proxyState: 'unknown' | 'on' | 'off' = 'unknown';
 let proxyProbe: Promise<void> | null = null;
+let proxyCheckedAt = 0;
+// Ответ «прокси нет» ПЕРЕПРОВЕРЯЕМ. Раньше он запоминался на весь сеанс вкладки, и
+// это било дважды: страница, открытая в момент, когда сервер лежал (а он умел
+// падать — см. launcher/serve.mjs), навсегда переключалась на прямые запросы из
+// браузера, то есть на CORS-отказы у половины провайдеров; и наоборот, «прокси
+// есть» держалось, даже когда сервера уже не было. Перепроверка редкая: здоровье
+// локального сервера не меняется по десять раз в минуту.
+const PROXY_RECHECK_MS = 15_000;
+
 async function ensureProxy(): Promise<void> {
-  if (proxyState !== 'unknown') return;
+  if (proxyState === 'on') return;
+  if (proxyState === 'off' && Date.now() - proxyCheckedAt < PROXY_RECHECK_MS) return;
   if (!proxyProbe) {
+    const was = proxyState;
     proxyProbe = (async () => {
       try {
-        const r = await fetch('/__proxy/health', { method: 'GET' });
+        const r = await fetch('/__proxy/health', { method: 'GET', cache: 'no-store' });
         proxyState = r.ok && r.headers.get('x-vn-proxy') === '1' ? 'on' : 'off';
       } catch {
         proxyState = 'off';
       }
-      logEvent(
-        'info',
-        'net',
-        proxyState === 'on'
-          ? 'Локальный прокси активен — запросы к ИИ идут через сервер (без CORS).'
-          : 'Локального прокси нет — прямые запросы из браузера (возможен CORS).'
-      );
+      proxyCheckedAt = Date.now();
+      proxyProbe = null;
+      // В журнал пишем только СМЕНУ состояния — иначе перепроверка каждые 15 секунд
+      // засорила бы его одинаковыми строками.
+      if (proxyState !== was) {
+        logEvent(
+          'info',
+          'net',
+          proxyState === 'on'
+            ? 'Локальный прокси активен — запросы к ИИ идут через сервер (без CORS).'
+            : 'Локального прокси нет — прямые запросы из браузера (возможен CORS).'
+        );
+      }
     })();
   }
   await proxyProbe;
@@ -202,7 +219,22 @@ export async function netFetch(url: string, init: RequestInit): Promise<Response
   await ensureProxy();
   if (proxyState === 'on' && /^https?:\/\//i.test(url)) {
     const headers = { ...((init.headers as Record<string, string>) || {}), 'x-target-url': url };
-    return fetch('/__proxy', { cache: 'no-store', ...init, headers });
+    try {
+      return await fetch('/__proxy', { cache: 'no-store', ...init, headers });
+    } catch (e) {
+      // Сетевой сбой на ЛОКАЛЬНОМ адресе означает ровно одно: сервера лаунчера
+      // больше нет. Сбрасываем состояние, чтобы следующий запрос проверил заново
+      // (и подхватил перезапущенный лаунчер), и не выдаём эту ошибку за проблему
+      // с провайдером — она совсем про другое.
+      if ((e as Error)?.name === 'AbortError') throw e;
+      proxyState = 'unknown';
+      proxyProbe = null;
+      throw new Error(
+        'Локальный сервер (лаунчер) не отвечает — запрос к ИИ через него не прошёл. ' +
+          'Проверьте окно терминала, где запущен start-omaya.sh: если оно закрылось или ' +
+          'показывает ошибку, запустите лаунчер заново и повторите ход.'
+      );
+    }
   }
   return fetch(url, { cache: 'no-store', ...init });
 }
