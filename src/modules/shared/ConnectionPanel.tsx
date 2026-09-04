@@ -3,7 +3,7 @@ import { Modal } from '../../shared/ui';
 import { ApiConnectionField } from '../constructor/editors/ApiConnectionField';
 import { useConnection } from '../../ai/connection';
 import { useConnectionPresets } from '../../ai/connectionPresets';
-import { isProxyActive, forgetLearnedModelQuirks } from '../../ai/providers';
+import { isProxyActive, recheckProxy, forgetLearnedModelQuirks } from '../../ai/providers';
 import { pushToast } from '../../shared/toast';
 
 // Глобальное основное подключение к LLM (Batch 3 §2): единый источник истины для
@@ -16,6 +16,14 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
     if (open) isProxyActive().then(setProxy);
   }, [open]);
   if (!open) return null;
+  // АДРЕС, с которого открыто приложение. Без него плашка «прокси нет» была
+  // тупиком: она советует «запустите через лаунчер», а человек через лаунчер и
+  // сидит — на другом устройстве. Чаще всего причина именно в адресе: телефон
+  // открывает не локальный сервер, а выложенную статику (или сервер лаунчера,
+  // который слушает только сам компьютер).
+  const origin = typeof location !== 'undefined' ? location.origin : '';
+  const isFile = origin.startsWith('file:');
+  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/i.test(origin);
   return (
     <Modal open={open} onClose={onClose} title="Подключение к ИИ (основное)" wide>
       {/* Статус локального прокси (как в SillyTavern: запрос идёт через наш сервер). */}
@@ -27,9 +35,31 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
               : 'border-amber-400/30 bg-amber-500/10 text-amber-200'
           }`}
         >
-          {proxy
-            ? '🛡 Локальный прокси активен — запросы к ИИ идут через наш сервер (без CORS, как в SillyTavern). Работают любые провайдеры.'
-            : '⚠ Локального прокси нет (открыто как статичная страница) — запросы идут напрямую из браузера, возможен CORS. Запустите приложение через лаунчер, чтобы прокси включился.'}
+          {proxy ? (
+            '🛡 Локальный прокси активен — запросы к ИИ идут через наш сервер (без CORS, как в SillyTavern). Работают любые провайдеры.'
+          ) : (
+            <>
+              <div>
+                ⚠ Локального прокси нет — запросы идут напрямую из браузера, возможен CORS.
+              </div>
+              <div className="mt-1.5 opacity-90">
+                Открыто по адресу: <b className="break-all">{origin || '(неизвестно)'}</b>
+              </div>
+              <div className="mt-1.5">
+                {isFile
+                  ? 'Это файл на диске, а не сервер: прокси взяться неоткуда. Запустите launcher/start-omaya.sh и откройте адрес, который он напечатает.'
+                  : isLocal
+                    ? 'Адрес правильный, но сервер по нему не отвечает — лаунчер закрыт или упал. Проверьте его окно и нажмите «Проверить снова».'
+                    : 'Это НЕ сервер лаунчера. С телефона его видно, только если запустить лаунчер с ключом --lan и открыть напечатанный им адрес вида http://192.168.х.х:5173 (телефон и компьютер — в одной сети Wi-Fi). Обычный запуск слушает только сам компьютер.'}
+              </div>
+              <button
+                className="btn-ghost !px-3 !py-1 text-xs mt-2"
+                onClick={() => recheckProxy().then(setProxy)}
+              >
+                Проверить снова
+              </button>
+            </>
+          )}
         </div>
       )}
       <p className="text-xs text-gray-500 mb-4">

@@ -11,6 +11,7 @@
 // нашего же сервера не уходит.
 
 import http from 'node:http';
+import os from 'node:os';
 import { readFile, writeFile, mkdir, rm, readdir, stat } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -342,8 +343,34 @@ server.headersTimeout = 0;
 server.timeout = 0;
 server.keepAliveTimeout = 72_000;
 
+// Адреса этой машины в локальной сети — чтобы напечатать готовую ссылку для
+// телефона. Без неё «откройте на телефоне» превращается в квест: сам адрес надо
+// где-то узнать, а localhost с телефона не работает по определению.
+function lanUrls() {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const ni of list || []) {
+      if (ni.family === 'IPv4' && !ni.internal) out.push(`http://${ni.address}:${PORT}/`);
+    }
+  }
+  return out;
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`▸ VN Studio: http://localhost:${PORT}/`);
+  if (HOST === '0.0.0.0' || HOST === '::') {
+    const urls = lanUrls();
+    if (urls.length) {
+      console.log(`  · с телефона (та же сеть Wi-Fi): ${urls.join('  |  ')}`);
+    } else {
+      console.log('  · сеть открыта, но IPv4-адреса в локальной сети не найдено');
+    }
+    console.log(
+      '  ⚠ Сервер открыт для ВСЕЙ локальной сети. Прокси ходит к провайдеру с вашим ключом,\n' +
+        '    то есть любой в этой сети сможет тратить ваш API-ключ через него. Дома это обычно\n' +
+        '    нормально, в общественном Wi-Fi — нет.'
+    );
+  }
   console.log(`  · прокси к ИИ: /__proxy (server-side, без CORS)`);
   console.log(`  · данные на диске: ${DATA_ROOT}  (переживают очистку данных браузера)`);
   if (!existsSync(path.join(DIST, 'index.html'))) {

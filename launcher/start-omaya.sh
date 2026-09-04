@@ -15,6 +15,22 @@ cd "$ROOT"
 PORT="${PORT:-5173}"
 URL="http://localhost:${PORT}/"
 
+# --lan: слушать всю локальную сеть, а не только сам компьютер. Нужно ровно для
+# одного — играть с телефона через прокси лаунчера: телефон никак не достучится
+# до 127.0.0.1 чужой машины, и приложение, открытое на нём с любого другого
+# адреса, честно сообщает «локального прокси нет».
+# По умолчанию НЕ включено: прокси ходит к провайдеру с вашим ключом, и открывать
+# его всей сети без спроса нельзя.
+LAN=0
+for a in "$@"; do
+  [ "$a" = "--lan" ] && LAN=1
+done
+if [ "$LAN" = "1" ]; then
+  BIND_HOST="0.0.0.0"
+else
+  BIND_HOST="${HOST:-127.0.0.1}"
+fi
+
 echo "▸ Novel Forge — лаунчер"
 echo "  Каталог: $ROOT"
 
@@ -66,7 +82,7 @@ if [ ! -f dist/index.html ]; then
 elif [ -n "$(find src public index.html vite.config.ts package.json -newer dist/index.html -print -quit 2>/dev/null)" ]; then
   NEED_BUILD=1
 fi
-if [ "$1" = "--build" ] || [ "$1" = "-b" ] || [ "$NEED_BUILD" = "1" ]; then
+if [ "$1" = "--build" ] || [ "$1" = "-b" ] || [ "$2" = "--build" ] || [ "$NEED_BUILD" = "1" ]; then
   echo "▸ Собираю приложение (npm run build)…"
   npm run build
 else
@@ -89,6 +105,11 @@ open_url() {
 # 4) Поднимаем НАШ сервер: статика из dist + локальный прокси к провайдерам
 #    (server-side запросы, без CORS — как в SillyTavern). Открываем адрес.
 echo "▸ Запускаю сервер на ${URL} (со встроенным прокси /__proxy — без CORS)"
+if [ "$LAN" = "1" ]; then
+  echo "  · режим --lan: адрес для телефона напечатан ниже (нужна та же сеть Wi-Fi)"
+else
+  echo "  · чтобы играть с телефона, запустите с ключом --lan"
+fi
 echo "  (первый раз — установите как приложение: см. launcher/README.md)"
 ( sleep 2; open_url "$URL" ) &
 
@@ -104,7 +125,7 @@ echo "  (первый раз — установите как приложени�
 set +e
 while true; do
   STARTED_AT=$(date +%s)
-  env PORT="$PORT" HOST=127.0.0.1 node "$ROOT/launcher/serve.mjs"
+  env PORT="$PORT" HOST="$BIND_HOST" node "$ROOT/launcher/serve.mjs"
   CODE=$?
   RAN=$(( $(date +%s) - STARTED_AT ))
   if [ "$CODE" = "0" ] || [ "$CODE" = "130" ] || [ "$CODE" = "143" ]; then

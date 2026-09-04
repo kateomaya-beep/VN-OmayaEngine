@@ -245,6 +245,17 @@ export async function isProxyActive(): Promise<boolean> {
   return proxyState === 'on';
 }
 
+// Принудительная перепроверка — кнопкой из «Подключения к ИИ». Нужна, когда
+// лаунчер подняли уже после открытия страницы: ждать очередной перепроверки
+// вслепую хуже, чем нажать и увидеть ответ сразу.
+export async function recheckProxy(): Promise<boolean> {
+  proxyState = 'unknown';
+  proxyProbe = null;
+  proxyCheckedAt = 0;
+  await ensureProxy();
+  return isProxyActive();
+}
+
 // Обёртка над fetch. Браузер НЕ раскрывает точную причину «Failed to fetch»
 // (маскирует CORS/сеть/таймаут ради безопасности), поэтому не утверждаем, что это
 // именно CORS — перечисляем реальные варианты и отдаём исходную ошибку как есть.
