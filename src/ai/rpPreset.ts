@@ -134,6 +134,7 @@ Reveal lore and the world's rules through action and consequence, never as an in
       'rp_characters',
       '✦ Characters',
       `Ground each character in their card: voice (vocabulary, rhythm, tics), values, history, and how they treat {{user}}.
+THE CARD OUTRANKS ANYTHING YOU ALREADY KNOW. A character may share a name with someone from a book, anime, film or game — that other version is not in this story. Where the card contradicts the original, the card wins and the original is simply wrong here; where the card is silent, invent something that fits the card, never something recalled from the source. Do not "correct" the author, do not hint that the real version differs, and never assert a biographical fact (family, origin, death, rank) that the card does not give you.
 Call characters by NAME; never restate titles, rank, or reputation as a refrain.
 Drive behaviour from inside, without narrating it:
 - what they want now vs overall, and where those clash;
@@ -264,6 +265,10 @@ export const RP_OUTDATED_SIGNATURES: BuiltinSignature[] = [
   // Идентичность с третьим лицом по умолчанию — прямо противоречит правилу второго
   // лица в блоке форматирования, и модель выбирала то одно, то другое.
   { key: 'rp_identity', signature: 'POV and tense: match whatever the story is already written in' },
+  // Блок про персонажей БЕЗ старшинства анкеты над каноном. На выдуманном
+  // персонаже разницы не видно, на известном — модель писала то, что помнит из
+  // первоисточника, и спорила с анкетой.
+  { key: 'rp_characters', signature: 'Call characters by NAME; never restate titles' },
   // Стиль, ТРЕБОВАВШИЙ «substantial reply». Пока в РП не было авторитетной директивы
   // длины, эта строка была самой уверенной фразой про объём во всём запросе — и ход
   // выходил одинаково средним при любом положении ползунка.

@@ -122,6 +122,12 @@ function phoneNote(state: RuntimeState, person: Person | null): string {
   return `Phone: contact id ${contact.id}${talk}${groups.length ? `; groups: ${groups.join(', ')}` : ''}`;
 }
 
+// Сколько анкет уходит ЦЕЛИКОМ в текстовом РП. Ограничение нужно на больших
+// ростерах (десятки персонажей за длинную партию), но выбрано щедрым: типичный
+// ролеплей ведут с двумя-пятью, и урезать их анкеты нельзя — именно в них лежит
+// всё, чем персонаж отличается от того, что модель и так «знает».
+const RP_FULL_CARDS = 8;
+
 function whoIsWhoBlock(
   project: Project,
   state: RuntimeState,
@@ -129,7 +135,9 @@ function whoIsWhoBlock(
   ctx: MacroContext,
   // В текстовом РП спрайтов нет — перечислять доступные эмоции незачем: это лишние
   // токены и прямое приглашение модели писать служебные пометки в прозе.
-  mode: NarrativeMode = 'vn'
+  mode: NarrativeMode = 'vn',
+  // Свежий кусок истории + ход игрока — по нему в РП определяем, кто сейчас в игре.
+  recentText = ''
 ): string {
   const turnNow = state.turnCount;
   const roleLabel: Record<string, string> = {
@@ -216,7 +224,44 @@ function whoIsWhoBlock(
   // 1) Персонажи проекта — с карточкой. В фокусе (на сцене + герой) карточка полная.
   const present = project.characters.filter((c) => onScreenIds.includes(c.id));
   const hero = project.characters.find((c) => c.role === 'protagonist' && !present.includes(c));
-  const focus = hero ? [hero, ...present] : present;
+
+  // КТО В ФОКУСЕ — то есть чья анкета уходит ЦЕЛИКОМ (внешность, предыстория,
+  // манера речи, арка), а не одной строкой характера.
+  //
+  // В новелле это те, кто на сцене: движок знает их точно — по битам с
+  // characterId, которыми ставятся спрайты. В РП таких бит НЕТ ВООБЩЕ: ход
+  // приходит одной narration-битой без говорящего, onScreen остаётся пустым
+  // навсегда, и «в фокусе» оказывался один лишь герой. Всем остальным доставалось
+  // 110 символов характера и НИ СЛОВА предыстории — то есть анкета персонажа до
+  // модели просто не доезжала.
+  //
+  // На выдуманном персонаже это выглядит как «бледноватый характер», и заметить
+  // трудно. На каноничном — как прямое враньё: своей предыстории модель не
+  // получает, зато канон помнит и пишет его уверенно, споря с анкетой (у героя в
+  // анкете живы родители — модель невозмутимо сообщает, что он сирота).
+  //
+  // Поэтому в РП фокус считается по тексту, а не по спрайтам: герой, все
+  // упомянутые в свежих ходах, затем остальные по значимости роли — до предела.
+  let focus: typeof project.characters;
+  if (mode === 'rp') {
+    const hay = ` ${normName(recentText)} `;
+    const mentioned = (c: (typeof project.characters)[number]) => {
+      const e = activeReg.find((r) => r.id === c.id || r.sheetId === c.id);
+      return [c.name, ...(e?.aliases || [])]
+        .filter((n) => n && n.trim().length > 2)
+        .some((n) => hay.includes(normName(n)));
+    };
+    const rank = (c: (typeof project.characters)[number]) => {
+      if (c.role === 'protagonist') return 0;
+      if (mentioned(c)) return 1;
+      if (c.role === 'love_interest') return 2;
+      if (c.role === 'important_character') return 3;
+      return 4;
+    };
+    focus = [...project.characters].sort((a, b) => rank(a) - rank(b)).slice(0, RP_FULL_CARDS);
+  } else {
+    focus = hero ? [hero, ...present] : present;
+  }
   for (const c of project.characters) {
     seen.add(c.id);
     const inFocus = focus.includes(c);
@@ -303,6 +348,16 @@ function whoIsWhoBlock(
   return (
     entries.join('\n\n') +
     `\n\nHOW TO USE THIS SECTION — it is the ONLY roster; there is no second list of people anywhere.\n` +
+    // Персонажа могут звать как героя известной книги, аниме или фильма — и вот
+    // тогда модель уверенно пишет то, что помнит про него ОТТУДА, а не то, что
+    // стоит в анкете. Причём именно уверенно: канон она знает подробно, а анкету
+    // воспринимает как «дополнение» к нему. Поэтому старшинство проговаривается
+    // явно, а не подразумевается.
+    `- The sheet is the ONLY truth about a person. If a character shares a name with someone from a book, film, ` +
+    `anime or game, everything you remember about that character from the original work is NOT part of this story. ` +
+    `Where the sheet contradicts what you remember — the sheet is right and your memory is wrong here. Where the ` +
+    `sheet is silent, invent something that fits THIS story; never fill the gap from the original work, and never ` +
+    `state a "known fact" about them that the sheet does not support.\n` +
     `- Identity is the id, never the bare name: nicknames drift ("Дэмиан"/"Дэм"/"парень из бара" are one person). ` +
     `Before introducing anyone, look here. Already present under any name or alias → reuse that id.\n` +
     `- "Now:" lines are a snapshot YOU maintain, and each carries its age. They are NOT eternal truth: if the recent ` +
@@ -902,7 +957,7 @@ export async function buildRequest(
     plot: () =>
       project.lore.plotOutline ? `== PLOT ARC ==\n${expandMacros(project.lore.plotOutline, ctx)}` : '',
     lorebook: () => `== ACTIVE LOREBOOK ENTRIES ==\n${lorebookText}`,
-    characters: () => `== WHO'S WHO (single roster: identity + card + current state) ==\n${whoIsWhoBlock(project, state, onScreenIds, ctx, mode)}`,
+    characters: () => `== WHO'S WHO (single roster: identity + card + current state) ==\n${whoIsWhoBlock(project, state, onScreenIds, ctx, mode, recentText)}`,
     manifest: () => `== ASSET MANIFEST ==\n${assetManifest(project)}`,
     state: () =>
       mode === 'rp'
