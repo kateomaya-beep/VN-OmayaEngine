@@ -199,12 +199,30 @@ export function CharacterEditor() {
                 onChange={(e) => patchChar(selected.id, (c) => (c.card.personality = e.target.value))}
               />
             </Field>
-            <Field label="Манера речи" hint="Примеры реплик, лексика, тон. Поддерживаются макросы {{protagonist}} и др.">
+            <Field label="Манера речи" hint="Словами: лексика, тон, темп, речевые привычки. Макросы поддерживаются.">
               <textarea
                 className="input h-20"
+                placeholder="Коротко и по делу, без вежливых оборотов. Ругается сквозь зубы. Никогда не говорит «спасибо» прямо."
                 value={selected.card.speechStyle}
                 onChange={(e) =>
                   patchChar(selected.id, (c) => (c.card.speechStyle = e.target.value))
+                }
+              />
+            </Field>
+            {/* ОБРАЗЦЫ — отдельно от описания манеры, и это не придирка к порядку
+                полей: описание уходит в анкету наверху запроса, а образцы — в самый
+                хвост, вплотную к ходу. По описанию модель понимает, КАКОЙ у героя
+                голос; по образцам — слышит его, и следующая реплика подстраивается. */}
+            <Field
+              label="Примеры реплик"
+              hint="Настоящие фразы персонажа, по одной на строку. Уходят в конец запроса, вплотную к ходу — там модель слышит голос лучше всего. Дословно повторять их она не будет."
+            >
+              <textarea
+                className="input h-28"
+                placeholder={'— Ты опоздал на четыре минуты. Я считал.\n— Не трогай. Я сам.\n— Мне всё равно, чья это была идея. Убирать будешь ты.'}
+                value={selected.card.speechExamples || ''}
+                onChange={(e) =>
+                  patchChar(selected.id, (c) => (c.card.speechExamples = e.target.value || undefined))
                 }
               />
             </Field>

@@ -107,7 +107,13 @@ export async function importTavernCard(file: File): Promise<ImportedCharacter> {
       appearance: '',
       personality: mergedPersonality,
       backstory: '',
-      speechStyle: card.message_example && card.message_example !== 'unknown' ? card.message_example : '',
+      // message_example — это ОБРАЗЦЫ реплик, а не описание манеры. Раньше они
+      // ложились в speechStyle, то есть в анкету наверху запроса, вперемешку с
+      // характеристиками. Теперь у них своё поле и своё место в промпте — рядом с
+      // ходом, где модель их действительно слышит.
+      speechStyle: '',
+      speechExamples:
+        card.message_example && card.message_example !== 'unknown' ? card.message_example : undefined,
       scenario: card.scenario && card.scenario !== 'unknown' ? card.scenario : undefined,
       greetings: greetings.length ? greetings : undefined,
     },

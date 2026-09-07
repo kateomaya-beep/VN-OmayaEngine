@@ -122,11 +122,55 @@ function phoneNote(state: RuntimeState, person: Person | null): string {
   return `Phone: contact id ${contact.id}${talk}${groups.length ? `; groups: ${groups.join(', ')}` : ''}`;
 }
 
-// Сколько анкет уходит ЦЕЛИКОМ в текстовом РП. Ограничение нужно на больших
-// ростерах (десятки персонажей за длинную партию), но выбрано щедрым: типичный
-// ролеплей ведут с двумя-пятью, и урезать их анкеты нельзя — именно в них лежит
-// всё, чем персонаж отличается от того, что модель и так «знает».
+// КТО В ФОКУСЕ — то есть чья анкета уходит ЦЕЛИКОМ (внешность, предыстория,
+// манера речи, арка), а не одной строкой характера, и чьи образцы речи попадают в
+// хвост запроса. Ответ общий на оба вопроса: показывать голос персонажа, анкету
+// которого мы не отдали, бессмысленно, и наоборот.
+//
+// В новелле фокус — те, кто на сцене: движок знает их точно, по битам с
+// characterId, которыми ставятся спрайты. В РП таких бит НЕТ ВООБЩЕ: ход приходит
+// одной narration-битой без говорящего, onScreen остаётся пустым навсегда, и в
+// фокусе оказывался один лишь герой. Всем остальным доставалось 110 символов
+// характера и ни слова предыстории — анкета до модели просто не доезжала.
+//
+// На выдуманном персонаже это выглядит как «бледноватый характер» и почти не
+// ловится. На каноничном — как прямое враньё: своей предыстории модель не
+// получает, зато первоисточник помнит и пишет его уверенно.
+//
+// Поэтому в РП фокус считается по тексту: герой, все упомянутые в свежих ходах,
+// затем остальные по значимости роли — до RP_FULL_CARDS. Предел щедрый намеренно:
+// типичный ролеплей ведут с двумя-пятью персонажами, и там уходят все анкеты.
 const RP_FULL_CARDS = 8;
+
+export function focusCharacters(
+  project: Project,
+  state: RuntimeState,
+  onScreenIds: string[],
+  mode: NarrativeMode,
+  recentText: string
+): Project['characters'] {
+  if (mode !== 'rp') {
+    const present = project.characters.filter((c) => onScreenIds.includes(c.id));
+    const hero = project.characters.find((c) => c.role === 'protagonist' && !present.includes(c));
+    return hero ? [hero, ...present] : present;
+  }
+  const reg = state.gm.registry || [];
+  const hay = ` ${normName(recentText)} `;
+  const mentioned = (c: Project['characters'][number]) => {
+    const e = reg.find((r) => r.id === c.id || r.sheetId === c.id);
+    return [c.name, ...(e?.aliases || [])]
+      .filter((n) => n && n.trim().length > 2)
+      .some((n) => hay.includes(normName(n)));
+  };
+  const rank = (c: Project['characters'][number]) => {
+    if (c.role === 'protagonist') return 0;
+    if (mentioned(c)) return 1;
+    if (c.role === 'love_interest') return 2;
+    if (c.role === 'important_character') return 3;
+    return 4;
+  };
+  return [...project.characters].sort((a, b) => rank(a) - rank(b)).slice(0, RP_FULL_CARDS);
+}
 
 function whoIsWhoBlock(
   project: Project,
@@ -221,47 +265,10 @@ function whoIsWhoBlock(
   const entries: string[] = [];
   const seen = new Set<string>();
 
-  // 1) Персонажи проекта — с карточкой. В фокусе (на сцене + герой) карточка полная.
-  const present = project.characters.filter((c) => onScreenIds.includes(c.id));
-  const hero = project.characters.find((c) => c.role === 'protagonist' && !present.includes(c));
+  // 1) Персонажи проекта — с карточкой. В фокусе карточка полная (см. focusCharacters).
+  const hero = project.characters.find((c) => c.role === 'protagonist' && !onScreenIds.includes(c.id));
+  const focus = focusCharacters(project, state, onScreenIds, mode, recentText);
 
-  // КТО В ФОКУСЕ — то есть чья анкета уходит ЦЕЛИКОМ (внешность, предыстория,
-  // манера речи, арка), а не одной строкой характера.
-  //
-  // В новелле это те, кто на сцене: движок знает их точно — по битам с
-  // characterId, которыми ставятся спрайты. В РП таких бит НЕТ ВООБЩЕ: ход
-  // приходит одной narration-битой без говорящего, onScreen остаётся пустым
-  // навсегда, и «в фокусе» оказывался один лишь герой. Всем остальным доставалось
-  // 110 символов характера и НИ СЛОВА предыстории — то есть анкета персонажа до
-  // модели просто не доезжала.
-  //
-  // На выдуманном персонаже это выглядит как «бледноватый характер», и заметить
-  // трудно. На каноничном — как прямое враньё: своей предыстории модель не
-  // получает, зато канон помнит и пишет его уверенно, споря с анкетой (у героя в
-  // анкете живы родители — модель невозмутимо сообщает, что он сирота).
-  //
-  // Поэтому в РП фокус считается по тексту, а не по спрайтам: герой, все
-  // упомянутые в свежих ходах, затем остальные по значимости роли — до предела.
-  let focus: typeof project.characters;
-  if (mode === 'rp') {
-    const hay = ` ${normName(recentText)} `;
-    const mentioned = (c: (typeof project.characters)[number]) => {
-      const e = activeReg.find((r) => r.id === c.id || r.sheetId === c.id);
-      return [c.name, ...(e?.aliases || [])]
-        .filter((n) => n && n.trim().length > 2)
-        .some((n) => hay.includes(normName(n)));
-    };
-    const rank = (c: (typeof project.characters)[number]) => {
-      if (c.role === 'protagonist') return 0;
-      if (mentioned(c)) return 1;
-      if (c.role === 'love_interest') return 2;
-      if (c.role === 'important_character') return 3;
-      return 4;
-    };
-    focus = [...project.characters].sort((a, b) => rank(a) - rank(b)).slice(0, RP_FULL_CARDS);
-  } else {
-    focus = hero ? [hero, ...present] : present;
-  }
   for (const c of project.characters) {
     seen.add(c.id);
     const inFocus = focus.includes(c);
@@ -1315,6 +1322,31 @@ export async function buildRequest(
         'applies now and in later turns until the player changes it — never satisfy it indirectly ' +
         '(through another character, a near-miss, a dream or a conversation about it):\n' +
         notes.map((n) => `- ${expandMacros(n.text, ctx)}`).join('\n')
+    );
+  }
+
+  // ОБРАЗЦЫ РЕЧИ — вплотную к ходу, а НЕ в анкете наверху.
+  //
+  // Место здесь не случайно. В анкете образцы стоят среди характеристик, за сотни
+  // строк до самого хода, и читаются моделью как ещё одно описание: «говорит
+  // резко» она усваивает, а звучание — нет. Тот же текст, положенный последним,
+  // работает совсем иначе: голос слышно, и следующая реплика подстраивается под
+  // него. Ровно так же образцы подаёт Таверна — не как часть описания, а рядом с
+  // перепиской.
+  //
+  // Дословно повторять их нельзя: это образцы ЗВУЧАНИЯ, а не заготовленные фразы,
+  // и вставленная целиком реплика из примера читается как склейка.
+  const voiceSamples = focusCharacters(project, state, onScreenIds, mode, recentText)
+    .map((c) => ({ name: c.name, text: expandMacros(c.card.speechExamples || '', ctx).trim() }))
+    .filter((x) => x.text);
+  if (voiceSamples.length) {
+    tail.push(
+      'HOW THESE CHARACTERS SOUND — samples of their own speech, taken from their sheets.\n' +
+        'Match the vocabulary, rhythm, sentence length and manner; a line you write for them should be ' +
+        'attributable to them without a name tag. These are samples of a VOICE, not lines to reuse: never ' +
+        'quote one verbatim into the story, and never treat what happens in a sample as something that ' +
+        'happened in this story.\n\n' +
+        voiceSamples.map((x) => `--- ${x.name} ---\n${x.text}`).join('\n\n')
     );
   }
 

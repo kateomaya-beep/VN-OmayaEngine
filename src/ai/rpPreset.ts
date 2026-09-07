@@ -108,6 +108,7 @@ function makeDefaults(): PromptBlock[] {
 - Roughly 40% dialogue / 60% narration. Anchor dialogue in the body and the room: gesture, movement, silence, the thing a character does instead of answering.
 - Reveal WHO a character is through BOTH their actions and their direct speech — never assert a trait in narration that the character's own words don't demonstrate.
 - If a character is ironic, their spoken lines are ironic; if blunt, the lines cut; if timid, they hedge and trail off. The trait must be audible in the exact words quoted, not just labelled.
+When speech samples for a character are given near the end of this request, they outrank any description of their manner: match that vocabulary, rhythm and sentence length. Do not smooth a rough voice into neutral prose because it reads better — the roughness IS the character.
 - Voice each character distinctly enough that a line could be attributed without a tag.`
     ),
     b(
@@ -265,6 +266,9 @@ export const RP_OUTDATED_SIGNATURES: BuiltinSignature[] = [
   // Идентичность с третьим лицом по умолчанию — прямо противоречит правилу второго
   // лица в блоке форматирования, и модель выбирала то одно, то другое.
   { key: 'rp_identity', signature: 'POV and tense: match whatever the story is already written in' },
+  // Блок про персонажей до появления образцов речи: манера описывалась словами, и
+  // модель «обобщала» её до нейтральной прозы.
+  { key: 'rp_prose', signature: 'Voice each character distinctly enough that a line could be attributed without a tag.' },
   // Блок про персонажей БЕЗ старшинства анкеты над каноном. На выдуманном
   // персонаже разницы не видно, на известном — модель писала то, что помнит из
   // первоисточника, и спорила с анкетой.

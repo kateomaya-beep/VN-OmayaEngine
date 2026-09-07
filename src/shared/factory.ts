@@ -92,6 +92,28 @@ export function createEmptyProject(title = 'Новый проект'): Project {
 // complete, well-formed Project. Single choke point that guarantees the UI and
 // game engine never see undefined fields, and migrates old schemas (sprite
 // arrays, meta.author/genre/description, scene.musicId) forward.
+// ОБРАЗЦЫ РЕЧИ. Поле появилось позже импорта карточек Таверны, и у уже
+// заведённых персонажей примеры лежат в «манере речи»: mes_example клался туда за
+// неимением своего места. Отличить их от описания несложно — примеры приходят
+// либо с разделителем <START>, либо строками вида «{{char}}: …»/«Имя: …». Такие
+// переносим в своё поле, обычное описание не трогаем.
+function looksLikeDialogueSamples(s: string): boolean {
+  return /<START>/i.test(s) || /^\s*\{\{char\}\}\s*:/im.test(s) || /^\s*\{\{user\}\}\s*:/im.test(s);
+}
+
+// Возвращает ОБА поля сразу: перенос — это перенос, а не копия. Оставить примеры
+// ещё и в «манере речи» значило бы слать их дважды и в двух разных местах промпта
+// (в анкете и в хвосте), причём в анкете — под видом описания манеры.
+function splitSpeech(card: any): { speechStyle: string; speechExamples?: string } {
+  const style = typeof card?.speechStyle === 'string' ? card.speechStyle : '';
+  const own = typeof card?.speechExamples === 'string' ? card.speechExamples.trim() : '';
+  if (own) return { speechStyle: style, speechExamples: own };
+  if (style.trim() && looksLikeDialogueSamples(style)) {
+    return { speechStyle: '', speechExamples: style.trim() };
+  }
+  return { speechStyle: style };
+}
+
 export function normalizeProject(raw: any): Project {
   const base = createEmptyProject(raw?.meta?.title || 'Без названия');
   const str = (v: unknown, d = '') => (typeof v === 'string' ? v : d);
@@ -184,7 +206,7 @@ export function normalizeProject(raw: any): Project {
         appearance: str(c?.card?.appearance),
         personality: str(c?.card?.personality),
         backstory: str(c?.card?.backstory),
-        speechStyle: str(c?.card?.speechStyle),
+        ...splitSpeech(c?.card),
         relationshipArc:
           typeof c?.card?.relationshipArc === 'string' ? c.card.relationshipArc : undefined,
         scenario: typeof c?.card?.scenario === 'string' ? c.card.scenario : undefined,

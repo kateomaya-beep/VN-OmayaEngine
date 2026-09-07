@@ -89,7 +89,14 @@ export interface CharacterCard {
   appearance: string;
   personality: string;
   backstory: string;
+  // ОПИСАНИЕ манеры речи («короткие рубленые фразы, грубоват»).
   speechStyle: string;
+  // ОБРАЗЦЫ речи — настоящие реплики персонажа, как mes_example в Таверне. Держим
+  // отдельно от описания намеренно: описание модель читает как ещё одну строку
+  // характеристики и легко обобщает, а по образцам слышно голос — их она
+  // подхватывает заметно охотнее. Уходят они и в другое место промпта: не в анкету
+  // наверху, а вплотную к ходу, где внимание модели выше всего.
+  speechExamples?: string;
   relationshipArc?: string;
   scenario?: string; // из ST-карточки (стартовый контекст)
   greetings?: string[]; // first_mes + alternate_greetings
