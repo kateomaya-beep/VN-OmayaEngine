@@ -107,6 +107,21 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
     blocks.splice(to, 0, moved);
     savePreset({ ...preset, blocks });
   };
+  // ПЕРЕСТАНОВКА КНОПКАМИ. Перетаскивание за ⠿ сделано на HTML5 drag-and-drop, а он
+  // на сенсорных экранах не работает В ПРИНЦИПЕ: события dragstart/drop там просто
+  // не возникают. То есть на телефоне порядок блоков — главное, чем этот пресет
+  // настраивается, — был вообще недоступен, а ручка ⠿ намекала, что доступен.
+  // Стрелки решают это без хитростей с touch-эмуляцией драга: и на телефоне, и
+  // мышью, и с клавиатуры.
+  const moveBlock = (id: string, delta: number) => {
+    const blocks = [...preset.blocks];
+    const from = blocks.findIndex((b) => b.id === id);
+    const to = from + delta;
+    if (from === -1 || to < 0 || to >= blocks.length) return;
+    const [moved] = blocks.splice(from, 1);
+    blocks.splice(to, 0, moved);
+    savePreset({ ...preset, blocks });
+  };
   const exportPreset = () =>
     downloadBlob(
       new Blob([JSON.stringify(preset, null, 2)], { type: 'application/json' }),
@@ -248,7 +263,8 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         </div>
       </div>
       <p className="text-xs text-gray-500 mb-3">
-        Порядок = порядок в промпте. Перетаскивайте за ⠿; роль <b>S</b>/<b>U</b>/<b>A</b> =
+        Порядок = порядок в промпте. Двигайте стрелками <b>▲▼</b> (на компьютере ещё и
+        перетаскиванием за ⠿); роль <b>S</b>/<b>U</b>/<b>A</b> =
         system/user/assistant (как в Таверне).{' '}
         <span className="text-amber-400">↳ блоки</span> наполняет движок (мир, персонажи, память).
       </p>
@@ -289,7 +305,28 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
               </div>
             )}
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="cursor-grab select-none text-gray-500" title="Перетащить">
+              {/* Стрелки — основной способ на телефоне; ⠿ остаётся для мыши. */}
+              <div className="flex flex-col shrink-0">
+                <button
+                  className="w-6 h-5 leading-none rounded-t-md text-xs bg-white/[0.06] border border-white/10 text-[#d6cdf0] disabled:opacity-25 hover:bg-white/10"
+                  title="Выше"
+                  aria-label={`Переместить «${b.name}» выше`}
+                  disabled={bi === 0}
+                  onClick={() => moveBlock(b.id, -1)}
+                >
+                  ▲
+                </button>
+                <button
+                  className="w-6 h-5 leading-none rounded-b-md text-xs bg-white/[0.06] border border-white/10 border-t-0 text-[#d6cdf0] disabled:opacity-25 hover:bg-white/10"
+                  title="Ниже"
+                  aria-label={`Переместить «${b.name}» ниже`}
+                  disabled={bi === preset.blocks.length - 1}
+                  onClick={() => moveBlock(b.id, 1)}
+                >
+                  ▼
+                </button>
+              </div>
+              <span className="cursor-grab select-none text-gray-500 hidden sm:inline" title="Перетащить">
                 ⠿
               </span>
               <input
