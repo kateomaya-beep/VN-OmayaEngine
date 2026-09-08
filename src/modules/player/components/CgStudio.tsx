@@ -375,7 +375,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
               {galleryAssets.map((a) => (
                 <div key={a.id} className="rounded-xl overflow-hidden border border-white/10 bg-black/40 group relative">
                   <AssetImage blobKey={a.blobKey} className="w-full aspect-video object-cover" />
-                  <div className="absolute inset-x-0 bottom-0 flex justify-center gap-1 p-1.5 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="hover-only absolute inset-x-0 bottom-0 flex justify-center gap-1 p-1.5 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
                     <button className="btn-ghost !px-2 !py-1 text-xs" title={L('В сцену', 'Show')} onClick={() => showInScene(a.id)}>
                       ▶
                     </button>

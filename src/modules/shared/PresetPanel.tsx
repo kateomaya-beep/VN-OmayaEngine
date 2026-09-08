@@ -59,6 +59,8 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   const preset = isLocal ? cfg.localPreset : isDs ? cfg.deepseekPreset : isRp ? cfg.rpPreset : cfg.preset;
 
   const patch = (p: Partial<PresetSettings>) => patchStore(p);
+  // Где стоит история — по ней считается «ниже/выше» для меток и подсветки.
+  const historyIdx = preset.blocks.findIndex((b) => b.dynamic === 'history');
   const savePreset = (next: PromptPreset) =>
     patchStore(
       isLocal ? { localPreset: next } : isDs ? { deepseekPreset: next } : isRp ? { rpPreset: next } : { preset: next }
@@ -250,9 +252,20 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         system/user/assistant (как в Таверне).{' '}
         <span className="text-amber-400">↳ блоки</span> наполняет движок (мир, персонажи, память).
       </p>
+      <p className="text-xs text-gray-500 mb-3">
+        <b>Глубина задаётся положением.</b> Всё, что стоит <b>ниже «Истории переписки»</b>, уходит в
+        запрос ПОСЛЕ неё — то есть последним, вплотную к ходу, где модель слушает внимательнее всего.
+        Держит характер плохо — опустите «Персонажи в фокусе» под историю; забывает мир — так же с
+        «Мир и правила». Плата честная: чем ниже блок, тем чаще он ломает общий префикс запроса и тем
+        меньше толку от кэша провайдера.
+      </p>
+      <p className="text-[11px] text-gray-500 mb-3">
+        Если строгий шлюз ругается на системное сообщение посреди диалога — переключите «Обработку
+        промпта» на «Полустрогую»: она превратит такие блоки в user-сообщения, как делает Таверна.
+      </p>
 
       <div className="space-y-2">
-        {preset.blocks.map((b) => (
+        {preset.blocks.map((b, bi) => (
           <div
             key={b.id}
             draggable
@@ -264,8 +277,17 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
             }}
             className={`rounded-lg border p-3 bg-panel2 ${
               b.flagged ? 'border-amber-500/40' : 'border-white/10'
-            } ${dragId === b.id ? 'opacity-50' : ''}`}
+            } ${dragId === b.id ? 'opacity-50' : ''} ${
+              historyIdx >= 0 && bi > historyIdx ? 'ring-1 ring-emerald-400/25' : ''
+            }`}
           >
+            {/* Ниже «Истории переписки» = ближе к ходу. Отмечаем явно: без метки
+                перестановка блока выглядела как действие без последствий. */}
+            {historyIdx >= 0 && bi > historyIdx && (
+              <div className="text-[10px] uppercase tracking-wide text-emerald-300/80 mb-1.5">
+                ниже истории — модель читает это последним, прямо перед ходом
+              </div>
+            )}
             <div className="flex items-center gap-2 flex-wrap">
               <span className="cursor-grab select-none text-gray-500" title="Перетащить">
                 ⠿

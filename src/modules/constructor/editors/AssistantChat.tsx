@@ -253,7 +253,7 @@ export function AssistantChat(props?: {
                   {m.role === 'user' ? 'Вы' : 'Ассистент'}
                 </div>
                 {editing !== i && (
-                  <div className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <div className="hover-only opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <MessageMenu items={menuItems} disabled={busy} />
                   </div>
                 )}

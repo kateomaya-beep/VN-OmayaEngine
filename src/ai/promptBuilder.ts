@@ -172,6 +172,36 @@ export function focusCharacters(
   return [...project.characters].sort((a, b) => rank(a) - rank(b)).slice(0, RP_FULL_CARDS);
 }
 
+// ОБРАЗЦЫ РЕЧИ персонажей в фокусе. Отдельный блок пресета (dynamic: 'voice'),
+// а не вставка движка: место в промпте у него решающее, и решать его должен автор.
+//
+// По умолчанию блок стоит НИЖЕ истории — вплотную к ходу. Разница не в стиле: в
+// анкете, за сотни строк до хода, образцы читаются как ещё одно описание («говорит
+// резко» модель усваивает, звучание — нет), а положенные последними дают
+// услышать голос, и следующая реплика подстраивается под него. Так их подаёт и
+// Таверна — рядом с перепиской, а не внутри описания.
+function voiceSamplesText(
+  project: Project,
+  state: RuntimeState,
+  onScreenIds: string[],
+  mode: NarrativeMode,
+  recentText: string,
+  ctx: MacroContext
+): string {
+  const samples = focusCharacters(project, state, onScreenIds, mode, recentText)
+    .map((c) => ({ name: c.name, text: expandMacros(c.card.speechExamples || '', ctx).trim() }))
+    .filter((x) => x.text);
+  if (!samples.length) return '';
+  return (
+    'HOW THESE CHARACTERS SOUND — samples of their own speech, taken from their sheets.\n' +
+    'Match the vocabulary, rhythm, sentence length and manner; a line you write for them should be ' +
+    'attributable to them without a name tag. These are samples of a VOICE, not lines to reuse: never ' +
+    'quote one verbatim into the story, and never treat what happens in a sample as something that ' +
+    'happened in this story.\n\n' +
+    samples.map((x) => `--- ${x.name} ---\n${x.text}`).join('\n\n')
+  );
+}
+
 function whoIsWhoBlock(
   project: Project,
   state: RuntimeState,
@@ -973,6 +1003,7 @@ export async function buildRequest(
         : `== CURRENT STATE ==\nStats:\n${statsState(project, state.statValues)}\nCurrent background: ${currentBg} (${
             state.currentBackgroundId ?? 'null'
           })\nMusic mood: ${state.currentMusicMood ?? 'none'}`,
+    voice: () => voiceSamplesText(project, state, onScreenIds, mode, recentText, ctx),
     memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
     gamemaster: () => gameMasterBlock(state, state.turnCount),
     // История вставляется как СООБЩЕНИЯ, а не текст: обработчик выше перехватывает
@@ -1023,7 +1054,16 @@ export async function buildRequest(
     }
     if (!text.trim()) continue;
     const role = block.role || 'system';
-    if (role === 'system') systemParts.push(text);
+    // ПОЛОЖЕНИЕ БЛОКА РЕШАЕТ, КУДА ОН УЙДЁТ. Раньше решала только роль: любой
+    // system-блок улетал в системную часть, то есть в самое начало запроса, —
+    // и опустить его ниже истории было НЕВОЗМОЖНО. Пользователь переставлял блок
+    // в панели, порядок сохранялся, а в запросе не менялось ничего: движок молча
+    // возвращал блок наверх. Теперь всё, что стоит ниже «Истории переписки», едет
+    // после неё отдельным сообщением — со своей ролью, как выбрано в панели.
+    // (Строгим шлюзам системное сообщение посреди диалога не нравится — на этот
+    // случай в пресете есть «Обработка промпта»: «Полустрогая» превратит его в
+    // user-сообщение, как это делает Таверна.)
+    if (role === 'system' && historyAt === null) systemParts.push(text);
     else presetMessages.push({ role, content: text });
   }
 
@@ -1325,31 +1365,6 @@ export async function buildRequest(
     );
   }
 
-  // ОБРАЗЦЫ РЕЧИ — вплотную к ходу, а НЕ в анкете наверху.
-  //
-  // Место здесь не случайно. В анкете образцы стоят среди характеристик, за сотни
-  // строк до самого хода, и читаются моделью как ещё одно описание: «говорит
-  // резко» она усваивает, а звучание — нет. Тот же текст, положенный последним,
-  // работает совсем иначе: голос слышно, и следующая реплика подстраивается под
-  // него. Ровно так же образцы подаёт Таверна — не как часть описания, а рядом с
-  // перепиской.
-  //
-  // Дословно повторять их нельзя: это образцы ЗВУЧАНИЯ, а не заготовленные фразы,
-  // и вставленная целиком реплика из примера читается как склейка.
-  const voiceSamples = focusCharacters(project, state, onScreenIds, mode, recentText)
-    .map((c) => ({ name: c.name, text: expandMacros(c.card.speechExamples || '', ctx).trim() }))
-    .filter((x) => x.text);
-  if (voiceSamples.length) {
-    tail.push(
-      'HOW THESE CHARACTERS SOUND — samples of their own speech, taken from their sheets.\n' +
-        'Match the vocabulary, rhythm, sentence length and manner; a line you write for them should be ' +
-        'attributable to them without a name tag. These are samples of a VOICE, not lines to reuse: never ' +
-        'quote one verbatim into the story, and never treat what happens in a sample as something that ' +
-        'happened in this story.\n\n' +
-        voiceSamples.map((x) => `--- ${x.name} ---\n${x.text}`).join('\n\n')
-    );
-  }
-
   // Напоминания по включённым блокам поведения — перед директивами хода, но уже
   // после всей истории: это последнее, что модель читает про то, КАК себя вести.
   const depth = DEPTH_REMINDERS.filter((r) => r.keys.some((k) => enabledBuiltins.has(k))).map((r) => r.text);
@@ -1384,7 +1399,20 @@ export async function buildRequest(
   const formatReminder =
     mode === 'rp'
       ? 'Reminder: reply with the story only — plain prose, no JSON, no headers, no out-of-character text, and NOTHING written for the player.' +
-        (stateOn ? ` End with exactly one ${RP_STATE_OPEN}…${RP_STATE_CLOSE} block and nothing after it.` : '')
+        // Сам контракт сводки лежит блоком пресета — далеко наверху, за всей
+        // историей. Одной строки-упоминания в хвосте не хватало: модель дописывала
+        // прозу и на этом останавливалась, а сводка «терялась» — с ней переставали
+        // обновляться часы, досье и память. Поэтому здесь не напоминание, а сам
+        // каркас: его остаётся заполнить, а не вспомнить.
+        (stateOn
+          ? `\n\nAFTER the prose, and only after it, append the status block — it is NOT optional and NOT ` +
+            `part of the story; the player never sees it. Nothing may follow it.\n` +
+            `${RP_STATE_OPEN}\n{ "clock": { "day": "...", "month": "...", "year": "...", "time": "...", "location": "..." },\n` +
+            `  "characters": [ { "name": "...", "status": "...", "mood": "...", "location": "..." } ] }\n` +
+            `${RP_STATE_CLOSE}\n` +
+            `clock and characters are required EVERY turn, even when nothing changed — anything you omit silently ` +
+            `keeps its old value. The full field list is in the contract above; these two are the minimum.`
+          : '')
       : FORMAT_REMINDER;
 
   // Управляемое размышление: короткий план в <thinking> вместо медленной родной

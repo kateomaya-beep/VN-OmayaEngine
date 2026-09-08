@@ -228,6 +228,10 @@ Pacing is adaptive WITHIN the length the engine sets for this story: nearer the 
     b('game_master', '↳ Game Master State', '', { dynamic: 'gamemaster' }),
     b('memory', '↳ Memory', '', { dynamic: 'memory' }),
     b('chat_history', '💬 История переписки', '', { dynamic: 'history' }),
+    // НИЖЕ ИСТОРИИ. Всё, что стоит здесь, модель читает последним — перед самым
+    // ходом. Образцы речи именно поэтому тут: в анкете наверху они читаются как
+    // описание, а рядом с ходом — слышатся как голос.
+    b('voice_samples', '↳ Примеры реплик (ниже истории)', '', { dynamic: 'voice' }),
   ];
 }
 

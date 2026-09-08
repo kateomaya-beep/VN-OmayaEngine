@@ -90,6 +90,7 @@ In {{user}}'s own text, *italics* mean a private thought — nobody in the scene
     { ...b('scene_chars', '↳ Персонажи в фокусе', ''), dynamic: 'characters' },
     { ...b('memory', '↳ Память', ''), dynamic: 'memory' },
     { ...b('chat_history', '💬 История переписки', ''), dynamic: 'history' },
+    { ...b('voice_samples', '↳ Примеры реплик (ниже истории)', ''), dynamic: 'voice' },
   ];
 }
 

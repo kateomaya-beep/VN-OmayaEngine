@@ -8,12 +8,13 @@ import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson
 import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion, modelAlwaysThinks, modelTakesPrefill } from './providers';
-import { getPresetSettings } from './presetSettings';
+import { getPresetSettings, presetForMode, type PresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, rollRandomSms } from './randomEvents';
 import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock } from './rpResponse';
+import { RP_STATE_OPEN, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { protagonistName } from './macros';
 import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
@@ -696,6 +697,14 @@ export async function applyTurn(
 }
 
 // Run one player turn: build context -> call LLM -> parse/repair -> apply to state.
+// Ждём ли мы служебную сводку в конце ответа. Ровно тот же вопрос, на который
+// отвечает сборка промпта: блок сводки включён в пресете — значит контракт ушёл
+// модели, и её молчание в ответ это сбой, а не выбор автора.
+function stateExpected(ps: PresetSettings): boolean {
+  const blocks = presetForMode(ps, 'rp').blocks;
+  return blocks.some((b) => b.builtinKey === RP_STATE_BLOCK_KEY && b.enabled);
+}
+
 export async function runTurn(
   project: Project,
   state: RuntimeState,
@@ -855,6 +864,51 @@ export async function runTurn(
       rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard, prefill: hidePf });
     }
     if (!rp.prose.trim()) throw new Error('Модель вернула пустой ответ');
+
+    // СВОДКА НЕ ПРИШЛА. Модели регулярно дописывают прозу и на этом
+    // останавливаются: служебный блок в конце — единственная часть ответа, которую
+    // не видит игрок, и «забыть» её ничего не стоит. Цена молчаливая и высокая:
+    // перестают идти часы, не обновляются досье и статусы, память копит пустоту, а
+    // выглядит это как «Game Master сам по себе отстаёт от истории».
+    //
+    // Проза при этом ХОРОШАЯ — переспрашивать весь ход было бы расточительно и
+    // испортило бы уже написанное. Поэтому добираем ровно недостающее: отдельный
+    // короткий запрос, где просим по готовому тексту вернуть только сводку.
+    if (stateExpected(ps) && !rp.worldState) {
+      logEvent('warn', 'llm', 'Модель не прислала служебную сводку — добираю отдельным запросом');
+      try {
+        const patch = await runCompletion({
+          system:
+            'You extract a status block from a roleplay turn that was just written. Reply with the block ' +
+            'and NOTHING else — no prose, no explanation, no code fences.',
+          messages: [
+            { role: 'user', content: `The turn:\n\n${rp.prose}\n\nNow output the status block for it.` },
+          ],
+          temperature: 0,
+          maxTokens: 900,
+          reasoningEffort: 'none',
+          prefill: RP_STATE_OPEN,
+          signal,
+        });
+        // Открывающий тег мог приехать сам: там, где префилл ДОХОДИТ до модели,
+        // провайдер приклеивает его к ответу обратно, а там, где не доходит
+        // (Gemini и прочие из noPrefillTargets), — нет. Приводим к одному виду,
+        // иначе тег то удваивается, то отсутствует, и разбор падает в обоих случаях.
+        const block = patch.includes(RP_STATE_OPEN) ? patch : RP_STATE_OPEN + patch;
+        const fixed = parseRpResponse(block, { userName, guard: false });
+        if (fixed.worldState) {
+          rp = { ...rp, worldState: fixed.worldState };
+          rawRp = `${rawRp.trimEnd()}\n${block.slice(block.indexOf(RP_STATE_OPEN))}`;
+          logEvent('info', 'llm', 'Сводка добрана — состояние мира обновлено');
+        } else {
+          logEvent('warn', 'llm', 'Добрать сводку не удалось — состояние мира этот ход не обновится');
+        }
+      } catch (e) {
+        // Ход уже написан и не должен пропасть из-за неудачи со сводкой.
+        logEvent('warn', 'llm', 'Добор сводки не удался: ' + (e as Error).message);
+      }
+    }
+
     if (rp.plan) logEvent('info', 'think', `План хода ${state.turnCount + 1}`, rp.plan);
     if (lastReasoning.trim())
       logEvent('info', 'think', `Размышление модели, ход ${state.turnCount + 1}`, lastReasoning.trim());

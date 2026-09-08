@@ -368,7 +368,7 @@ function Message({
       </div>
 
       {!pending && !streaming && (
-        <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+        <div className="hover-only absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
           {swipes && (
             <span className="flex items-center gap-0.5">
               <button
