@@ -85,8 +85,12 @@ export function PlayerPage() {
   // Режим повествования решает, чем занят экран: сценой со спрайтами или лентой
   // переписки. Всё вокруг (верхняя панель, панели, сейвы, Game Master) — общее.
   const rp = normalizeNarrativeMode(s.project.mode) === 'rp';
+  // Значок «заметки есть» зажигается и от OOC-записки: она невидима в ленте, и без
+  // отметки о её существовании легко забыть, что ход идёт под каким-то условием.
   const notesPresent =
-    s.state.authorNotes.some((n) => n.text.trim()) || globalNotes.some((n) => n.text.trim());
+    !!s.state.oocNote?.trim() ||
+    s.state.authorNotes.some((n) => n.text.trim()) ||
+    globalNotes.some((n) => n.text.trim());
 
   const moreBeatsQueued = s.queue.length > 0;
   const currentBeat = s.visibleBeats[s.visibleBeats.length - 1] || null;

@@ -12,6 +12,8 @@ export function AuthorNotesPanel({ open, onClose }: { open: boolean; onClose: ()
   const lang = useLang((s) => s.lang);
   const L = (ru: string, en: string) => (lang === 'en' ? en : ru);
   const [tab, setTab] = useState<'project' | 'global'>('project');
+  const ooc = usePlayerStore((s) => s.state?.oocNote ?? '');
+  const setOoc = usePlayerStore((s) => s.setOocNote);
   // Проектные заметки живут в сейве, универсальные — в localStorage (все истории).
   const projectNotes = usePlayerStore((s) => s.state?.authorNotes ?? []);
   const setProjectNotes = usePlayerStore((s) => s.setAuthorNotes);
@@ -52,6 +54,36 @@ export function AuthorNotesPanel({ open, onClose }: { open: boolean; onClose: ()
 
   return (
     <Modal open={open} onClose={onClose} title={L('Авторские заметки для ИИ', "AI author's notes")}>
+      {/* НЕВИДИМАЯ OOC-ЗАПИСКА — первым делом, а не в конце списка: из всего, что
+          есть в этой панели, она действует строже всего, и искать её под списком
+          заметок было бы странно. */}
+      <div className="mb-4 rounded-xl border border-emerald-400/25 bg-emerald-500/[0.06] p-3">
+        <label className="label !text-emerald-300">
+          {L('Невидимая OOC-записка', 'Invisible OOC note')}
+        </label>
+        <p className="text-[11px] text-gray-400 mb-2">
+          {L(
+            'Уходит в запрос ровно перед вашим ходом — последним, что модель читает перед тем, как писать. В ленте не показывается и в переписку не попадает. Сюда пишут условия, а не события: «прямая речь строго в кавычках», «не заканчивай ход вопросом», «сегодня он простужен».',
+            'Goes into the request right before your move — the last thing the model reads before writing. Never shown in the feed, never added to the chat. For conditions, not events: "speech strictly in quotes", "do not end the turn with a question".'
+          )}
+        </p>
+        <textarea
+          className="input h-24 text-sm"
+          value={ooc}
+          placeholder={L(
+            'Прямая речь — только в «кавычках». Не заканчивай ход вопросом к игроку.',
+            'Speech only in quotes. Do not end the turn with a question to the player.'
+          )}
+          onChange={(e) => setOoc(e.target.value)}
+        />
+        <p className="text-[11px] text-gray-500 mt-1.5">
+          {L(
+            'Чем короче, тем строже исполняется: это не место для описаний мира — для них есть лор и заметки ниже, у которых настраивается глубина.',
+            'The shorter, the better obeyed: not a place for world description — that is what the lore and the notes below are for.'
+          )}
+        </p>
+      </div>
+
       <div className="flex gap-1.5 mb-3 p-1 rounded-xl bg-black/30 border border-white/10">
         <button
           onClick={() => setTab('project')}

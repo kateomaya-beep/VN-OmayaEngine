@@ -200,6 +200,7 @@ interface PlayerStore {
   restoreArchivedPeriod: (archiveIndex: number) => void;
   // Заметки для ИИ (Author's Notes) — менеджер записей; автосейв.
   setAuthorNotes: (notes: AuthorNote[]) => void;
+  setOocNote: (text: string) => void;
 
   // Правка ленты переписки (режим классического РП). Игрок редактирует и удаляет
   // сообщения прямо в чате — в новелле для этого нет места, там ход показывается
@@ -1440,6 +1441,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (!st.state) return;
     const nextState = { ...st.state, authorNotes: notes };
     set({ state: nextState });
+    void get().autosave();
+  },
+
+  setOocNote(text) {
+    const st = get();
+    if (!st.state) return;
+    set({ state: { ...st.state, oocNote: text.trim() ? text : undefined } });
     void get().autosave();
   },
 }));

@@ -1297,7 +1297,29 @@ export async function buildRequest(
   const blocks = (ps.advancedBlocks || []).filter(
     (b) => b.content.trim() && (!b.mode || b.mode === mode)
   );
-  const withMove: LlmMessage[] = [...messages, { role: 'user', content: rx(playerMove, 'user') }];
+  // НЕВИДИМАЯ OOC-ЗАПИСКА — последним, что модель прочтёт ПЕРЕД ходом игрока.
+  //
+  // Место выбрано не «примерно рядом», а точно: сразу после этого сообщения идёт
+  // сам ход, и всё, что стоит здесь, читается как условие, при котором ход надо
+  // отыграть. Авторские заметки живут в общем хвосте директив и делят внимание с
+  // длиной хода, форматом и напоминаниями; записка не делит его ни с чем.
+  //
+  // В ленте её нет и в историю она не попадает: собирается заново каждый ход из
+  // состояния (buildRequest вызывается на каждый ход с нуля), поэтому и накопиться
+  // в переписке не может.
+  const withMove: LlmMessage[] = [...messages];
+  const ooc = expandMacros((state.oocNote || '').trim(), ctx);
+  if (ooc) {
+    withMove.push({
+      role: 'user',
+      content:
+        '[OOC — from the player to you, the narrator. Not part of the story: nobody said it, nobody hears ' +
+        'it, never answer it inside the fiction and never mention it. It is a standing condition for how ' +
+        'you write THIS turn, and it outranks your own habits and preferences:]\n' +
+        ooc,
+    });
+  }
+  withMove.push({ role: 'user', content: rx(playerMove, 'user') });
   for (const b of blocks) {
     const depth = Math.max(0, Math.floor(b.depth));
     const insertAt = Math.max(0, withMove.length - depth);

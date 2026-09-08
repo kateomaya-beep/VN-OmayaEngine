@@ -441,6 +441,7 @@ export function initialRuntimeState(project: Project, protagonistName?: string):
     lastTurn: null,
     turnCount: 0,
     lastChoiceTurn: -1e9,
+    oocNote: undefined,
     authorNotes: [],
     turnsSinceLastEvent: 999, // «давно не было» → случайное событие может сработать сразу
     turnsSinceLastSms: 999,
@@ -540,6 +541,7 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
     turnCount: num(raw.turnCount, 0),
     lastChoiceTurn: num(raw.lastChoiceTurn, -1e9),
     // Миграция: старое единичное authorNote (строка) → одна запись списка.
+    oocNote: typeof raw.oocNote === 'string' && raw.oocNote.trim() ? raw.oocNote : undefined,
     authorNotes: Array.isArray(raw.authorNotes)
       ? raw.authorNotes
           .filter((n: any) => n && typeof n.text === 'string')
