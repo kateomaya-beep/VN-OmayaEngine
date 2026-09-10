@@ -90,6 +90,10 @@ export function streamingProse(raw: string): string {
     if (!prose) return '';
     t = prose;
   }
+  // Та же вытекшая форма, но на потоке. Пока она не дописана до конца (нет пустой
+  // строки после), абзац один — и показывать нечего: это правильно, лучше пусто,
+  // чем служебные ключи в ленте.
+  t = dropLeakedPlan(t, { streaming: true }).prose;
   t = t.replace(STATE_RE, '');
   // Сводка началась — история на этом закончилась, дальше только служебное.
   const at = t.search(new RegExp(RP_STATE_OPEN.replace(/[<>]/g, (c) => '\\' + c), 'i'));
@@ -97,6 +101,52 @@ export function streamingProse(raw: string): string {
   // Хвост вида «<sta» — начало тега, приехавшее по кусочкам.
   t = t.replace(/<[a-z]*$/i, '');
   return t.trimStart();
+}
+
+// ЧЕК-ЛИСТ, ВЫТЕКШИЙ В ОТВЕТ.
+//
+// У моделей, которым нельзя послать префилл (семейство Gemini на
+// OpenAI-совместимой ручке), открыть <thinking> за модель мы не можем, и чек-лист
+// уходит к ним просьбой «пройди его в своём размышлении, в ответ не пиши». Просьбу
+// исполняют не все: Gemini 3.x регулярно отвечает на неё ЗАПОЛНЕННОЙ ФОРМОЙ —
+// JSON-объектом с нашими же заголовками шагов, — и он оказывается прямо в сцене,
+// перед прозой. Вырезать его было нечем: тегов нет, на список он не похож.
+//
+// Опознаём по своим же меткам в виде JSON-ключей ("who knows what":, "ban list":).
+// Признак намеренно узкий: в живой прозе кавычка-двоеточие с нашим заголовком не
+// встречается, а двух совпадений в одном абзаце не бывает и подавно. Поэтому режем
+// только ведущие абзацы, где таких ключей минимум два, — всё остальное трогать
+// нельзя, это уже текст истории.
+const PLAN_KEY_RE =
+  /"(scene|wants|said\s*vs\s*thought|public\s*vs\s*private|who\s*knows\s*what|my\s*last\s*reply|echo|ban\s*list|friction|the\s*turn|format|opening|shape|who\s*acts|state|choice)"\s*:/gi;
+
+function planKeyCount(chunk: string): number {
+  const seen = new Set<string>();
+  for (const m of chunk.matchAll(PLAN_KEY_RE)) seen.add(m[1].toLowerCase().replace(/\s+/g, ' '));
+  return seen.size;
+}
+
+export function dropLeakedPlan(
+  body: string,
+  opts?: { streaming?: boolean }
+): { plan: string; prose: string } {
+  const parts = body.split(/\n\s*\n/);
+  let i = 0;
+  while (i < parts.length && planKeyCount(parts[i]) >= 2) i++;
+  if (i === 0) return { plan: '', prose: body };
+  const prose = parts.slice(i).join('\n\n').trim();
+  const plan = parts.slice(0, i).join('\n\n').trim();
+  // Прозы не осталось — и дальше два РАЗНЫХ правильных ответа.
+  //
+  // На потоке форма ещё дописывается, проза просто не начиналась: показываем
+  // пустоту, как и для незакрытого <thinking>. Пусть лучше на секунду ничего, чем
+  // служебные ключи в ленте.
+  //
+  // В готовом ответе пустая проза означала бы потерянный ход, а мы не можем быть
+  // уверены на 100%, что это форма, а не текст. Отдаём как есть: пусть движок
+  // переспросит или игрок увидит хоть что-то и удалит сам.
+  if (!prose) return opts?.streaming ? { plan, prose: '' } : { plan: '', prose: body };
+  return { plan, prose };
 }
 
 // НЕЗАКРЫТЫЙ <thinking>. Случай частый и коварный: префилл открывает тег за
@@ -186,6 +236,19 @@ export function parseRpResponse(
     // extractThinking на незакрытом теге отдаёт пустоту — план брать неоткуда,
     // кроме как отсюда. Без этого он бесследно пропадал бы из журнала.
     if (!plan) plan = split.plan;
+  }
+
+  // Форма, вытекшая в ответ (см. dropLeakedPlan) — до разбора сводки: она может
+  // стоять и перед ней.
+  const leaked = dropLeakedPlan(body);
+  if (leaked.plan) {
+    logEvent(
+      'warn',
+      'turn',
+      'Модель написала чек-лист прямо в ответе вместо своего размышления — вырезан, ход не потерян.'
+    );
+    body = leaked.prose;
+    if (!plan) plan = leaked.plan;
   }
 
   let worldState: WorldStateUpdate | undefined;

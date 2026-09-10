@@ -1474,7 +1474,17 @@ export async function buildRequest(
       // размышлении, а в ответ напишет только сцену.
       tail.push(
         'SELF-CHECK — before you write a single line, work through this checklist IN YOUR OWN REASONING, ' +
-          'in order, and let the answers decide what you write. Do NOT put any of it in the reply itself:\n' +
+          'in order, and let the answers decide what you write.\n' +
+          // Просьбы «не пиши это в ответ» мало: список с заголовками выглядит как
+          // форма, и модель её заполняет. Gemini 3.x делает это особенно охотно и
+          // особенно неудобно — JSON-объектом с нашими же ключами прямо перед
+          // сценой. Поэтому запрет конкретный, названы обе формы, и оставлен
+          // выход: если удержаться невозможно — в теги, откуда движок это вырежет.
+          'THE REPLY ITSELF CONTAINS ONLY THE STORY. Do not restate these steps, do not answer them on the ' +
+          'page, and above all do not emit a JSON object with these labels as keys ("scene", "wants", ' +
+          '"the turn"…) — that is engine plumbing, and the player would see it as part of the scene. ' +
+          'If you cannot keep the reasoning silent, put it in <thinking></thinking> before the prose so it ' +
+          'can be removed; never leave it bare:\n' +
           plan
       );
       tail.push(`${formatReminder}\n${lengthReminder}`);
