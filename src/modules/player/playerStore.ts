@@ -244,6 +244,22 @@ type PrevView = Pick<PlayerStore, 'visibleBeats' | 'queue' | 'phase' | 'choices'
 // новый ход накладывается поверх — состояние уплывает (двойные списания, «уже
 // был в Нью-Йорке, а после реролла снова в Китае»). Живёт только в памяти
 // вкладки: после перезагрузки честно откатываемся хотя бы по истории.
+// ПРАВКИ ИГРОКА, КОТОРЫЕ ХОД НЕ ВПРАВЕ ОТКАТЫВАТЬ.
+//
+// Ход пересобирает состояние мира целиком из снимка, снятого ДО запроса, — так и
+// должно быть — часы, досье, статы и память принадлежат ходу. Но OOC-записка и
+// авторские заметки принадлежат ИГРОКУ, а не ходу: их правят между ходами и,
+// главное, ПОКА ХОД ИДЁТ. Отредактировал записку, дожидаясь ответа, — и ответ,
+// приехав, возвращал её к тому, что было в снимке. Со стороны это выглядит как
+// «записка сама откатывается к первой версии», причём ровно после каждого хода.
+//
+// То же самое при перегенерации и переключении вариантов: там состояние
+// восстанавливается из preTurnState, и записка откатывалась вместе с ним.
+function carryPlayerEdits(next: RuntimeState, live: RuntimeState | null): RuntimeState {
+  if (!live) return next;
+  return { ...next, oocNote: live.oocNote, authorNotes: live.authorNotes };
+}
+
 let preTurnState: { move: string; state: RuntimeState } | null = null;
 
 // Текущая генерация в полёте (для «Отменить»/регенерации). Модульная переменная, а не
@@ -601,9 +617,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           'статы/инвентарь/часы от прошлой версии хода могли остаться применёнными.'
       );
     }
-    const rolledBack: RuntimeState = snap
-      ? JSON.parse(JSON.stringify(snap))
-      : { ...state, history: hist.slice(0, -2) };
+    const rolledBack: RuntimeState = carryPlayerEdits(
+      snap ? JSON.parse(JSON.stringify(snap)) : { ...state, history: hist.slice(0, -2) },
+      state
+    );
     await runAndApply(set, get, project, rolledBack, lastMove.content, rejected);
   },
 
@@ -670,9 +687,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           'часы и досье от прошлого варианта могли остаться применёнными.'
       );
     }
-    const rolledBack: RuntimeState = snap
-      ? JSON.parse(JSON.stringify(snap))
-      : { ...state, history: hist.slice(0, -2) };
+    const rolledBack: RuntimeState = carryPlayerEdits(
+      snap ? JSON.parse(JSON.stringify(snap)) : { ...state, history: hist.slice(0, -2) },
+      state
+    );
     await runAndApply(set, get, project, rolledBack, lastMove, last.content, keep);
   },
 
@@ -716,7 +734,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       return;
     }
 
-    const base: RuntimeState = JSON.parse(JSON.stringify(snap));
+    const base: RuntimeState = carryPlayerEdits(JSON.parse(JSON.stringify(snap)), state);
     const turn = rpTurn(base, rp.prose, rp.worldState);
     const applied = await applyTurn(project, base, move, turn, last.swipes[index], {});
     const next = applied.state;
@@ -1749,7 +1767,9 @@ async function runAndApply(
 
     const [first, ...rest] = turn.beats;
     set({
-      state: applied,
+      // Записка и заметки — из ЖИВОГО состояния, а не из результата хода: игрок мог
+      // поправить их, пока мы ждали ответ (см. carryPlayerEdits).
+      state: carryPlayerEdits(applied, get().state),
       queue: rest,
       visibleBeats: first ? [first] : [],
       phase: turn.beats.length ? 'beats' : 'choices',

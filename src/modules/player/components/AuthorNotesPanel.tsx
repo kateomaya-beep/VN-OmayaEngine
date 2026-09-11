@@ -14,6 +14,11 @@ export function AuthorNotesPanel({ open, onClose }: { open: boolean; onClose: ()
   const [tab, setTab] = useState<'project' | 'global'>('project');
   const ooc = usePlayerStore((s) => s.state?.oocNote ?? '');
   const setOoc = usePlayerStore((s) => s.setOocNote);
+  // Отметка «сохранено». Записка пишется в сейв сразу, кнопка «Сохранить» ей не
+  // нужна — но видеть, что правка ПРИНЯТА, нужно: она невидима в ленте, и раньше
+  // её действительно откатывало ходом (см. carryPlayerEdits), так что доверие к
+  // молчаливому сохранению подорвано по делу.
+  const [oocSaved, setOocSaved] = useState(false);
   // Проектные заметки живут в сейве, универсальные — в localStorage (все истории).
   const projectNotes = usePlayerStore((s) => s.state?.authorNotes ?? []);
   const setProjectNotes = usePlayerStore((s) => s.setAuthorNotes);
@@ -74,8 +79,15 @@ export function AuthorNotesPanel({ open, onClose }: { open: boolean; onClose: ()
             'Прямая речь — только в «кавычках». Не заканчивай ход вопросом к игроку.',
             'Speech only in quotes. Do not end the turn with a question to the player.'
           )}
-          onChange={(e) => setOoc(e.target.value)}
+          onChange={(e) => {
+            setOoc(e.target.value);
+            setOocSaved(true);
+            window.setTimeout(() => setOocSaved(false), 1500);
+          }}
         />
+        <div className="h-4 mt-1 text-[11px] text-emerald-300/90">
+          {oocSaved ? L('✓ сохранено — уйдёт со следующим ходом', '✓ saved — applies from the next turn') : ''}
+        </div>
         <p className="text-[11px] text-gray-500 mt-1.5">
           {L(
             'Чем короче, тем строже исполняется: это не место для описаний мира — для них есть лор и заметки ниже, у которых настраивается глубина.',
