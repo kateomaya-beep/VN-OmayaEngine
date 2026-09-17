@@ -25,10 +25,49 @@ const EVENT_TEXT: Record<RandomEventType, string> = {
   unexpected_twist: 'An unexpected twist occurs.',
 };
 
+function eventDirective(id: RandomEventType): string {
+  return `[RANDOM EVENT TRIGGERED: ${id}]
+${EVENT_TEXT[id]}
+Weave this into your next response organically. It must fit the current story, tone and pacing — introduce it naturally as part of the narrative, never as a jarring interruption or a system announcement. Do NOT mention that it was a random event.`;
+}
+
 export interface RandomEventRoll {
   fired: boolean;
   directive: string; // скрытая директива для контекста хода (пусто, если не сработало)
   type?: RandomEventType;
+}
+
+// СОБЫТИЕ ПО ТРЕБОВАНИЮ (/event). Тот же механизм, что и случайный ролл, но без
+// самого ролла: ни шанса, ни кулдауна, ни защиты напряжённой сцены — их смысл в
+// том, чтобы движок не лез в историю сам, а здесь его позвали.
+//
+// Тип берётся из настроек проекта по тем же весам, что и у случайного, — чтобы
+// «дай событие» выдавало то же, что выпало бы само, только сейчас. Можно назвать
+// тип явно: /event npc. Выключённые в настройках типы при явном выборе тоже
+// доступны — это осознанная просьба игрока, а не автоматика.
+export function forcedEvent(project: Project, type?: RandomEventType): RandomEventRoll {
+  const cfg = project.randomEvents;
+  let picked: RandomEventType | undefined = type;
+  if (!picked) {
+    const pool = (cfg?.types || []).filter((t) => t.enabled && t.weight > 0);
+    if (pool.length) {
+      const total = pool.reduce((s, t) => s + t.weight, 0);
+      let r = Math.random() * total;
+      picked = pool[0].id;
+      for (const t of pool) {
+        r -= t.weight;
+        if (r <= 0) {
+          picked = t.id;
+          break;
+        }
+      }
+    } else {
+      // Все типы выключены или весов нет — но команду дали. Берём любой из
+      // существующих, иначе пришлось бы молча ничего не делать.
+      picked = 'unexpected_twist';
+    }
+  }
+  return { fired: true, type: picked, directive: eventDirective(picked) };
 }
 
 // Решает, подмешивать ли событие в текущий ход. Чистая функция (кроме Math.random).
@@ -61,11 +100,7 @@ export function rollRandomEvent(project: Project, state: RuntimeState): RandomEv
     }
   }
 
-  const directive = `[RANDOM EVENT TRIGGERED: ${picked.id}]
-${EVENT_TEXT[picked.id]}
-Weave this into your next response organically. It must fit the current story, tone and pacing — introduce it naturally as part of the narrative, never as a jarring interruption or a system announcement. Do NOT mention that it was a random event.`;
-
-  return { fired: true, directive, type: picked.id };
+  return { fired: true, directive: eventDirective(picked.id), type: picked.id };
 }
 
 // Случайное входящее СМС (Batch 8-fix): отдельная от событий система — свой тумблер,

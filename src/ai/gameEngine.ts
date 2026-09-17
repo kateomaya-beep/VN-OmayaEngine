@@ -1,4 +1,4 @@
-import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry, PhoneState, InventoryItem } from '../shared/types';
+import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry, PhoneState, InventoryItem, RandomEventType } from '../shared/types';
 import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhoneState, RANDOM_EVENT_LABELS, normalizeNarrativeMode } from '../shared/types';
 import { pushToast } from '../shared/toast';
 import { logEvent } from '../shared/logStore';
@@ -12,7 +12,7 @@ import { getPresetSettings, presetForMode, type PresetSettings } from './presetS
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
-import { rollRandomEvent, rollRandomSms } from './randomEvents';
+import { rollRandomEvent, forcedEvent, rollRandomSms } from './randomEvents';
 import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock } from './rpResponse';
 import { RP_STATE_OPEN, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { protagonistName } from './macros';
@@ -715,17 +715,26 @@ export async function runTurn(
   // Потоковый показ (только текстовый РП): зовётся с НАКОПЛЕННЫМ текстом ответа,
   // уже очищенным от служебных тегов. В новелле смысла не имеет — там ход
   // приезжает одним JSON-объектом, показывать по кускам нечего.
-  onStream?: (s: { prose: string; thinking: string }) => void
+  onStream?: (s: { prose: string; thinking: string }) => void,
+  // Событие ПО ТРЕБОВАНИЮ (команда /event): true — тип выберет движок по весам из
+  // настроек, конкретный тип — берём его. Ролл в этом ходу не бросаем вовсе.
+  forceEvent?: RandomEventType | true
 ): Promise<TurnResult> {
   const mode = normalizeNarrativeMode(project.mode);
   // Случайное событие (Batch 6 §3) и случайное СМС (Batch 8-fix) — независимые роллы.
   // Обе скрытые директивы могут прийти в один ход (событие + отдельное входящее СМС).
-  const evt = rollRandomEvent(project, state);
+  const evt = forceEvent
+    ? forcedEvent(project, forceEvent === true ? undefined : forceEvent)
+    : rollRandomEvent(project, state);
   // Входящие СМС требуют управляющих битов, которых в текстовом РП нет: там ответ —
   // проза, и «пришлите sms_incoming» модель выполнить не может. Роллим только в новелле.
   const sms = mode === 'rp' ? { fired: false, directive: '' } : rollRandomSms(project, state);
   // Небольшой поп-ап, чтобы игрок понимал, что сейчас триггернулось (по просьбе).
-  if (evt.fired && evt.type) pushToast('info', `🎲 Случайное событие: ${RANDOM_EVENT_LABELS[evt.type].ru}`);
+  if (evt.fired && evt.type)
+    pushToast(
+      'info',
+      `🎲 ${forceEvent ? 'Событие' : 'Случайное событие'}: ${RANDOM_EVENT_LABELS[evt.type].ru}`
+    );
   if (sms.fired) pushToast('info', '📱 Сейчас придёт входящее сообщение…');
   // Реролл без этой директивы возвращал почти тот же ход: контекст тот же, и модель
   // заново приходила к тому же повороту — особенно если событие «запланировано»

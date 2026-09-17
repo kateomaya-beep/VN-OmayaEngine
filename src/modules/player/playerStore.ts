@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneContact, PhoneChat, AssetMeta, InventoryItem, CharacterRole, RelationshipStats } from '../../shared/types';
+import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneContact, PhoneChat, AssetMeta, InventoryItem, CharacterRole, RelationshipStats, RandomEventType } from '../../shared/types';
 import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRelationship, normalizeNarrativeMode } from '../../shared/types';
 import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState } from '../../shared/factory';
@@ -582,6 +582,24 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         return;
       case 'move': {
         const ok = await runAndApply(set, get, project, state, slash.text);
+        if (ok) set({ draft: '' });
+        return;
+      }
+      // Событие ПРЯМО СЕЙЧАС. Текст после команды (если он есть) — обычный дословный
+      // ход героя, просто в этот ход гарантированно вплетается событие; без текста
+      // сцена просто продолжается, как по кнопке «дальше».
+      case 'event': {
+        const move = slash.text.trim() ? `[VERBATIM] ${slash.text.trim()}` : '[CONTINUE]';
+        const ok = await runAndApply(
+          set,
+          get,
+          project,
+          state,
+          move,
+          undefined,
+          undefined,
+          slash.type ?? true
+        );
         if (ok) set({ draft: '' });
         return;
       }
@@ -1671,7 +1689,9 @@ async function runAndApply(
   playerMove: string,
   rejectedTurn?: string,
   // Варианты ответа, накопленные до этого хода (свайпы). Пусто — обычный ход.
-  keepSwipes?: string[]
+  keepSwipes?: string[],
+  // Событие по требованию (/event): true — тип выберет движок, иначе конкретный тип.
+  forceEvent?: RandomEventType | true
 ): Promise<boolean> {
   // Новый ход вытесняет предыдущий: если что-то ещё в полёте (напр. регенерация
   // поверх текущей генерации) — сразу абортим его, не дожидаясь завершения. Помечаем
@@ -1727,7 +1747,8 @@ async function runAndApply(
       playerMove,
       controller.signal,
       rejectedTurn,
-      onStream
+      onStream,
+      forceEvent
     );
     const waited = Math.round((Date.now() - askedAt) / 1000);
 

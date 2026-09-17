@@ -55,6 +55,9 @@ export function Console({
         <button
           className={`${iconBtn} ${iconIdle}`}
           title={SLASH_HELP}
+          // На телефоне наведения нет: список команд открывался только мышью, и с
+          // телефона о нём нельзя было узнать вообще никак. Тап — переключатель.
+          onClick={() => setShowHelp((v) => !v)}
           onMouseEnter={() => setShowHelp(true)}
           onMouseLeave={() => setShowHelp(false)}
         >
