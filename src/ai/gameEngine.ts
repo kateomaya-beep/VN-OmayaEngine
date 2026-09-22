@@ -763,7 +763,14 @@ export async function runTurn(
     : undefined;
   const extraDirective =
     [evt.directive, sms.directive, rerollDirective].filter(Boolean).join('\n\n') || undefined;
+  const builtAt = Date.now();
   const req = await buildRequest(project, state, playerMove, { extraDirective });
+  // Сборка запроса обычно занимает доли секунды. Дольше — значит, ход ждал что-то
+  // ДО модели (поиск по прошлому и т. п.), и «долго думает» — не про модель.
+  const buildSec = (Date.now() - builtAt) / 1000;
+  if (buildSec > 2) {
+    logEvent('warn', 'turn', `Подготовка хода заняла ${buildSec.toFixed(1)} с — запрос к модели ушёл только после этого`);
+  }
 
   // Потолок токенов — под верхнюю границу длины хода (слова→токены ≈ ×2.2 для
   // кириллицы) + запас на JSON-обвязку/worldState. Держим НЕ слишком большим,

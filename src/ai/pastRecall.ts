@@ -1,6 +1,7 @@
 import type { Project, RuntimeState } from '../shared/types';
 import { buildTimeline } from './chapters';
 import { retrieveRelevant } from './vectorEngine';
+import { logEvent } from '../shared/logStore';
 
 // ПОИСК ПО ПРОШЛОМУ — дословные отрывки свёрнутых ходов, похожие на то, что
 // происходит сейчас.
@@ -118,12 +119,20 @@ export async function pastRecall(project: Project, state: RuntimeState, query: s
   if (mode === 'keyword') return keywordRecall(state, query, topK);
   const ps = passages(state);
   if (!ps.length) return [];
-  const hits = await retrieveRelevant(
+  const { hits, ready } = await retrieveRelevant(
     project,
     query,
     ps.map((p, i) => ({ id: String(i), text: p.text })),
     topK
   );
+  // Смысловой поиск ещё прогревается, не ответил вовремя или ничего не нашёл — не
+  // оставляем ход без памяти о прошлом: ищем по словам.
+  if (!hits.length) {
+    if (ready < ps.length) {
+      logEvent('info', 'memory', `Поиск по смыслу прогревается (${ready} из ${ps.length} отрывков) — в этот ход ищу по словам`);
+    }
+    return keywordRecall(state, query, topK);
+  }
   const terms = new Set(stems(query));
   return hits
     .map((h) => ps[Number(h.id)])

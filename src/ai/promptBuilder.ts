@@ -677,7 +677,18 @@ async function buildMemoryPlan(
   if (!skipVector) {
     const lastStory = [...state.history].reverse().find((h) => h.role === 'assistant');
     const query = `${playerMove}\n${lastStory ? stripStateBlock(String(lastStory.content)).slice(-800) : ''}`;
-    const hits = await pastRecall(project, state, query, 3);
+    // Страховка: поиск по прошлому — дополнение, и держать из-за него ход нельзя.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const hits = await Promise.race([
+      pastRecall(project, state, query, 3).catch(() => []),
+      new Promise<[]>((resolve) => {
+        timer = setTimeout(() => {
+          logEvent('warn', 'memory', 'Поиск по прошлому не уложился в 6 с — ход идёт без него');
+          resolve([]);
+        }, 6000);
+      }),
+    ]);
+    clearTimeout(timer);
     if (hits.length) {
       mb.push(
         `PASSAGES FROM EARLIER IN THE STORY (verbatim excerpts matched to what is happening now — they already happened):\n${hits

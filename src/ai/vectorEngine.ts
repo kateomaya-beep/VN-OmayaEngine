@@ -1,5 +1,6 @@
 import type { Project } from '../shared/types';
 import { getApiKey } from './keys';
+import { logEvent } from '../shared/logStore';
 
 // Векторизация памяти (см. CR v2 §E3): подсос релевантного из "сырого архива"
 // (свёрнутые куски истории, не инжектящиеся целиком). Три режима: builtin
@@ -49,14 +50,23 @@ async function embedCustom(project: Project, texts: string[]): Promise<number[][
   if (!conn) throw new Error('Не настроено подключение для эмбеддингов');
   const base = conn.baseUrl.replace(/\/$/, '');
   const key = getApiKey('embeddings');
-  const res = await fetch(`${base}/embeddings`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(key ? { Authorization: `Bearer ${key}` } : {}),
-    },
-    body: JSON.stringify({ model: conn.model || 'text-embedding-3-small', input: texts }),
-  });
+  // Без таймаута зависший API эмбеддингов держал бы всё, что его ждёт.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), EMBED_REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${base}/embeddings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      },
+      body: JSON.stringify({ model: conn.model || 'text-embedding-3-small', input: texts }),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) throw new Error(`Embeddings API вернул ${res.status}`);
   const data = await res.json();
   const items = Array.isArray(data?.data) ? data.data : [];
@@ -86,30 +96,82 @@ function cosine(a: number[], b: number[]): number {
 
 const vecCache = new Map<string, number[]>();
 
-// Возвращает top-k наиболее релевантных элементов корпуса к запросу. Любая
-// ошибка (модель не загрузилась, API недоступен) → пустой массив, без крашей.
+// ПОИСК ПО СМЫСЛУ НЕ ДОЛЖЕН ДЕРЖАТЬ ХОД. Архив ищется по отрывку на каждый ход —
+// на длинной игре это сотни текстов. Раньше все недостающие эмбеддинги считались
+// ПРЯМО В ХОДЕ одним заходом: встроенная модель на телефоне считала их минутами
+// (и заново после каждой перезагрузки — кэш живёт в памяти вкладки), а внешний
+// API получал сотни текстов разом и мог не ответить вовсе. Ход всё это время
+// «думал», хотя до модели запрос ещё даже не ушёл. Теперь:
+//  • архив прогревается В ФОНЕ небольшими порциями и кэшируется;
+//  • в ходе ищем только среди уже посчитанного, а на запрос даём короткий срок;
+//  • не успели — ход идёт дальше без этого поиска (вызывающий подставит поиск по словам).
+const EMBED_REQUEST_TIMEOUT_MS = 30000;
+const RECALL_TIMEOUT_MS = 4000;
+let warming = false;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(t);
+        resolve(null);
+      }
+    );
+  });
+}
+
+async function warmUp(project: Project, texts: string[], key: (t: string) => string): Promise<void> {
+  if (warming) return;
+  warming = true;
+  // Встроенная модель считает в одном воркере по очереди: маленькие порции, чтобы
+  // запрос следующего хода не стоял за большой пачкой.
+  const batch = project.memoryConfig.vectorization === 'builtin' ? 8 : 32;
+  try {
+    for (let i = 0; i < texts.length; i += batch) {
+      const part = texts.slice(i, i + batch).filter((t) => !vecCache.has(key(t)));
+      if (!part.length) continue;
+      const vecs = await embed(project, part);
+      part.forEach((t, j) => vecs[j] && vecCache.set(key(t), vecs[j]));
+    }
+    logEvent('info', 'memory', `Поиск по смыслу: архив посчитан (${texts.length} отрывков)`);
+  } catch (e) {
+    logEvent('warn', 'memory', 'Эмбеддинги архива не посчитались: ' + (e as Error).message + ' — пока работает поиск по словам');
+  } finally {
+    warming = false;
+  }
+}
+
+export interface RecallResult {
+  hits: Corpus[];
+  /** Сколько текстов корпуса уже посчитано (остальные прогреваются в фоне). */
+  ready: number;
+}
+
+// Возвращает top-k наиболее релевантных элементов корпуса к запросу. Никогда не
+// ждёт дольше RECALL_TIMEOUT_MS и никогда не бросает.
 export async function retrieveRelevant(
   project: Project,
   query: string,
   corpus: Corpus[],
   topK = 3
-): Promise<Corpus[]> {
+): Promise<RecallResult> {
   const mode = project.memoryConfig.vectorization;
-  if (mode === 'off' || mode === 'keyword' || corpus.length === 0) return [];
-  try {
-    // Эмбеддинги архива считаются ОДИН раз: текст свёрнутого хода не меняется, а
-    // раньше весь архив заново прогонялся через модель на каждом ходу.
-    const key = (t: string) => `${mode}|${project.memoryConfig.embeddingsConnection?.model || ''}|${t}`;
-    const missing = corpus.filter((c) => !vecCache.has(key(c.text)));
-    const fresh = await embed(project, [query, ...missing.map((c) => c.text)]);
-    const queryVec = fresh[0];
-    missing.forEach((c, i) => vecCache.set(key(c.text), fresh[i + 1]));
-    if (vecCache.size > 5000) vecCache.clear();
-    const corpusVecs = corpus.map((c) => vecCache.get(key(c.text)) || []);
-    const scored = corpus.map((c, i) => ({ ...c, score: cosine(queryVec, corpusVecs[i]) }));
-    scored.sort((a, b) => b.score - a.score);
-    return scored.filter((s) => s.score > 0.3).slice(0, topK);
-  } catch {
-    return []; // graceful degradation — контекст просто обходится без подсоса
-  }
+  if (mode === 'off' || mode === 'keyword' || corpus.length === 0) return { hits: [], ready: 0 };
+  const key = (t: string) => `${mode}|${project.memoryConfig.embeddingsConnection?.model || ''}|${t}`;
+  const missing = corpus.filter((c) => !vecCache.has(key(c.text)));
+  if (missing.length) void warmUp(project, missing.map((c) => c.text), key);
+  const ready = corpus.filter((c) => vecCache.has(key(c.text)));
+  if (!ready.length) return { hits: [], ready: 0 };
+  const q = await withTimeout(embed(project, [query]), RECALL_TIMEOUT_MS);
+  const queryVec = q?.[0];
+  if (!queryVec) return { hits: [], ready: ready.length };
+  const scored = ready.map((c) => ({ ...c, score: cosine(queryVec, vecCache.get(key(c.text)) || []) }));
+  if (vecCache.size > 5000) vecCache.clear();
+  scored.sort((a, b) => b.score - a.score);
+  return { hits: scored.filter((x) => x.score > 0.3).slice(0, topK), ready: ready.length };
 }
