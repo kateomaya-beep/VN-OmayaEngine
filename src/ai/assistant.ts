@@ -50,7 +50,7 @@ export type Revert =
   | { kind: 'restoreLore'; field: keyof Project['lore']; prev: string }
   // Правки ПАМЯТИ ПРОХОЖДЕНИЯ (меморибук, эволюция) — только из игры.
   | { kind: 'deleteMemory'; id: string }
-  | { kind: 'restoreMemory'; prev: MemoryBookEntry }
+  | { kind: 'restoreMemory'; prev: MemoryBookEntry; index?: number }
   | { kind: 'deleteArcStage'; name: string; id: string }
   | { kind: 'dropJob'; jobId: string };
 
@@ -671,10 +671,14 @@ export function applyAssistantMemoryOps(memory: MemoryState, ops: any[], turn: n
     }
     if (op === 'memory.delete') {
       const id = str(raw.id);
-      const prev = memory.memorybook.find((e) => e.id === id);
-      if (!prev) continue;
+      const index = memory.memorybook.findIndex((e) => e.id === id);
+      if (index === -1) continue;
+      const prev = memory.memorybook[index];
       memory.memorybook = memory.memorybook.filter((e) => e.id !== id);
-      changes.push({ label: `Меморибук: удалена «${prev.title}»`, revert: { kind: 'restoreMemory', prev: JSON.parse(JSON.stringify(prev)) } });
+      changes.push({
+        label: `Меморибук: удалена «${prev.title}»`,
+        revert: { kind: 'restoreMemory', prev: JSON.parse(JSON.stringify(prev)), index },
+      });
       continue;
     }
     if (op === 'memory.chapters') {
@@ -732,7 +736,8 @@ export function revertMemoryChanges(memory: MemoryState, changes: AppliedChange[
       case 'restoreMemory': {
         const i = memory.memorybook.findIndex((e) => e.id === r.prev.id);
         if (i >= 0) memory.memorybook[i] = r.prev;
-        else memory.memorybook.push(r.prev);
+        // Удалённая запись возвращается на своё место, а не в конец списка.
+        else memory.memorybook.splice(Math.min(r.index ?? memory.memorybook.length, memory.memorybook.length), 0, r.prev);
         break;
       }
       case 'deleteArcStage':

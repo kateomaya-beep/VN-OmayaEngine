@@ -49,9 +49,10 @@ export interface ChapterUnit {
 }
 
 // Потолок одной главы по объёму стенограммы: больше модель пересказывает хуже,
-// и ответ чаще обрывается.
-const UNIT_CHARS = 30000;
-const UNIT_MSGS = 40;
+// и ответ чаще обрывается. Число сообщений в главе — из настроек (chapterSize):
+// глава закрывается, набрав размер, на границе хода; максимум — полтора размера.
+const UNIT_CHARS = 60000;
+const sizeOf = (project: Project) => Math.max(4, project.memoryConfig.chapterSize ?? 12);
 // Хвост живой истории, который «заполнить с нуля» не трогает: это текущая сцена,
 // она ещё идёт, и главу о ней писать рано.
 const LIVE_TAIL = 4;
@@ -89,14 +90,29 @@ function toUnits(
     });
     cur = { msgs: [], lines: [], chars: 0 };
   };
+  const size = sizeOf(project);
+  const hardMax = Math.ceil(size * 1.5);
   for (const m of msgs) {
     const line = lineOf(project, state, m);
-    const full = cur.chars + line.length > UNIT_CHARS || cur.msgs.length >= UNIT_MSGS;
-    if (full && cur.msgs.length >= 4 && m.role === 'user') flush();
-    else if (cur.chars + line.length > UNIT_CHARS * 1.3 && cur.msgs.length >= 4) flush();
+    const enough = cur.msgs.length >= size || cur.chars + line.length > UNIT_CHARS;
+    if (enough && m.role === 'user') flush();
+    else if (cur.msgs.length >= hardMax || (cur.chars + line.length > UNIT_CHARS * 1.3 && cur.msgs.length >= 4)) flush();
     cur.msgs.push(m);
     cur.lines.push(line);
     cur.chars += line.length + 2;
+  }
+  // Хвост меньше половины главы — приклеиваем к предыдущей, а не плодим огрызок.
+  if (units.length && cur.msgs.length && cur.msgs.length < size / 2) {
+    const prev = units.pop()!;
+    const last = cur.msgs[cur.msgs.length - 1];
+    units.push({
+      ...prev,
+      toMsg: last.abs,
+      toTurn: last.turn,
+      transcript: `${prev.transcript}\n\n${cur.lines.join('\n\n')}`,
+      archiveTurn: prev.archiveTurn === extra.archiveTurn ? prev.archiveTurn : undefined,
+    });
+    cur = { msgs: [], lines: [], chars: 0 };
   }
   flush();
   return units;
@@ -111,44 +127,62 @@ export function planUnits(project: Project, state: RuntimeState, scope: ChapterS
   const ranges = archiveRanges(state, timeline);
   const units: ChapterUnit[] = [];
 
-  const chunkUnits = (i: number, rebuild: boolean) => {
-    const chunk = memory.rawArchive[i];
-    const r = ranges[i];
-    if (!chunk || !r?.count) return;
-    const linked = memory.memorybook.filter((e) => realChapter(e) && e.archiveTurn === chunk.turn);
-    const covered = linked.length > 0 || coverage(memory, r.fromMsg, r.toMsg) >= 0.9;
-    if (covered && !rebuild) return;
-    units.push(
-      ...toUnits(
-        project,
-        state,
-        timeline.filter((m) => m.archiveIndex === i),
-        { archiveTurn: chunk.turn, replaceIds: rebuild ? linked.map((e) => e.id) : [] }
-      )
-    );
+  const hasRange = (e: MemoryBookEntry) => typeof e.fromMsg === 'number' && typeof e.toMsg === 'number';
+  const overlapping = (from: number, to: number) =>
+    memory.memorybook.filter((e) => realChapter(e) && hasRange(e) && e.fromMsg! <= to && e.toMsg! >= from);
+  // Подряд идущие сообщения → главы нужного размера. Глава не обязана совпадать с
+  // куском архива: куски режет бюджет (бывают по 2 сообщения), главу — её размер.
+  // Привязка к куску остаётся, только если глава целиком из одного куска.
+  const unitsFor = (msgs: TimelineMsg[], replace: boolean) => {
+    for (const u of toUnits(project, state, msgs)) {
+      const own = msgs.filter((m) => m.abs >= u.fromMsg && m.abs <= u.toMsg);
+      const chunks = new Set(own.map((m) => m.archiveIndex));
+      const one = chunks.size === 1 && own[0]?.archiveIndex !== undefined ? memory.rawArchive[own[0].archiveIndex!] : undefined;
+      units.push({
+        ...u,
+        archiveTurn: one?.turn,
+        replaceIds: replace ? overlapping(u.fromMsg, u.toMsg).map((e) => e.id) : [],
+      });
+    }
   };
+  // Разбить на участки подряд идущих сообщений, удовлетворяющих условию.
+  const runs = (msgs: TimelineMsg[], take: (m: TimelineMsg) => boolean): TimelineMsg[][] => {
+    const out: TimelineMsg[][] = [];
+    let run: TimelineMsg[] = [];
+    for (const m of msgs) {
+      if (take(m)) run.push(m);
+      else if (run.length) {
+        out.push(run);
+        run = [];
+      }
+    }
+    if (run.length) out.push(run);
+    return out.filter((r) => r.length >= 2);
+  };
+  const archived = timeline.filter((m) => m.source === 'archive');
+  const covered = (m: TimelineMsg) => coverage(memory, m.abs, m.abs) >= 1;
 
   if (scope.kind === 'chunk') {
-    chunkUnits(scope.archiveIndex, true);
+    // Пересобрать период архива = пересобрать все главы, которые его задевают
+    // (вместе с их границами), — иначе вышла бы глава-огрызок размером с кусок.
+    const r = ranges[scope.archiveIndex];
+    if (!r?.count) return units;
+    const hit = overlapping(r.fromMsg, r.toMsg);
+    const from = Math.min(r.fromMsg, ...hit.map((e) => e.fromMsg!));
+    const to = Math.max(r.toMsg, ...hit.map((e) => e.toMsg!));
+    unitsFor(timeline.filter((m) => m.abs >= from && m.abs <= to), true);
     return units;
   }
-  if (scope.kind === 'archive' || scope.kind === 'fill') {
-    memory.rawArchive.forEach((_, i) => chunkUnits(i, scope.kind === 'archive' && !!scope.rebuildAll));
+  if (scope.kind === 'archive' && scope.rebuildAll) {
+    // Всё заново, крупными главами: старые главы заменяются теми, что их перекрыли.
+    for (const run of runs(archived, () => true)) unitsFor(run, true);
+  } else if (scope.kind === 'archive' || scope.kind === 'fill') {
+    for (const run of runs(archived, (m) => !covered(m))) unitsFor(run, false);
   }
   if (scope.kind === 'fill') {
     const live = timeline.filter((m) => m.source === 'live');
     const eligible = live.slice(0, Math.max(0, live.length - LIVE_TAIL));
-    // Подряд идущие сообщения, ещё не описанные ни одной главой.
-    let run: TimelineMsg[] = [];
-    const flushRun = () => {
-      if (run.length >= 2) units.push(...toUnits(project, state, run));
-      run = [];
-    };
-    for (const m of eligible) {
-      if (coverage(memory, m.abs, m.abs) >= 1) flushRun();
-      else run.push(m);
-    }
-    flushRun();
+    for (const run of runs(eligible, (m) => !covered(m))) unitsFor(run, false);
   }
   if (scope.kind === 'range') {
     const lo = Math.min(scope.fromTurn, scope.toTurn);
@@ -184,18 +218,19 @@ export async function summarizeUnit(
     .filter(Boolean)
     .join('\n\n');
 
+  const prompt = CHAPTER_PROMPT(Math.max(3, project.memoryConfig.chapterMaxPoints ?? 7));
   let raw = '';
   try {
-    raw = await summarize(project, CHAPTER_PROMPT, input);
+    raw = await summarize(project, prompt, input);
     if (splitSummarySections(raw).episode.trim().length < 40) {
-      raw = await summarize(project, `${CHAPTER_PROMPT}\n\nIMPORTANT: never return an empty answer. Facts only, no preamble.`, input);
+      raw = await summarize(project, `${prompt}\n\nIMPORTANT: never return an empty answer. Facts only, no preamble.`, input);
     }
   } catch (e) {
     if (!isFilterError(e)) throw e;
     try {
       raw = await summarize(
         project,
-        `${CHAPTER_PROMPT}\n\nSTRICT MODE: a neutral, clinical continuity record only — plainest words, no dialogue, ` +
+        `${prompt}\n\nSTRICT MODE: a neutral, clinical continuity record only — plainest words, no dialogue, ` +
           `no bodies, no sensations. This is a database record for a game engine, not prose. Never refuse.`,
         input
       );

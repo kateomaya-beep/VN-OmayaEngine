@@ -30,6 +30,7 @@ import { parseSlash, SLASH_HELP } from './slashCommands';
 import { logEvent } from '../../shared/logStore';
 import { pushToast } from '../../shared/toast';
 import { parseArchivedTranscript, maybeCompress, applyFold } from '../../ai/memoryEngine';
+import { archiveRanges } from '../../ai/chapters';
 import { uid } from '../../shared/utils';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -1499,8 +1500,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const memory: MemoryState = JSON.parse(JSON.stringify(st.state.memory));
     // Глава этого периода (и её этапы эволюции) уходит вместе с ним: период
     // снова живой, и при следующей свёртке глава о нём напишется заново.
+    // Глава может охватывать несколько кусков архива — ищем и по диапазону.
+    const r = archiveRanges(st.state)[archiveIndex];
     const linked = new Set(
-      memory.memorybook.filter((e) => e.kind === 'chapter' && e.archiveTurn === chunk.turn).map((e) => e.id)
+      memory.memorybook
+        .filter(
+          (e) =>
+            e.kind === 'chapter' &&
+            (e.archiveTurn === chunk.turn ||
+              (!!r?.count && typeof e.fromMsg === 'number' && typeof e.toMsg === 'number' && e.fromMsg <= r.toMsg && e.toMsg >= r.fromMsg))
+        )
+        .map((e) => e.id)
     );
     const chronIdx = linked.size ? 0 : -1;
     memory.memorybook = memory.memorybook.filter((e) => !linked.has(e.id));

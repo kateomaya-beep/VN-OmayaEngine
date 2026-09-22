@@ -390,6 +390,9 @@ export function normalizeProject(raw: any): Project {
       embeddingsConnection: normConnection(mem.embeddingsConnection),
       memorybookScanDepth:
         typeof mem.memorybookScanDepth === 'number' ? clamp(Math.round(mem.memorybookScanDepth), 1, 40) : 6,
+      chapterSize: typeof mem.chapterSize === 'number' ? clamp(Math.round(mem.chapterSize), 4, 60) : 12,
+      chapterMaxPoints:
+        typeof mem.chapterMaxPoints === 'number' ? clamp(Math.round(mem.chapterMaxPoints), 3, 15) : 7,
     },
     audioMoods,
     playerTheme: raw?.playerTheme ? normalizePlayerTheme(raw.playerTheme) : undefined,

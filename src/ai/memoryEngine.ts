@@ -4,9 +4,11 @@ import { getPresetSettings } from './presetSettings';
 import { SUMMARIZER_PROMPT, ARCS_ADDENDUM } from './directorPrompt';
 import {
   addArcStages,
+  buildTimeline,
   chapterKeys,
   chaptersOf,
   coverage,
+  dropArcStagesOf,
   liveTurns,
   parseArcs,
   parseChapterHeader,
@@ -355,8 +357,22 @@ export function mergeFoldedMemory(cur: MemoryState, before: MemoryState, result:
           coverage(cur, e.fromMsg, e.toMsg) >= 0.9)
     );
   const addedIds = new Set(added.map((e) => e.id));
+  // Главы, которые свёртка ПЕРЕПИСАЛА (дописанная открытая глава): тот же id,
+  // другое содержимое. Берём версию свёртки, режим — как выставлен сейчас.
+  const beforeById = new Map(before.memorybook.map((e) => [e.id, e] as const));
+  const rewritten = new Map(
+    result.memorybook
+      .filter((e) => beforeById.has(e.id) && JSON.stringify(e) !== JSON.stringify(beforeById.get(e.id)))
+      .map((e) => [e.id, e] as const)
+  );
+  for (const id of rewritten.keys()) addedIds.add(id);
   const beforeStages = new Set((before.arcs || []).flatMap((a) => a.stages.map((x) => x.id)));
-  const arcs = (cur.arcs || []).map((a) => ({ ...a, stages: [...a.stages] }));
+  const resultStages = new Set((result.arcs || []).flatMap((a) => a.stages.map((x) => x.id)));
+  // Этапы, которые свёртка убрала (они были у переписанной главы), убираем и тут.
+  const arcs = (cur.arcs || []).map((a) => ({
+    ...a,
+    stages: a.stages.filter((x) => !(beforeStages.has(x.id) && !resultStages.has(x.id))),
+  }));
   for (const ra of result.arcs || []) {
     for (const st of ra.stages) {
       if (beforeStages.has(st.id)) continue;
@@ -373,7 +389,13 @@ export function mergeFoldedMemory(cur: MemoryState, before: MemoryState, result:
   const snapshotChanged = result.storyState !== before.storyState;
   return retireSupersededLegacy({
     ...cur,
-    memorybook: [...cur.memorybook, ...added],
+    memorybook: [
+      ...cur.memorybook.map((e) => {
+        const r = rewritten.get(e.id);
+        return r ? { ...r, mode: e.mode } : e;
+      }),
+      ...added,
+    ],
     rawArchive: [...cur.rawArchive, ...result.rawArchive.slice(before.rawArchive.length)],
     arcs,
     storyState: snapshotChanged ? result.storyState : cur.storyState,
@@ -404,7 +426,29 @@ export function applyFold(
 // свёртка идёт заново: в логах это выглядит как «саммари каждые шесть сообщений».
 // Свёртка теперь фоновая, поэтому несколько заходов подряд игрока не задерживают —
 // зато после них наступает долгая тишина вместо вечного «сворачиваю по чуть-чуть».
-const MAX_FOLD_PASSES = 4;
+const MAX_FOLD_PASSES = 6;
+
+// РАЗМЕР ГЛАВЫ. Свёртки идут по бюджету, а не по сюжету: на длинных ходах заход
+// бывает в 2–4 сообщения (вход саммарайзера ограничен), и когда каждая свёртка
+// писала свою главу, меморибук засыпало главами-огрызками. Теперь глава копится:
+// последняя глава, не набравшая размера, остаётся «открытой», и следующая свёртка
+// дописывает её — по ДОСЛОВНОМУ тексту её сообщений и новых, одним пересказом (не
+// пересказ пересказа). Набрала размер — закрыта навсегда. Потолок — полтора
+// размера, чтобы глава не разрасталась, если свёртка пришла большая.
+const chapterSize = (project: Project) => Math.max(4, project.memoryConfig.chapterSize ?? 12);
+const chapterPoints = (project: Project) => Math.max(3, project.memoryConfig.chapterMaxPoints ?? 7);
+// Сколько дословного текста главы (прежняя часть + новые ходы) влезает в один
+// запрос. Больше — открытую главу закрываем как есть и начинаем новую.
+const MAX_CHAPTER_CHARS = 60000;
+
+/** Открытая глава: последняя, собранная свёрткой, вплотную к несвёрнутому и ещё не набравшая размер. */
+export function openChapter(project: Project, memory: MemoryState): MemoryBookEntry | null {
+  const last = chaptersOf(memory)
+    .filter((c) => c.mode !== 'off' && c.source !== 'legacy')
+    .pop();
+  if (!last || last.source !== 'auto' || typeof last.fromMsg !== 'number' || last.toMsg !== memory.foldedMsgCount) return null;
+  return last.toMsg - last.fromMsg + 1 < chapterSize(project) ? last : null;
+}
 
 export async function maybeCompress(
   project: Project,
@@ -471,13 +515,35 @@ export async function maybeCompress(
   const asText = (m: LlmMessage): string =>
     m.role === 'assistant' ? condenseAssistantTurn(m.content, project, state) ?? stripStateBlock(m.content) : m.content;
   const staleText = stale.map(asText);
+
+  // Открытая глава и её дословный текст — свёртка допишет её, а не начнёт новую.
+  let open = openChapter(project, state.memory);
+  let openTranscript = '';
+  if (open) {
+    const own = buildTimeline(state).filter((m) => m.abs >= open!.fromMsg! && m.abs <= open!.toMsg!);
+    openTranscript = own.map((m) => `${m.role === 'user' ? 'ИГРОК' : 'ИГРА'}: ${m.text}`).join('\n\n');
+    // Текста главы нет (архив вернули в историю) или он уже велик — закрываем её.
+    if (!own.length || openTranscript.length > MAX_CHAPTER_CHARS * 0.7) {
+      open = null;
+      openTranscript = '';
+    }
+  }
+  const openCount = open ? open.toMsg! - open.fromMsg! + 1 : 0;
+  // Сколько новых сообщений взять в этот заход: столько, чтобы глава вышла размером
+  // от одного до полутора размеров, и не больше потолка входа саммарайзера.
+  const msgCap = Math.max(2, Math.ceil(chapterSize(project) * 1.5) - openCount);
+  const charCap = Math.min(MAX_TRANSCRIPT_CHARS, MAX_CHAPTER_CHARS - openTranscript.length);
   let chars = 0;
   let fits = 0;
   for (const text of staleText) {
     chars += text.length + 2;
-    if (chars > MAX_TRANSCRIPT_CHARS && fits >= 4) break;
+    if (chars > charCap && fits >= 4) break;
+    if (fits >= msgCap) break;
     fits++;
   }
+  // Заход заканчиваем ответом ИИ: иначе живая история началась бы с его ответа
+  // без реплики игрока, а часть шлюзов такую историю не принимает.
+  if (fits < stale.length && fits > 2 && stale[fits - 1].role === 'user') fits--;
   if (fits < stale.length) {
     stale = stale.slice(0, fits);
     logEvent(
@@ -530,17 +596,24 @@ export async function maybeCompress(
   logEvent('info', 'memory', `Саммаризация: сворачиваю ${stale.length} сообщений`);
   try {
     const custom = project.memoryConfig.summaryPrompt?.trim();
-    const tracked = trackedBrief(project, state.memory);
+    // Этапы эволюции из открытой главы пересоберутся вместе с ней — в «текущий
+    // этап» для саммарайзера их не отдаём, иначе он засчитал бы их дважды.
+    const baseMemory: MemoryState = open
+      ? { ...state.memory, arcs: dropArcStagesOf(state.memory.arcs, new Set([open.id])) }
+      : state.memory;
+    const tracked = trackedBrief(project, baseMemory);
     // Свой промпт свёртки автор выбрал сам — формат эпизода не трогаем, но ленту
     // эволюции просим отдельной секцией в конце.
     const prompt = custom
       ? custom + (tracked ? ARCS_ADDENDUM : '')
-      : SUMMARIZER_PROMPT(project.memoryConfig.minorEventsLimit ?? 10);
+      : SUMMARIZER_PROMPT(chapterPoints(project));
     // ТРЁХЧАСТНАЯ ПАМЯТЬ: на вход — прежний снапшот + новые ходы (+ кого
     // отслеживать и чем кончилась прошлая глава); на выходе — (1) ГЛАВА, которая
     // ложится в меморибук и больше никогда не переписывается и не пережимается,
     // (2) сдвиги отслеживаемых персонажей и (3) обновлённый снапшот, ЗАМЕНЯЮЩИЙ прежний.
-    const prevChapter = chaptersOf(state.memory).filter((c) => c.mode !== 'off').pop();
+    const prevChapter = chaptersOf(state.memory)
+      .filter((c) => c.mode !== 'off' && c.id !== open?.id)
+      .pop();
     const context = [
       tracked,
       prevChapter ? `PREVIOUS CHAPTER: «${prevChapter.title}» — ${prevChapter.gist || ''}` : '',
@@ -549,10 +622,21 @@ export async function maybeCompress(
       .join('\n\n');
     const prevState = state.memory.storyState?.trim() || '';
     const turnsBlock = `=== NEW TURNS${prevState ? ' SINCE THAT SNAPSHOT' : ''} ===\n${transcript}`;
-    const input = [context, prevState ? `CURRENT STORY STATE (snapshot to update):\n${prevState}` : '', turnsBlock]
+    // Начало открытой главы — дословно. В снапшоте оно уже учтено, поэтому идёт
+    // отдельной секцией: только для главы. Пометка продублирована словами прямо во
+    // входе — на случай своего промпта свёртки, который про неё не знает.
+    const earlierBlock = open
+      ? `=== EARLIER TURNS OF THIS CHAPTER (already reflected in the snapshot; write ONE chapter covering these AND the new turns) ===\n${openTranscript}`
+      : '';
+    const input = [
+      context,
+      prevState ? `CURRENT STORY STATE (snapshot to update):\n${prevState}` : '',
+      earlierBlock,
+      turnsBlock,
+    ]
       .filter(Boolean)
       .join('\n\n');
-    const retryInput = [context, turnsBlock].filter(Boolean).join('\n\n');
+    const retryInput = [context, earlierBlock, turnsBlock].filter(Boolean).join('\n\n');
     const { raw, episode, storyState, arcs: arcsText } = await summarizeWithRetry(project, prompt, input, retryInput);
 
     // КРИТИЧНО: историю режем ТОЛЬКО если свёртка реально получилась. Пустой,
@@ -589,23 +673,32 @@ export async function maybeCompress(
     // Этот период уже описан главой (её собрали из живой истории раньше свёртки) —
     // вторую не пишем; снапшот и архив при этом обновляются как обычно.
     const alreadyCovered = coverage(state.memory, fromMsg, toMsg) >= 0.9;
-    const chapter: MemoryBookEntry | null = alreadyCovered
+    let chapter: MemoryBookEntry | null = alreadyCovered
       ? null
       : makeChapter(project, state, {
           header,
-          transcript,
-          fromMsg,
+          transcript: open ? `${openTranscript}\n\n${transcript}` : transcript,
+          fromMsg: open ? open.fromMsg : fromMsg,
           toMsg,
-          fromTurn,
+          fromTurn: open ? open.fromTurn ?? fromTurn : fromTurn,
           toTurn,
-          archiveTurn: state.turnCount,
+          // Глава из нескольких кусков архива к одному куску не привязана — её
+          // находят по диапазону сообщений.
+          archiveTurn: open ? undefined : state.turnCount,
           source: 'auto',
-          fallbackTitle: raw.startsWith('ЧЕРНОВАЯ ЗАПИСЬ') ? 'Черновая глава (пересоберите)' : undefined,
+          fallbackTitle: raw.startsWith('ЧЕРНОВАЯ ЗАПИСЬ')
+            ? 'Черновая глава (пересоберите)'
+            : open?.title,
         });
+    if (chapter && open) {
+      // Та же глава, дописанная: id прежний (на него ссылаются этапы и правки),
+      // ключи — объединение (вдруг их добавляли руками), режим — как выставлен.
+      chapter = { ...chapter, id: open.id, mode: open.mode, keys: [...new Set([...open.keys, ...chapter.keys])].slice(0, 16) };
+    }
     if (alreadyCovered) logEvent('info', 'memory', `Период ходов ${fromTurn}–${toTurn} уже описан главой — новую не пишу`);
     const parsedArcs: ParsedArc[] = chapter ? parseArcs(arcsText) : [];
     const arcs = chapter
-      ? addArcStages(state.memory.arcs, project, state.memory, parsedArcs, {
+      ? addArcStages(baseMemory.arcs, project, baseMemory, parsedArcs, {
           turn: toTurn,
           dates: header.dates,
           chapterId: chapter.id,
@@ -617,7 +710,7 @@ export async function maybeCompress(
     logEvent(
       'info',
       'memory',
-      `Саммаризация выполнена: ${chapter ? `глава «${chapter.title}» (ходы ${fromTurn}–${toTurn}, ключи: ${chapter.keys.join(', ') || '—'})` : 'без новой главы'}, ` +
+      `Саммаризация выполнена: ${chapter ? `${open ? 'дописана' : 'начата'} глава «${chapter.title}» (ходы ${chapter.fromTurn}–${toTurn}, сообщений ${chapter.toMsg! - chapter.fromMsg! + 1} из ~${chapterSize(project)}, ключи: ${chapter.keys.join(', ') || '—'})` : 'без новой главы'}, ` +
         `снапшот ${storyState.trim().length} симв., сдвигов персонажей: ${parsedArcs.length} (ответ целиком ${raw.length} симв.)`
     );
     // Снапшот НЕ ОБНОВИЛСЯ (обрыв ответа). Оставлять прежний нельзя: он объявляет
@@ -625,7 +718,11 @@ export async function maybeCompress(
     // Пересобираем снапшот отдельным запросом по главам.
     const withChapter: MemoryState = {
       ...state.memory,
-      memorybook: chapter ? [...state.memory.memorybook, chapter] : state.memory.memorybook,
+      memorybook: !chapter
+        ? state.memory.memorybook
+        : open
+          ? state.memory.memorybook.map((e) => (e.id === open!.id ? chapter! : e))
+          : [...state.memory.memorybook, chapter],
     };
     let freshState = storyState.trim();
     if (!freshState) {

@@ -1170,6 +1170,8 @@ function RawArchiveList({
   const [open, setOpen] = useState<number | null>(null);
   const restore = usePlayerStore((st) => st.restoreArchivedPeriod);
   const running = useChapterJob((st) => st.running);
+  const state = usePlayerStore((st) => st.state);
+  const ranges = useMemo(() => (state ? archiveRanges(state) : []), [state?.memory, state?.history.length]);
   if (!memory.rawArchive?.length) return null;
   void project;
   void patchMemory;
@@ -1186,7 +1188,10 @@ function RawArchiveList({
         )}
       </p>
       {memory.rawArchive.map((chunk, i) => {
-        const has = memory.memorybook.some((c) => c.kind === 'chapter' && c.source !== 'legacy' && c.archiveTurn === chunk.turn);
+        const r = ranges[i];
+        const has =
+          memory.memorybook.some((c) => c.kind === 'chapter' && c.source !== 'legacy' && c.archiveTurn === chunk.turn) ||
+          (!!r?.count && coverage(memory, r.fromMsg, r.toMsg) >= 0.9);
         return (
           <div key={`${chunk.turn}-${i}`} className="card !p-2 !bg-panel2">
             <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -1249,15 +1254,48 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
           )}
         </p>
       </Field>
-      <Field label={L(`Лимит «мелких событий» в саммари: ${mc.minorEventsLimit ?? 10}`, `Minor-events limit in summary: ${mc.minorEventsLimit ?? 10}`)}>
+      <Field label={L(`Размер главы: ~${mc.chapterSize ?? 12} сообщений`, `Chapter size: ~${mc.chapterSize ?? 12} messages`)}>
+        <div className="flex gap-2 flex-wrap">
+          {[10, 12, 15, 20].map((n) => (
+            <button
+              key={n}
+              className={`chip !px-3 !py-1.5 ${(mc.chapterSize ?? 12) === n ? 'bg-accent2 text-white' : ''}`}
+              onClick={() => patchMem({ chapterSize: n })}
+            >
+              {n}
+            </button>
+          ))}
+          <input
+            type="number"
+            min={4}
+            max={60}
+            className="input w-24"
+            value={mc.chapterSize ?? 12}
+            onChange={(e) => patchMem({ chapterSize: Math.max(4, Math.min(60, Number(e.target.value) || 12)) })}
+          />
+        </div>
+        <p className="text-[11px] text-gray-500 mt-1">
+          {L(
+            'Свёртки идут по бюджету и бывают маленькими — глава копится через несколько свёрток, пока не наберёт столько сообщений (максимум в полтора раза больше). Уже собранные мелкие главы укрупняет кнопка в меморибуке.',
+            'Folds follow the budget and can be small — a chapter accumulates over several folds until it has this many messages (at most 1.5×). Existing small chapters are merged by a button in the memorybook.'
+          )}
+        </p>
+      </Field>
+      <Field label={L(`Пунктов в главе: до ${mc.chapterMaxPoints ?? 7}`, `Points per chapter: up to ${mc.chapterMaxPoints ?? 7}`)}>
         <input
           type="number"
           min={3}
-          max={40}
+          max={15}
           className="input w-24"
-          value={mc.minorEventsLimit ?? 10}
-          onChange={(e) => patchMem({ minorEventsLimit: Math.max(3, Math.min(40, Number(e.target.value) || 10)) })}
+          value={mc.chapterMaxPoints ?? 7}
+          onChange={(e) => patchMem({ chapterMaxPoints: Math.max(3, Math.min(15, Number(e.target.value) || 7)) })}
         />
+        <p className="text-[11px] text-gray-500 mt-1">
+          {L(
+            'Пересказ главы — коротко и только важное для истории: повороты, решения, сдвиги отношений, раскрытые факты, предметы и раны. Обстановка и болтовня не пишутся.',
+            'A chapter is brief and keeps only what matters later: turns, decisions, relationship shifts, revealed facts, items and injuries. No atmosphere or small talk.'
+          )}
+        </p>
       </Field>
       <Field label={L(`Потолок ответа свёртки: ${mc.summaryMaxTokens ?? 8000} токенов`, `Summary answer cap: ${mc.summaryMaxTokens ?? 8000} tokens`)}>
         <input

@@ -25,8 +25,11 @@ const KIND_LABEL: Record<MemoryEntryKind, [string, string, string]> = {
 };
 
 function turnsOf(e: MemoryBookEntry, L: Lf): string {
-  if (e.fromTurn && e.toTurn) return e.fromTurn === e.toTurn ? `${L('ход', 'turn')} ${e.toTurn}` : `${L('ходы', 'turns')} ${e.fromTurn}–${e.toTurn}`;
-  return e.turn ? `${L('ход', 'turn')} ${e.turn}` : '';
+  const msgs =
+    typeof e.fromMsg === 'number' && typeof e.toMsg === 'number' ? ` (${e.toMsg - e.fromMsg + 1} ${L('сообщ.', 'msgs')})` : '';
+  if (e.fromTurn && e.toTurn)
+    return (e.fromTurn === e.toTurn ? `${L('ход', 'turn')} ${e.toTurn}` : `${L('ходы', 'turns')} ${e.fromTurn}–${e.toTurn}`) + msgs;
+  return e.turn ? `${L('ход', 'turn')} ${e.turn}${msgs}` : '';
 }
 
 function JobBar({ L }: { L: Lf }) {
@@ -238,9 +241,13 @@ export function MemorybookTab({
   const todo = useMemo(
     () =>
       running || !state
-        ? { archive: 0, fill: 0 }
-        : { archive: countUnits({ kind: 'archive' }), fill: countUnits({ kind: 'fill' }) },
-    [running, state?.memory, state?.history.length]
+        ? { archive: 0, fill: 0, regroup: 0 }
+        : {
+            archive: countUnits({ kind: 'archive' }),
+            fill: countUnits({ kind: 'fill' }),
+            regroup: countUnits({ kind: 'archive', rebuildAll: true }),
+          },
+    [running, state?.memory, state?.history.length, project?.memoryConfig.chapterSize]
   );
   if (!project || !state || !sel) {
     return <p className="text-sm text-gray-500">{L('Меморибук появляется во время игры.', 'The memorybook appears during play.')}</p>;
@@ -275,6 +282,13 @@ export function MemorybookTab({
   const archiveTodo = todo.archive;
   const fillTodo = todo.fill;
   const legacy = memory.memorybook.filter((e) => e.source === 'legacy' && e.mode !== 'off').length;
+  // Главы-огрызки (собраны до того, как глава стала копиться до размера): их
+  // укрупняет пересборка из архива. Последнюю — открытую — не считаем.
+  const size = project.memoryConfig.chapterSize ?? 12;
+  const realChapters = chapters.filter((c) => c.source !== 'legacy' && c.mode !== 'off' && typeof c.fromMsg === 'number');
+  const small = realChapters
+    .slice(0, -1)
+    .filter((c) => c.toMsg! - c.fromMsg! + 1 < size * 0.6 && c.toMsg! <= memory.foldedMsgCount).length;
   const mbTokens = sel.pick.tokens;
 
   return (
@@ -357,6 +371,19 @@ export function MemorybookTab({
             onClick={() => void runChapterJob({ kind: 'archive' })}
           >
             ↻ {L('Восстановить главы из архива', 'Restore chapters from archive')} ({archiveTodo})
+          </button>
+        )}
+        {small >= 2 && todo.regroup > 0 && todo.regroup < realChapters.length && (
+          <button
+            className="btn-primary !px-2.5 !py-1 text-xs"
+            disabled={running}
+            title={L(
+              `Собрать главы заново по дословному тексту архива — по ~${size} сообщений на главу. Мелкие главы заменятся крупными.`,
+              `Rebuild chapters from the verbatim archive — ~${size} messages per chapter. Small chapters get replaced by larger ones.`
+            )}
+            onClick={() => void runChapterJob({ kind: 'archive', rebuildAll: true })}
+          >
+            ⇲ {L('Пересобрать главы крупнее', 'Rebuild into larger chapters')} ({realChapters.length} → ~{todo.regroup})
           </button>
         )}
         {/* «С нуля» — когда памяти не было вовсе. В обычной игре живая история по

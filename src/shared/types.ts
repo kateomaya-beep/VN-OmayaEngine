@@ -318,6 +318,12 @@ export interface MemoryConfig {
   // Сколько последних сообщений (плюс ход игрока) просматривается в поиске ключей
   // меморибука. Как «глубина сканирования» в лорбуке Таверны.
   memorybookScanDepth?: number;
+  // РАЗМЕР ГЛАВЫ в сообщениях. Глава копится через несколько свёрток, пока не
+  // наберёт столько сообщений: свёртки идут по бюджету и бывают по 2–4 сообщения,
+  // и глава на каждую давала россыпь глав-огрызков.
+  chapterSize?: number;
+  // Сколько пунктов максимум в пересказе главы: коротко и только важное.
+  chapterMaxPoints?: number;
 }
 
 export function defaultMemoryConfig(): MemoryConfig {
@@ -327,6 +333,8 @@ export function defaultMemoryConfig(): MemoryConfig {
     vectorization: 'keyword',
     summaryMaxTokens: 8000,
     memorybookScanDepth: 6,
+    chapterSize: 12,
+    chapterMaxPoints: 7,
   };
 }
 

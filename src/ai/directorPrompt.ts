@@ -28,31 +28,34 @@ stay), one line:
 Nobody shifted → write the single word: none
 Use names exactly as in the tracked list.`;
 
+// КРАТКОСТЬ ГЛАВЫ. Раньше просили 10–14 пунктов на 150–400 слов, и на каждые
+// пару сообщений выходил подробный пересказ, где важное тонуло в обстановке.
+// Глава — не пересказ сцены, а то, что истории понадобится ПОТОМ.
+const CHAPTER_POINTS = (n: number) => `Then 3–${n} numbered points, ONE line each, about 60–180 words in total.
+Keep ONLY what the story will need later:
+ • plot turns and their consequences — what changed in the situation;
+ • the hero's decisions and what they cost or gained;
+ • relationship shifts — who grew closer or colder, through which exact moment;
+ • facts revealed or learned — secrets, promises, suspicions, anything about
+   someone's past, family or origins;
+ • important items, money, injuries, places that appeared or changed hands;
+ • time jumps and changes of location.
+Leave out atmosphere, small talk, routine actions, descriptions and anything
+already covered. Every point must be a concrete fact with names — never "they
+talked" or "tension grew". Fewer strong points beat many weak ones.`;
+
 export const SUMMARIZER_PROMPT = (n: number) => `You are the memory engine of an interactive story. You receive the CURRENT
 STORY STATE snapshot (if any) and the NEW turns played since it. Produce
 EXACTLY three sections with these exact markers, in this order:
 
 === EPISODE ===
-One CHAPTER of the story covering ONLY the new turns.
+One CHAPTER of the story. It covers the NEW turns — and, if the input has a
+section "EARLIER TURNS OF THIS CHAPTER", those too: then write ONE chapter
+covering both, as if it had been written in one go.
 ${CHAPTER_HEADER}
 
-Then ${Math.max(6, n)}–${Math.max(10, n + 4)} numbered points, 150–400 words total: what happened, in
-order. Each point is one CONCRETE event with names, place and outcome — never a
-vague summary like "they talked" or "tension grew". Across the points you MUST
-cover, whenever they occur in this stretch:
- • plot events and their consequences (what changed in the situation);
- • DECISIONS the hero made and what they cost or gained;
- • RELATIONSHIP MOVEMENT — who grew closer or colder to whom, through what
-   exact moment (a confession, a touch, a betrayal, a refusal), and where that
-   relationship stands at the end of the stretch. Never skip this: relationship
-   progress is the spine of the story;
- • what characters revealed about themselves, learned, or now suspect — and
-   facts about their past, family and origins that came up;
- • important items, places, money and injuries that appeared or changed hands;
- • time passed and any change of location.
-Facts only, no analysis, no repetition of older events. This chapter is stored
-permanently and is NEVER rewritten or compressed later — make it self-contained
-and precise.
+${CHAPTER_POINTS(n)}
+The chapter is stored permanently and is NEVER compressed later.
 
 ${ARCS_SECTION}
 
@@ -118,7 +121,7 @@ ${ARCS_SECTION}`;
 // СБОРКА ГЛАВЫ ИЗ СТЕНОГРАММЫ — для восстановления памяти из архива и для
 // «заполнить меморибук с нуля». Снапшот здесь не нужен: он описывает «сейчас», а
 // глава — конкретный период прошлого.
-export const CHAPTER_PROMPT = `You are the memory engine of an interactive story. You receive a verbatim
+export const CHAPTER_PROMPT = (n: number) => `You are the memory engine of an interactive story. You receive a verbatim
 stretch of the story (player moves and story text) and, for continuity, the
 title of the previous chapter and the tracked characters. Produce EXACTLY two
 sections with these exact markers:
@@ -127,13 +130,8 @@ sections with these exact markers:
 One CHAPTER of the story covering ONLY this stretch.
 ${CHAPTER_HEADER}
 
-Then 8–16 numbered points, 150–500 words total, in order. Each point is one
-CONCRETE event with names, place and outcome. Cover plot events and their
-consequences, the hero's decisions, RELATIONSHIP MOVEMENT (through which exact
-moment, where it stands at the end), what characters revealed about themselves —
-including facts about their past, family and origins — important items, places,
-money, injuries, time passed and changes of location. Facts only, no analysis.
-The chapter is stored permanently and never rewritten — make it self-contained.
+${CHAPTER_POINTS(n)}
+The chapter is stored permanently and never rewritten.
 
 ${ARCS_SECTION}
 
