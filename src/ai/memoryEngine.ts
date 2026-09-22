@@ -1,7 +1,22 @@
-import type { Project, RuntimeState, LlmMessage } from '../shared/types';
+import type { Project, RuntimeState, LlmMessage, MemoryBookEntry, MemoryState } from '../shared/types';
 import { runCompletionWith } from './providers';
 import { getPresetSettings } from './presetSettings';
-import { SUMMARIZER_PROMPT } from './directorPrompt';
+import { SUMMARIZER_PROMPT, ARCS_ADDENDUM } from './directorPrompt';
+import {
+  addArcStages,
+  chapterKeys,
+  chaptersOf,
+  coverage,
+  liveTurns,
+  parseArcs,
+  parseChapterHeader,
+  parseTranscript,
+  makeChapter,
+  retireSupersededLegacy,
+  splitSections,
+  trackedBrief,
+  type ParsedArc,
+} from './chapters';
 import { condenseAssistantTurn, lastFixedContextTokens } from './promptBuilder';
 // Свёртке служебная сводка мира не нужна: в РП она едет хвостом каждого ответа, и
 // без этого саммарайзер пересказывал бы JSON вместо сцены.
@@ -56,6 +71,10 @@ const HYSTERESIS = 0.6;
 // снова сразу. Ход игрока при этом не страдает: история остаётся целой.
 const FAIL_BACKOFF_TURNS = 3;
 let lastFailedTurn = -1e9;
+/** Ход последней неудачной свёртки (для индикатора здоровья памяти); null — не было. */
+export function lastFoldFailureTurn(): number | null {
+  return lastFailedTurn > 0 ? lastFailedTurn : null;
+}
 
 // Сколько последних сообщений истории влезает в `budgetTokens`. Ограничено сверху
 // «живым окном» из пресета, снизу — двумя ходами. Возвращает границу так, чтобы
@@ -122,13 +141,13 @@ function summarizerFraming(project: Project): string {
   return parts.join('\n\n');
 }
 
-function isFilterError(e: unknown): boolean {
+export function isFilterError(e: unknown): boolean {
   return /фильтр безопасности|PROHIBITED_CONTENT|content[_ ]filter|SAFETY/i.test(
     e instanceof Error ? e.message : String(e)
   );
 }
 
-async function summarize(project: Project, prompt: string, transcript: string): Promise<string> {
+export async function summarize(project: Project, prompt: string, transcript: string): Promise<string> {
   const framing = summarizerFraming(project);
   return (
     await runCompletionWith(project.aiConfig.summaryConnection, 'summary', {
@@ -155,7 +174,7 @@ async function summarize(project: Project, prompt: string, transcript: string): 
 // берём начало каждого хода дословно. Это хуже настоящего пересказа, но событие
 // остаётся в памяти и в журнале, а дословный текст лежит в архиве периода —
 // свёртку можно переделать кнопкой, когда будет подходящая модель.
-function mechanicalDigest(transcript: string): string {
+export function mechanicalDigest(transcript: string): string {
   const lines = transcript
     .split(/\n\n+/)
     .map((l) => l.replace(/^(ИГРОК|ИГРА|PLAYER|GAME):\s*/, '').replace(/\s+/g, ' ').trim())
@@ -178,8 +197,8 @@ function mechanicalDigest(transcript: string): string {
 // (хронология) + текущий снапшот. Журнал переписывать не нужно, он append-only;
 // а снапшот, наоборот, полезно пересобрать, если он обрезался или устарел.
 const STATE_REBUILD_PROMPT = `You rebuild the living STORY STATE snapshot of an interactive story
-from its chronological episode log and the previous snapshot. Output ONLY the
-snapshot body — no preamble, no episode list, no markers.
+from its chronological chapters and the previous snapshot. Output ONLY the
+snapshot body — no preamble, no chapter list, no markers.
 
 Keep this exact section layout and fill every one of them:
 
@@ -210,19 +229,36 @@ Time/Date: … | Location: … | Active scene: … | Immediate tensions: … | N
 
 RULES: be thorough — this snapshot is the model's only authoritative picture of
 where things stand, so completeness beats brevity. Never drop a section, never
-lose a fact from the previous snapshot unless the log supersedes it, and finish
+lose a fact from the previous snapshot unless the chapters supersede it, and finish
 every section (an unfinished snapshot is worse than a short one). Facts only,
 in ENGLISH.`;
+
+// Вход пересборки: главы по порядку. Все целиком не всегда влезают во вход
+// саммарайзера — тогда свежие идут полностью, а старшие строкой сути: для
+// «положения дел сейчас» важнее последние события, а старшие уже учтены в
+// прежнем снапшоте.
+const REBUILD_INPUT_CHARS = 60000;
+function chaptersForRebuild(memory: MemoryState): string {
+  const list = chaptersOf(memory).filter((c) => c.mode !== 'off');
+  const full = list.map((c, i) => `[Chapter ${i + 1} «${c.title}»${c.toTurn ? `, up to turn ${c.toTurn}` : ''}]\n${c.text}`);
+  let total = full.reduce((n, t) => n + t.length, 0);
+  for (let i = 0; i < full.length - 1 && total > REBUILD_INPUT_CHARS; i++) {
+    const short = `[Chapter ${i + 1} «${list[i].title}»] ${list[i].gist || list[i].text.slice(0, 200)}`;
+    total -= full[i].length - short.length;
+    full[i] = short;
+  }
+  return full.join('\n\n');
+}
 
 export async function rebuildStoryState(
   project: Project,
   memory: RuntimeState['memory']
 ): Promise<string> {
-  const log = memory.chronicle.map((c, i) => `[Period ${i + 1}${c.atTurn ? `, up to turn ${c.atTurn}` : ''}]\n${c.text}`).join('\n\n');
-  if (!log.trim() && !memory.storyState?.trim()) throw new Error('Нечего пересобирать: нет ни журнала, ни снапшота');
+  const log = chaptersForRebuild(memory);
+  if (!log.trim() && !memory.storyState?.trim()) throw new Error('Нечего пересобирать: нет ни глав, ни снапшота');
   const input = [
     memory.storyState?.trim() ? `PREVIOUS SNAPSHOT:\n${memory.storyState.trim()}` : '',
-    log.trim() ? `EPISODE LOG (oldest → newest):\n${log}` : '',
+    log.trim() ? `CHAPTERS (oldest → newest):\n${log}` : '',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -231,7 +267,7 @@ export async function rebuildStoryState(
   const { storyState } = splitSummarySections(raw);
   const text = (storyState || raw).trim();
   if (text.length < MIN_EPISODE_CHARS) throw new Error('Модель вернула пустой ответ — попробуйте ещё раз');
-  logEvent('info', 'memory', `Снапшот состояния пересобран вручную (${text.length} симв.)`);
+  logEvent('info', 'memory', `Снапшот состояния пересобран (${text.length} симв.)`);
   return text;
 }
 
@@ -245,7 +281,7 @@ async function summarizeWithRetry(
   prompt: string,
   input: string,
   transcriptOnly: string
-): Promise<{ raw: string; episode: string; storyState: string }> {
+): Promise<{ raw: string; episode: string; storyState: string; arcs: string }> {
   let filtered = false;
   try {
     const first = await summarize(project, prompt, input);
@@ -268,7 +304,7 @@ async function summarizeWithRetry(
     ? `${prompt}\n\nSTRICT MODE: output a neutral, clinical continuity record only. Name events in the ` +
       `plainest possible words, one short line each. No dialogue, no quotes, no bodies, no sensations, ` +
       `no adjectives. This is a database record for a game engine, not prose. Never refuse.`
-    : `${prompt}\n\nIMPORTANT: output BOTH marked sections and never return an empty answer. Facts only, no preamble.`;
+    : `${prompt}\n\nIMPORTANT: output ALL the marked sections and never return an empty answer. Facts only, no preamble.`;
   try {
     const second = await summarize(project, strict, transcriptOnly);
     const b = splitSummarySections(second);
@@ -296,29 +332,68 @@ async function summarizeWithRetry(
         'The model refuses to summarize this period (safety filter). A draft record was written — history is intact; rebuild it with another model.'
       )
     );
-    return { raw: digest, episode: digest, storyState: '' };
+    return { raw: digest, episode: digest, storyState: '', arcs: '' };
   }
-  return { raw: '', episode: '', storyState: '' };
+  return { raw: '', episode: '', storyState: '', arcs: '' };
 }
 
-// Summarize the oldest turns that fall outside the live window into a new
-// chronicle entry, then drop them from verbatim history. Runs in background;
-// on any error it leaves history intact (live window temporarily longer, счётчик
-// не сбрасывается — попробуем на следующем ходу).
-// Наложить результат ФОНОВОЙ свёртки на текущее состояние. Пока свёртка шла, игрок
-// мог сделать ещё ход, и просто подставить её результат нельзя — этот ход пропал бы.
-// Свёртка удаляет сообщения ТОЛЬКО с начала истории, новые приписываются в конец,
-// поэтому наложение сводится к «срезать столько же с начала и взять новую память».
+// НАЛОЖЕНИЕ ФОНОВОЙ СВЁРТКИ на текущее состояние. Пока свёртка шла, игрок мог
+// сделать ещё ход, поправить запись меморибука, а сборка глав — дописать главу.
+// Подставить память свёртки целиком нельзя: всё это пропало бы. Поэтому берём из
+// результата только НОВОЕ — записи, куски архива и этапы эволюции, которых до
+// свёртки не было, — и накладываем на текущую память. История режется ровно на
+// свёрнутое: свёртка удаляет сообщения только с начала, новые ходы — в конце.
+export function mergeFoldedMemory(cur: MemoryState, before: MemoryState, result: MemoryState): MemoryState {
+  const beforeIds = new Set(before.memorybook.map((e) => e.id));
+  const curIds = new Set(cur.memorybook.map((e) => e.id));
+  const added = result.memorybook
+    .filter((e) => !beforeIds.has(e.id) && !curIds.has(e.id))
+    // Этот же период за время свёртки могла описать сборка глав — второй главы не пишем.
+    .filter(
+      (e) =>
+        !(e.kind === 'chapter' && typeof e.fromMsg === 'number' && typeof e.toMsg === 'number' &&
+          coverage(cur, e.fromMsg, e.toMsg) >= 0.9)
+    );
+  const addedIds = new Set(added.map((e) => e.id));
+  const beforeStages = new Set((before.arcs || []).flatMap((a) => a.stages.map((x) => x.id)));
+  const arcs = (cur.arcs || []).map((a) => ({ ...a, stages: [...a.stages] }));
+  for (const ra of result.arcs || []) {
+    for (const st of ra.stages) {
+      if (beforeStages.has(st.id)) continue;
+      if (st.chapterId && !addedIds.has(st.chapterId)) continue;
+      let t = arcs.find((a) => (ra.charId && a.charId === ra.charId) || a.name.toLowerCase() === ra.name.toLowerCase());
+      if (!t) {
+        t = { name: ra.name, charId: ra.charId, stages: [] };
+        arcs.push(t);
+      }
+      if (!t.stages.some((x) => x.id === st.id)) t.stages.push(st);
+      t.stages.sort((a, b) => a.turn - b.turn);
+    }
+  }
+  const snapshotChanged = result.storyState !== before.storyState;
+  return retireSupersededLegacy({
+    ...cur,
+    memorybook: [...cur.memorybook, ...added],
+    rawArchive: [...cur.rawArchive, ...result.rawArchive.slice(before.rawArchive.length)],
+    arcs,
+    storyState: snapshotChanged ? result.storyState : cur.storyState,
+    storyStateAtTurn: snapshotChanged ? result.storyStateAtTurn : cur.storyStateAtTurn,
+    foldedMsgCount: cur.foldedMsgCount + (result.foldedMsgCount - before.foldedMsgCount),
+  });
+}
+
 export function applyFold(
   cur: RuntimeState,
   folded: number,
-  memory: RuntimeState['memory'],
+  result: MemoryState,
+  before: MemoryState,
   addedSince: number
 ): RuntimeState {
+  const memory = mergeFoldedMemory(cur.memory, before, result);
   return {
     ...cur,
     history: folded > 0 ? cur.history.slice(folded) : cur.history,
-    memory: { ...memory, messagesSinceSummary: memory.messagesSinceSummary + Math.max(0, addedSince) },
+    memory: { ...memory, messagesSinceSummary: result.messagesSinceSummary + Math.max(0, addedSince) },
   };
 }
 
@@ -454,24 +529,36 @@ export async function maybeCompress(
   const toastId = pushToast('info', tt('Сжимаю память…', 'Summarizing memory…'));
   logEvent('info', 'memory', `Саммаризация: сворачиваю ${stale.length} сообщений`);
   try {
-    const prompt = project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(project.memoryConfig.minorEventsLimit ?? 10);
-    // ДВУХЧАСТНАЯ ПАМЯТЬ (Horae-стиль): на вход — прежний живой снапшот состояния +
-    // новые ходы; на выходе — (1) хронологическая запись-эпизод, которая ДОБАВЛЯЕТСЯ
-    // в журнал и больше никогда не переписывается, и (2) обновлённый снапшот,
-    // ЗАМЕНЯЮЩИЙ прежний. Так прошлые события видны ИИ в хронологическом порядке и
-    // не искажаются повторными пересборками, а «текущее состояние» всегда одно.
+    const custom = project.memoryConfig.summaryPrompt?.trim();
+    const tracked = trackedBrief(project, state.memory);
+    // Свой промпт свёртки автор выбрал сам — формат эпизода не трогаем, но ленту
+    // эволюции просим отдельной секцией в конце.
+    const prompt = custom
+      ? custom + (tracked ? ARCS_ADDENDUM : '')
+      : SUMMARIZER_PROMPT(project.memoryConfig.minorEventsLimit ?? 10);
+    // ТРЁХЧАСТНАЯ ПАМЯТЬ: на вход — прежний снапшот + новые ходы (+ кого
+    // отслеживать и чем кончилась прошлая глава); на выходе — (1) ГЛАВА, которая
+    // ложится в меморибук и больше никогда не переписывается и не пережимается,
+    // (2) сдвиги отслеживаемых персонажей и (3) обновлённый снапшот, ЗАМЕНЯЮЩИЙ прежний.
+    const prevChapter = chaptersOf(state.memory).filter((c) => c.mode !== 'off').pop();
+    const context = [
+      tracked,
+      prevChapter ? `PREVIOUS CHAPTER: «${prevChapter.title}» — ${prevChapter.gist || ''}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     const prevState = state.memory.storyState?.trim() || '';
-    const input = prevState
-      ? `CURRENT STORY STATE (snapshot to update):\n${prevState}\n\n=== NEW TURNS SINCE THAT SNAPSHOT ===\n${transcript}`
-      : transcript;
-    const { raw, episode, storyState } = await summarizeWithRetry(project, prompt, input, transcript);
+    const turnsBlock = `=== NEW TURNS${prevState ? ' SINCE THAT SNAPSHOT' : ''} ===\n${transcript}`;
+    const input = [context, prevState ? `CURRENT STORY STATE (snapshot to update):\n${prevState}` : '', turnsBlock]
+      .filter(Boolean)
+      .join('\n\n');
+    const retryInput = [context, turnsBlock].filter(Boolean).join('\n\n');
+    const { raw, episode, storyState, arcs: arcsText } = await summarizeWithRetry(project, prompt, input, retryInput);
 
     // КРИТИЧНО: историю режем ТОЛЬКО если свёртка реально получилась. Пустой,
-    // обрезанный или мусорный ответ раньше проходил дальше по коду — запись в
-    // журнал не добавлялась, а сообщения из истории всё равно удалялись. Кусок
-    // сюжета исчезал бесследно: и в контексте его нет, и в журнале нет.
-    // Теперь при неудаче состояние возвращается КАК ЕСТЬ: история цела, счётчик
-    // не сброшен — движок повторит свёртку на следующем ходу.
+    // обрезанный или мусорный ответ раньше проходил дальше по коду — запись не
+    // добавлялась, а сообщения из истории всё равно удалялись. Кусок сюжета
+    // исчезал бесследно. Теперь при неудаче состояние возвращается КАК ЕСТЬ.
     if (episode.trim().length < MIN_EPISODE_CHARS) {
       updateToast(
         toastId,
@@ -490,36 +577,65 @@ export async function maybeCompress(
       lastFailedTurn = state.turnCount;
       return state;
     }
-    // Журнал эпизодов: append-only, хронологический (нужен и для пересборки снапшота).
+
+    // ГЛАВА. Номера сообщений абсолютные: по ним видно, какой кусок истории она
+    // описывает, и вторая глава о том же не появится.
     const fromMsg = state.memory.foldedMsgCount + 1;
     const toMsg = state.memory.foldedMsgCount + stale.length;
-    const chronicle = episode
-      ? [...state.memory.chronicle, { id: uid('chr'), text: episode, atTurn: state.turnCount, fromMsg, toMsg }]
-      : state.memory.chronicle;
+    const lt = liveTurns(state);
+    const fromTurn = lt[0];
+    const toTurn = lt[stale.length - 1];
+    const header = parseChapterHeader(episode);
+    // Этот период уже описан главой (её собрали из живой истории раньше свёртки) —
+    // вторую не пишем; снапшот и архив при этом обновляются как обычно.
+    const alreadyCovered = coverage(state.memory, fromMsg, toMsg) >= 0.9;
+    const chapter: MemoryBookEntry | null = alreadyCovered
+      ? null
+      : makeChapter(project, state, {
+          header,
+          transcript,
+          fromMsg,
+          toMsg,
+          fromTurn,
+          toTurn,
+          archiveTurn: state.turnCount,
+          source: 'auto',
+          fallbackTitle: raw.startsWith('ЧЕРНОВАЯ ЗАПИСЬ') ? 'Черновая глава (пересоберите)' : undefined,
+        });
+    if (alreadyCovered) logEvent('info', 'memory', `Период ходов ${fromTurn}–${toTurn} уже описан главой — новую не пишу`);
+    const parsedArcs: ParsedArc[] = chapter ? parseArcs(arcsText) : [];
+    const arcs = chapter
+      ? addArcStages(state.memory.arcs, project, state.memory, parsedArcs, {
+          turn: toTurn,
+          dates: header.dates,
+          chapterId: chapter.id,
+          source: 'auto',
+        })
+      : state.memory.arcs;
 
     updateToast(toastId, 'success', tt('Память обновлена', 'Memory updated'));
     logEvent(
       'info',
       'memory',
-      `Саммаризация выполнена: эпизод ${episode.trim().length} симв., снапшот ${storyState.trim().length} симв. ` +
-        `(ответ целиком ${raw.length} симв.)`
+      `Саммаризация выполнена: ${chapter ? `глава «${chapter.title}» (ходы ${fromTurn}–${toTurn}, ключи: ${chapter.keys.join(', ') || '—'})` : 'без новой главы'}, ` +
+        `снапшот ${storyState.trim().length} симв., сдвигов персонажей: ${parsedArcs.length} (ответ целиком ${raw.length} симв.)`
     );
-    // Снапшот несёт отношения и «где мы сейчас». Пустая секция при непустом
-    // эпизоде — почти всегда обрыв ответа по лимиту токенов: эпизод успел, а
-    // состояние нет. Молча оставлять прежний снапшот нельзя — он устареет.
     // Снапшот НЕ ОБНОВИЛСЯ (обрыв ответа). Оставлять прежний нельзя: он объявляет
-    // себя «положением дел сейчас» и тянет сюжет назад, к моменту старой свёртки —
-    // отсюда «ход идёт сразу после старого саммари, хотя прошёл кусок истории» и
-    // хождение сюжета по кругу. Пересобираем снапшот отдельным запросом по журналу.
+    // себя «положением дел сейчас» и тянет сюжет назад, к моменту старой свёртки.
+    // Пересобираем снапшот отдельным запросом по главам.
+    const withChapter: MemoryState = {
+      ...state.memory,
+      memorybook: chapter ? [...state.memory.memorybook, chapter] : state.memory.memorybook,
+    };
     let freshState = storyState.trim();
     if (!freshState) {
       logEvent(
         'warn',
         'memory',
-        'Секция STORY STATE пуста (обрыв ответа) — пересобираю снапшот отдельным запросом по журналу эпизодов'
+        'Секция STORY STATE пуста (обрыв ответа или свой промпт свёртки) — пересобираю снапшот отдельным запросом по главам'
       );
       try {
-        freshState = await rebuildStoryState(project, { ...state.memory, chronicle });
+        freshState = await rebuildStoryState(project, withChapter);
       } catch (e) {
         logEvent(
           'error',
@@ -535,11 +651,11 @@ export async function maybeCompress(
         );
       }
     }
-    // Сырой кусок сохраняем отдельно — не инжектится целиком, только через
-    // векторный подсос релевантного (см. vectorEngine.ts).
+    // Сырой кусок — целиком и с номерами: из него пересобирают главу и ищут по
+    // прошлому, а номера держат счёт, даже если в архиве появятся дыры.
     const rawArchive = [
       ...state.memory.rawArchive,
-      { turn: state.turnCount, text: transcript.slice(0, RAW_ARCHIVE_CHARS) },
+      { turn: state.turnCount, text: transcript.slice(0, RAW_ARCHIVE_CHARS), fromMsg, toMsg, fromTurn, toTurn },
     ];
 
     const next: RuntimeState = {
@@ -548,11 +664,13 @@ export async function maybeCompress(
       // не влез в один заход, свёрнута только его часть — остальное обязано остаться
       // в живой истории, иначе оно исчезнет мимо и контекста, и архива.
       history: state.history.slice(stale.length),
-      memory: await recompactChronicle(project, {
-        ...state.memory,
-        chronicle,
-        // Снапшот заменяется новым (или пересобранным). Метку возраста ставим ТОЛЬКО
-        // при успехе: устаревший снапшот так и останется помеченным старым ходом.
+      // Главы НЕ пережимаются. Раньше здесь журнал уплотнялся: старые эпизоды
+      // сжимались в сводку, потом сводка со следующими — ещё раз, и начало истории
+      // таяло до дюжины строк. Теперь рост памяти держит бюджет при сборке запроса:
+      // старые главы уходят в оглавление, а целиком подтягиваются по ключам.
+      memory: retireSupersededLegacy({
+        ...withChapter,
+        arcs,
         storyState: freshState || state.memory.storyState,
         storyStateAtTurn: freshState ? state.turnCount : state.memory.storyStateAtTurn,
         foldedMsgCount: toMsg,
@@ -561,8 +679,7 @@ export async function maybeCompress(
       }),
     };
     // Не дошли до цели за один заход (вход саммарайзера ограничен) — доворачиваем
-    // сразу, а не через несколько ходов. Иначе живая история всё время висит чуть
-    // выше лимита и свёртка запускается снова и снова.
+    // сразу, а не через несколько ходов.
     const stillOver = liveHistoryTokens(project, next) > target;
     if (stillOver && pass + 1 < MAX_FOLD_PASSES && next.history.length > keep + 4) {
       logEvent(
@@ -586,117 +703,20 @@ export async function maybeCompress(
   }
 }
 
-// Разбор архивного транскрипта обратно в сообщения. Архив пишется строками вида
-// «ИГРОК: …» / «ИГРА: …» через пустую строку — значит, свёрнутый период можно
-// вернуть в живую историю дословно, а не только пересказом. Это спасает даже то,
-// что «утрачено»: текст периода лежит в архиве, даже если записи в журнале нет.
-export function parseArchivedTranscript(text: string): LlmMessage[] {
-  const parts = (text || '').split(/\n\n(?=(?:ИГРОК|ИГРА|PLAYER|GAME):\s)/);
-  const out: LlmMessage[] = [];
-  for (const part of parts) {
-    const m = /^(ИГРОК|ИГРА|PLAYER|GAME):\s([\s\S]*)$/.exec(part.trim());
-    if (!m) continue;
-    const content = m[2].trim();
-    if (!content) continue;
-    out.push({ role: m[1] === 'ИГРОК' || m[1] === 'PLAYER' ? 'user' : 'assistant', content });
-  }
-  return out;
-}
+// Разбор архивного транскрипта обратно в сообщения (см. parseTranscript).
+export const parseArchivedTranscript = parseTranscript;
 
-// Пересобрать свёртку из СЫРОГО архива периода (мастерская саммари). Нужна в двух
-// случаях: свёртка получилась куцей/кривой, и её хочется переделать; либо запись
-// вообще не появилась (старый баг терял период целиком). Текущий снапшот состояния
-// при этом НЕ трогаем: пересборка старого куска не должна откатывать «где мы сейчас».
-export async function resummarizeArchived(
-  project: Project,
-  memory: RuntimeState['memory'],
-  archiveIndex: number
-): Promise<RuntimeState['memory']> {
-  const chunk = memory.rawArchive[archiveIndex];
-  if (!chunk?.text?.trim()) throw new Error('В архиве нет текста этого периода');
-  const prompt =
-    project.memoryConfig.summaryPrompt?.trim() || SUMMARIZER_PROMPT(project.memoryConfig.minorEventsLimit ?? 10);
-  const raw = await summarize(project, prompt, chunk.text);
-  const { episode } = splitSummarySections(raw);
-  const text = episode.trim();
-  if (text.length < MIN_EPISODE_CHARS) throw new Error('Модель вернула пустой ответ — попробуйте ещё раз');
-
-  const chronicle = [...memory.chronicle];
-  const at = chronicle.findIndex((c) => c.atTurn === chunk.turn);
-  if (at >= 0) {
-    chronicle[at] = { ...chronicle[at], text };
-  } else {
-    // Записи за этот период нет — вставляем на её хронологическое место.
-    const entry = { id: uid('chr'), text, atTurn: chunk.turn, fromMsg: 0, toMsg: 0 };
-    const pos = chronicle.findIndex((c) => c.atTurn > chunk.turn);
-    chronicle.splice(pos < 0 ? chronicle.length : pos, 0, entry);
-  }
-  logEvent('info', 'memory', `Свёртка периода (ход ${chunk.turn}) пересобрана вручную`);
-  return { ...memory, chronicle };
-}
-
-// Режет ответ саммарайзера на секции === EPISODE === / === STORY STATE ===.
-// Нет маркеров (кастомный промпт юзера) → весь текст считается эпизодом, снапшот
-// не трогаем — хронология не страдает в любом случае.
-export function splitSummarySections(raw: string): { episode: string; storyState: string } {
+// Режет ответ саммарайзера на секции. Нет маркеров (свой промпт автора) → весь
+// текст считается эпизодом, а секция эволюции, если модель её дописала, отрезается.
+export function splitSummarySections(raw: string): { episode: string; storyState: string; arcs: string } {
   const text = (raw || '').trim();
-  const epMatch = text.match(/===\s*EPISODE\s*===([\s\S]*?)(?====\s*STORY STATE\s*===|$)/i);
-  const stMatch = text.match(/===\s*STORY STATE\s*===([\s\S]*)$/i);
-  const episode = (epMatch?.[1] || '').trim();
-  const storyState = (stMatch?.[1] || '').trim();
-  if (!episode && !storyState) return { episode: text, storyState: '' };
-  return { episode, storyState };
-}
-
-// Ре-саммаризация журнала: когда эпизодов > 15, сжимаем самые старые 10 в один
-// «акт» — ХРОНОЛОГИЧЕСКИ, простым конденс-промптом (не полным саммарайзером,
-// который вернул бы двухсекционный формат).
-const CONDENSE_PROMPT = `You receive numbered chronological episode notes from an interactive story.
-Condense them into ONE compact chronological digest: keep every plot-relevant
-event and its order, drop repetition and trivia. 8-14 numbered points, facts
-only, in ENGLISH. Output only the digest.`;
-
-async function recompactChronicle(
-  project: Project,
-  memory: RuntimeState['memory']
-): Promise<RuntimeState['memory']> {
-  // Уплотняем не только по КОЛИЧЕСТВУ записей, но и по ОБЪЁМУ: длинные эпизоды
-  // раздували журнал (а с ним всю системную часть) задолго до 16-й записи. Порог —
-  // половина доли памяти в бюджете: дальше журнал начинает вытеснять живую историю.
-  const ps = getPresetSettings();
-  const chronTokens = memory.chronicle.reduce((n, c) => n + estimateTokens(c.text), 0);
-  const chronCap = Math.max(1200, Math.round((ps.contextBudget || 80000) * 0.18));
-  const tooMany = memory.chronicle.length > 15;
-  const tooBig = chronTokens > chronCap && memory.chronicle.length >= 4;
-  if (!tooMany && !tooBig) return memory;
-  // По объёму сворачиваем половину самых старых, по количеству — как раньше, 10.
-  const foldCount = tooMany ? 10 : Math.max(2, Math.floor(memory.chronicle.length / 2));
-  const toFold = memory.chronicle.slice(0, foldCount);
-  const rest = memory.chronicle.slice(foldCount);
-  logEvent(
-    'info',
-    'memory',
-    `Уплотняю журнал эпизодов: ${toFold.length} старых записей в одну сводку ` +
-      `(журнал ~${chronTokens} ток. при лимите ~${chronCap})`
-  );
-  try {
-    const transcript = toFold.map((c, i) => `[${i + 1}] ${c.text}`).join('\n');
-    const text = await summarize(project, CONDENSE_PROMPT, transcript);
-    // Пустой ответ = сжатия не было. Раньше 10 самых старых эпизодов при этом
-    // просто выбрасывались — журнал терял начало истории молча.
-    if (!text) {
-      logEvent('warn', 'memory', 'Уплотнение журнала вернуло пустой ответ — журнал оставлен как есть');
-      return memory;
-    }
-    const folded = {
-      id: uid('chr'),
-      text,
-      atTurn: toFold[toFold.length - 1].atTurn,
-      fromMsg: toFold[0].fromMsg,
-      toMsg: toFold[toFold.length - 1].toMsg,
-    };
-    return { ...memory, chronicle: [folded, ...rest] };
-  } catch {
-    return memory; // не критично — попробуем на следующем триггере
+  const sec = splitSections(text);
+  const arcs = sec['CHARACTER ARCS'] || '';
+  const episode = (sec['EPISODE'] || '').trim();
+  const storyState = (sec['STORY STATE'] || '').trim();
+  if (!episode && !storyState) {
+    const at = text.search(/===\s*CHARACTER ARCS\s*===/i);
+    return { episode: (at >= 0 ? text.slice(0, at) : text).trim(), storyState: '', arcs };
   }
+  return { episode, storyState, arcs };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Modal, Field } from '../../shared/ui';
 import { useLang } from '../../shared/i18n';
 import { usePlayerStore } from '../player/playerStore';
@@ -14,8 +14,11 @@ import type {
   Project, MemoryConfig, VectorizationMode, GmCharacter, GameMasterState, RelationshipStats,
   AssetSelectorSource, CharacterRole, MemoryState,
 } from '../../shared/types';
-import { resummarizeArchived, rebuildStoryState, liveHistoryTokens, liveHistoryAllowance } from '../../ai/memoryEngine';
-import { buildRequest } from '../../ai/promptBuilder';
+import { rebuildStoryState, liveHistoryTokens, liveHistoryAllowance, lastFoldFailureTurn } from '../../ai/memoryEngine';
+import { buildRequest, selectMemory } from '../../ai/promptBuilder';
+import { chaptersOf, coverage, archiveRanges } from '../../ai/chapters';
+import { MemorybookTab, ArcsTab } from './MemorybookTab';
+import { useChapterJob, runChapterJob } from '../player/chapterJob';
 import { getPresetSettings } from '../../ai/presetSettings';
 import { estimateTokens } from '../../shared/utils';
 
@@ -23,7 +26,7 @@ import { estimateTokens } from '../../shared/utils';
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
 // отношений, календарь (день/месяц/год/время/локация + кастомные месяцы), адженда,
 // список саммари (свёрток) и векторизация. Двуязычно (по глобальному языку UI).
-type Tab = 'characters' | 'inventory' | 'sheets' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'summary' | 'vector' | 'selector';
+type Tab = 'characters' | 'inventory' | 'sheets' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'memorybook' | 'arcs' | 'summary' | 'vector' | 'selector';
 type Lf = (ru: string, en: string) => string;
 type GM = GameMasterState;
 type PatchGm = (m: (gm: GM) => void) => void;
@@ -53,8 +56,10 @@ export function GameMasterPanel({
     { id: 'locations', label: L('Локации', 'Locations'), icon: '📍' },
     { id: 'calendar', label: L('Календарь', 'Calendar'), icon: '🗓' },
     { id: 'agenda', label: L('Адженда', 'Agenda'), icon: '✅' },
+    { id: 'memorybook', label: L('Меморибук', 'Memorybook'), icon: '📖' },
+    { id: 'arcs', label: L('Эволюция', 'Evolution'), icon: '📈' },
     { id: 'summary', label: L('Саммари', 'Summary'), icon: '🧠' },
-    { id: 'vector', label: L('Векторизация', 'Vectorization'), icon: '🔎' },
+    { id: 'vector', label: L('Поиск по прошлому', 'Past recall'), icon: '🔎' },
     { id: 'selector', label: L('Селектор', 'Selector'), icon: '🎨' },
   ];
 
@@ -66,11 +71,13 @@ export function GameMasterPanel({
 
   return (
     <Modal open={open} onClose={onClose} title="Game Master" wide>
-      <div className="flex gap-1 mb-4 flex-wrap">
+      {/* На телефоне вкладки — одна прокручиваемая строка: переносом их выходило
+          шесть рядов, и содержимое начиналось с середины экрана. */}
+      <div className="flex gap-1 mb-4 overflow-x-auto scrollbar-thin -mx-1 px-1 pb-1 sm:flex-wrap sm:overflow-visible">
         {TABS.map((t) => (
           <button
             key={t.id}
-            className={`px-2.5 py-1.5 rounded-lg text-sm ${tab === t.id ? 'bg-accent text-white' : 'bg-panel2 hover:bg-white/10'}`}
+            className={`shrink-0 whitespace-nowrap px-2.5 py-1.5 rounded-lg text-sm ${tab === t.id ? 'bg-accent text-white' : 'bg-panel2 hover:bg-white/10'}`}
             onClick={() => setTab(t.id)}
           >
             {t.icon} {t.label}
@@ -86,6 +93,8 @@ export function GameMasterPanel({
       {tab === 'locations' && (gm ? <LocationsTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'calendar' && (gm ? <CalendarTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
       {tab === 'agenda' && (gm ? <AgendaTab gm={gm} patchGm={s.patchGm} L={L} /> : noGame)}
+      {tab === 'memorybook' && <MemorybookTab project={project} onPatch={onPatch} L={L} />}
+      {tab === 'arcs' && <ArcsTab project={project} L={L} />}
       {tab === 'summary' && <SummaryTab project={project} onPatch={onPatch} L={L} />}
       {tab === 'vector' && <VectorTab project={project} onPatch={onPatch} L={L} />}
       {tab === 'selector' && <SelectorTab project={project} onPatch={onPatch} L={L} />}
@@ -322,7 +331,7 @@ function EventsTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) {
     <div className="space-y-2">
       <div className="flex justify-between items-center">
         <p className="text-xs text-gray-500">
-          {L('Журнал событий (= меморибук): что, когда, с кем. Внутриигровая дата держит хронологию.', 'Event log (= memorybook): what, when, with whom. In-game dates keep chronology.')}
+          {L('Журнал событий Game Master: что, когда, с кем — по служебной сводке хода. Внутриигровая дата держит хронологию. (Главы истории — во вкладке «Меморибук».)', 'Game Master event log: what, when, with whom — from each turn\'s status block. In-game dates keep chronology. (Story chapters live in the Memorybook tab.)')}
         </p>
         <div className="flex gap-2">
           <WandButton busy={busy} onClick={scan} title={L('Собрать события из контекста', 'Extract events from context')} />
@@ -908,7 +917,7 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-500">
-        {L('Вместо раздутого контекста — краткие свёртки каждые N сообщений (всегда на английском). Список свёрток можно править и удалять.', 'Instead of a bloated context — short recaps every N messages (always English). The recap list is editable and deletable.')}
+        {L('Вместо раздутого контекста — свёртки: каждая пишет главу в меморибук и обновляет снапшот «где мы сейчас». Главы больше не пережимаются.', 'Instead of a bloated context — folds: each writes a chapter into the memorybook and refreshes the "where we are now" snapshot. Chapters are never re-compressed.')}
       </p>
 
       {project && s.state && <MemoryStatus project={project} L={L} />}
@@ -922,7 +931,7 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
               <button
                 className="btn-ghost !px-2 !py-0.5 text-xs shrink-0"
                 disabled={rebuilding}
-                title={L('Собрать заново по всему журналу эпизодов', 'Rebuild from the whole episode log')}
+                title={L('Собрать заново по всем главам', 'Rebuild from all chapters')}
                 onClick={async () => {
                   setRebuilding(true);
                   const id = pushToast('info', L('Пересобираю снапшот…', 'Rebuilding the snapshot…'));
@@ -945,8 +954,8 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
           </div>
           <p className="text-[11px] text-gray-500">
             {L(
-              'Это НЕ пересказ ходов, а «где всё стоит сейчас»: кто есть кто, отношения и их причины, закрытые арки, открытые крючки, важные предметы, текущая сцена. Заменяется целиком при каждой свёртке. «Пересобрать» — собрать заново по всему журналу эпизодов, если снапшот оборвался или устарел. Правки руками сохраняются: для следующих ходов это авторитетный источник.',
-              'Not a retelling of turns but "where everything stands now": who is who, relationships and their causes, resolved arcs, open hooks, key items, the current scene. Replaced wholesale on each fold. "Rebuild" reassembles it from the whole episode log. Hand edits are kept — this is authoritative for future turns.'
+              'Это НЕ пересказ ходов, а «где всё стоит сейчас»: кто есть кто, отношения и их причины, закрытые арки, открытые крючки, важные предметы, текущая сцена. Заменяется целиком при каждой свёртке. «Пересобрать» — собрать заново по всем главам, если снапшот оборвался или устарел. Правки руками сохраняются: для следующих ходов это авторитетный источник.',
+              'Not a retelling of turns but "where everything stands now": who is who, relationships and their causes, resolved arcs, open hooks, key items, the current scene. Replaced wholesale on each fold. "Rebuild" reassembles it from all chapters. Hand edits are kept — this is authoritative for future turns.'
             )}
           </p>
           <textarea
@@ -958,36 +967,14 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
         </div>
       )}
 
-      {/* Журнал эпизодов — хронологический, редактируемый. */}
+      {/* Журнал эпизодов стал главами меморибука. */}
       {memory && (
-        <div className="space-y-2">
-          <h4 className="font-semibold text-sm">
-            {L('Журнал эпизодов (хронология)', 'Episode log (chronological)')} ({memory.chronicle.length})
-          </h4>
-          <p className="text-[11px] text-gray-500">
-            {L(
-              'Каждая свёртка добавляет запись «что произошло за период». Записи уходят в контекст по порядку, от старых к новым, и больше не переписываются.',
-              'Each fold appends a "what happened this period" entry. Entries go to context oldest → newest and are never rewritten.'
-            )}
-          </p>
-          {memory.chronicle.length === 0 && <p className="text-gray-600 text-sm">{L('пока нет записей', 'no entries yet')}</p>}
-          {memory.chronicle.map((c, i) => (
-            <div key={c.id} className="card !p-2 !bg-panel2">
-              <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                <span>
-                  {L('Период', 'Period')} {i + 1} · {L('сообщения', 'messages')} {c.fromMsg}–{c.toMsg}
-                  {c.atTurn ? ` · ${L('до хода', 'up to turn')} ${c.atTurn}` : ''}
-                </span>
-                <button className="btn-danger !px-2 !py-0.5 text-xs" onClick={() => patchMemory((m) => m.chronicle.splice(i, 1))}>✕</button>
-              </div>
-              <textarea
-                className="input !py-1 text-sm h-20"
-                value={c.text}
-                onChange={(e) => patchMemory((m) => { m.chronicle[i].text = e.target.value; })}
-              />
-            </div>
-          ))}
-        </div>
+        <p className="text-[11px] text-gray-500">
+          {L(
+            `Журнал эпизодов теперь — главы во вкладке «📖 Меморибук» (${chaptersOf(memory).length}). Там их можно править, выключать, давать ключи и пересобирать.`,
+            `The episode log is now chapters in the "📖 Memorybook" tab (${chaptersOf(memory).length}). Edit, switch off, key and rebuild them there.`
+          )}
+        </p>
       )}
       {/* Архив сырых периодов — страховка: из него свёртку можно пересобрать. */}
       {memory && project && <RawArchiveList memory={memory} project={project} patchMemory={patchMemory} L={L} />}
@@ -1028,6 +1015,24 @@ function MemoryStatus({ project, L }: { project: Project; L: Lf }) {
     };
   }, [project, state?.turnCount, state?.history.length]);
 
+  // Счёт по всему архиву — только когда меняется память, а не на каждый кусок
+  // потокового ответа (панель подписана на весь стор).
+  const health = useMemo(() => {
+    if (!state) return null;
+    const sel = selectMemory(project, state, '');
+    const mem = state.memory;
+    const ranges = archiveRanges(state);
+    return {
+      sel,
+      chapters: chaptersOf(mem).filter((c) => c.source !== 'legacy'),
+      covered: mem.foldedMsgCount ? Math.round(coverage(mem, 1, mem.foldedMsgCount) * 100) : 100,
+      gaps: mem.rawArchive.filter(
+        (c, i) =>
+          !mem.memorybook.some((e) => e.kind === 'chapter' && e.source !== 'legacy' && e.archiveTurn === c.turn) &&
+          coverage(mem, ranges[i].fromMsg, ranges[i].toMsg) < 0.9
+      ).length,
+    };
+  }, [project, state?.memory, state?.history.length]);
   if (!state) return null;
   const budget = getPresetSettings().contextBudget;
   const live = liveHistoryTokens(project, state);
@@ -1036,10 +1041,17 @@ function MemoryStatus({ project, L }: { project: Project; L: Lf }) {
   // Память — единственная часть системного блока, которая растёт по ходу игры
   // (журнал пополняется каждой свёрткой, снапшот пухнет). Показываем её отдельно
   // с её потолком: иначе непонятно, почему «контекст растёт», хотя история сжата.
-  const memTokens =
-    state.memory.chronicle.reduce((n, c) => n + estimateTokens(c.text), 0) +
-    estimateTokens(state.memory.storyState || '');
-  const memCap = Math.max(1500, Math.round(budget * 0.35));
+  if (!health) return null;
+  const { sel, chapters, covered, gaps } = health;
+  const memTokens = sel.memoryTokens + sel.pick.tokens;
+  const memCap = sel.budgets.memory + sel.budgets.memorybook;
+  // ЗДОРОВЬЕ ПАМЯТИ: покрыт ли главами каждый свёрнутый кусок истории, удалась ли
+  // последняя свёртка, как часто модель пропускает служебную сводку хода.
+  const mem = state.memory;
+  const failTurn = lastFoldFailureTurn();
+  const log = state.stateBlockLog || [];
+  const miss = log.filter((x) => x.status !== 'ok').length;
+  const lost = log.filter((x) => x.status === 'lost').length;
   const snapAge = state.memory.storyStateAtTurn ? state.turnCount - state.memory.storyStateAtTurn : null;
   const pct = Math.min(100, Math.round((live / Math.max(1, allowance)) * 100));
 
@@ -1069,7 +1081,7 @@ function MemoryStatus({ project, L }: { project: Project; L: Lf }) {
       </div>
       <p className="text-[11px] text-gray-500">
         {L(
-          `Лимит живой истории ~${allowance.toLocaleString()} ток. При его достижении самое старое сворачивается в эпизод журнала — дословный текст при этом сохраняется в архиве периода (ниже) и его можно вернуть.`,
+          `Лимит живой истории ~${allowance.toLocaleString()} ток. При его достижении самое старое сворачивается в главу меморибука — дословный текст при этом сохраняется в архиве периода (ниже) и его можно вернуть.`,
           `Live-history limit ~${allowance.toLocaleString()} tok. On reaching it the oldest part folds into an episode — the verbatim text is kept in the period archive below and can be restored.`
         )}
       </p>
@@ -1081,10 +1093,47 @@ function MemoryStatus({ project, L }: { project: Project; L: Lf }) {
       />
       <Row label={L('Бюджет контекста', 'Context budget')} value={`${budget.toLocaleString()} ${L('ток.', 'tok.')}`} />
       <Row
-        label={L('Журнал эпизодов', 'Episode log')}
-        value={`${state.memory.chronicle.length} ${L('записей', 'entries')}`}
-        hint={`· ${L('архив периодов', 'period archive')}: ${state.memory.rawArchive.length}`}
+        label={L('Главы', 'Chapters')}
+        value={`${chapters.length}`}
+        hint={`· ${L('архив периодов', 'period archive')}: ${mem.rawArchive.length}`}
       />
+      <h4 className="font-semibold text-sm pt-1">{L('Здоровье памяти', 'Memory health')}</h4>
+      <Row
+        label={L('Свёрнутое описано главами', 'Folded history covered by chapters')}
+        value={`${covered}%`}
+        hint={gaps ? `· ${L('периодов без главы', 'periods without a chapter')}: ${gaps}` : ''}
+      />
+      <Row
+        label={L('Последняя свёртка', 'Last fold')}
+        value={failTurn ? L(`не удалась на ходу ${failTurn}`, `failed at turn ${failTurn}`) : L('без ошибок', 'no errors')}
+      />
+      {log.length > 0 && (
+        <Row
+          label={L('Служебная сводка хода', 'Per-turn status block')}
+          value={
+            miss
+              ? L(`пропущена ${miss} из ${log.length}`, `missed ${miss} of ${log.length}`)
+              : L(`на месте во всех ${log.length}`, `present in all ${log.length}`)
+          }
+          hint={miss ? `· ${L('добрано', 'recovered')} ${miss - lost}, ${L('потеряно', 'lost')} ${lost}` : ''}
+        />
+      )}
+      {(gaps > 0 || covered < 90) && (
+        <p className="text-[11px] text-amber-400">
+          {L(
+            '⚠ Часть свёрнутой истории не описана главами — модель знает о ней только по оглавлению и снапшоту. Откройте «📖 Меморибук» → «Восстановить главы из архива».',
+            '⚠ Part of the folded history has no chapters — the model knows it only from the index and snapshot. Open "📖 Memorybook" → "Restore chapters from archive".'
+          )}
+        </p>
+      )}
+      {lost > 0 && (
+        <p className="text-[11px] text-gray-500">
+          {L(
+            'Пропуски сводки больше не бьют по памяти: главы и эволюция собираются из самой прозы при свёртке. Сводка нужна для часов, досье и статусов Game Master.',
+            'Missing status blocks no longer hurt memory: chapters and evolution are built from the prose itself at fold time. The block feeds the Game Master clock, dossiers and statuses.'
+          )}
+        </p>
+      )}
       <Row
         label={L('Снапшот состояния', 'State snapshot')}
         value={
@@ -1118,26 +1167,12 @@ function RawArchiveList({
   patchMemory: (m: (mem: MemoryState) => void) => void;
   L: Lf;
 }) {
-  const [busy, setBusy] = useState<number | null>(null);
-  const [err, setErr] = useState<string>('');
   const [open, setOpen] = useState<number | null>(null);
   const restore = usePlayerStore((st) => st.restoreArchivedPeriod);
+  const running = useChapterJob((st) => st.running);
   if (!memory.rawArchive?.length) return null;
-
-  async function rebuild(i: number) {
-    setBusy(i);
-    setErr('');
-    try {
-      const next = await resummarizeArchived(project, memory, i);
-      patchMemory((m) => {
-        m.chronicle = next.chronicle;
-      });
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  }
+  void project;
+  void patchMemory;
 
   return (
     <div className="space-y-2">
@@ -1146,13 +1181,12 @@ function RawArchiveList({
       </h4>
       <p className="text-[11px] text-gray-500">
         {L(
-          'Полный текст каждого свёрнутого куска истории — страховка от потери. «Пересобрать» просит модель сделать выжимку заново. «В историю» возвращает сообщения периода в живой контекст ДОСЛОВНО: так восстанавливается даже то, что пропало из журнала. Учтите, что вернувшиеся сообщения занимают бюджет контекста — после них стоит дать движку свернуть период заново.',
+          'Полный текст каждого свёрнутого куска истории — страховка от потери. «Пересобрать» собирает главу периода заново по дословному тексту (старая заменяется). «В историю» возвращает сообщения периода в живой контекст ДОСЛОВНО. Учтите, что вернувшиеся сообщения занимают бюджет контекста — после них стоит дать движку свернуть период заново.',
           'The full text of every folded chunk — your safety net. "Rebuild" asks the model to summarize it again. "To history" puts the period back into live context VERBATIM, recovering even what vanished from the log. Restored messages count against the context budget — let the engine fold the period again afterwards.'
         )}
       </p>
-      {err && <p className="text-xs text-red-400">{err}</p>}
       {memory.rawArchive.map((chunk, i) => {
-        const has = memory.chronicle.some((c) => c.atTurn === chunk.turn);
+        const has = memory.memorybook.some((c) => c.kind === 'chapter' && c.source !== 'legacy' && c.archiveTurn === chunk.turn);
         return (
           <div key={`${chunk.turn}-${i}`} className="card !p-2 !bg-panel2">
             <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -1160,13 +1194,17 @@ function RawArchiveList({
                 {L('до хода', 'up to turn')} {chunk.turn} · {Math.round(chunk.text.length / 1000)}k {L('симв.', 'chars')}
               </span>
               {!has && (
-                <span className="text-amber-400">· {L('записи в журнале нет', 'no log entry')}</span>
+                <span className="text-amber-400">· {L('главы нет', 'no chapter')}</span>
               )}
               <button className="btn-ghost !px-2 !py-0.5 text-xs ml-auto" onClick={() => setOpen(open === i ? null : i)}>
                 {open === i ? L('скрыть', 'hide') : L('текст', 'text')}
               </button>
-              <button className="btn-ghost !px-2 !py-0.5 text-xs" disabled={busy !== null} onClick={() => rebuild(i)}>
-                {busy === i ? '…' : `↻ ${has ? L('пересобрать', 'rebuild') : L('восстановить', 'restore')}`}
+              <button
+                className="btn-ghost !px-2 !py-0.5 text-xs"
+                disabled={running}
+                onClick={() => void runChapterJob({ kind: 'chunk', archiveIndex: i })}
+              >
+                ↻ {has ? L('пересобрать', 'rebuild') : L('собрать главу', 'build chapter')}
               </button>
               <button
                 className="btn-ghost !px-2 !py-0.5 text-xs"
@@ -1235,7 +1273,7 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
         />
         <p className="text-[11px] text-gray-500 mt-1">
           {L(
-            'Свёртка отдаёт две части сразу — запись журнала и ПОЛНЫЙ снапшот состояния, — поэтому ответ длинный. Мало токенов = снапшот обрывается на середине (например, на «CURRENT SITUATION»).',
+            'Свёртка отдаёт три части сразу — главу, сдвиги персонажей и ПОЛНЫЙ снапшот состояния, — поэтому ответ длинный. Мало токенов = снапшот обрывается на середине (например, на «CURRENT SITUATION»); тогда движок пересобирает его отдельным запросом.',
             'A fold returns two parts at once — the log entry and the FULL state snapshot — so the answer is long. Too few tokens and the snapshot gets cut mid-way.'
           )}
         </p>
@@ -1244,12 +1282,12 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
         <p className="text-[11px] text-gray-500 mb-1">
           {mc.summaryPrompt?.trim()
             ? L(
-                '⚠️ Заполнено — работает ВАШ промпт, подробный дефолт движка отключён. Если саммари выходят мелкими и без прогресса отношений, очистите поле кнопкой ниже.',
+                '⚠️ Заполнено — работает ВАШ промпт, подробный дефолт движка отключён: у глав не будет названий и ключей от модели (движок подставит свои), снапшот соберётся отдельным запросом. Если саммари выходят мелкими, очистите поле кнопкой ниже.',
                 '⚠️ Filled in — YOUR prompt is used and the engine default is off. If summaries come out thin, clear the field with the button below.'
               )
             : L(
-                'Пусто — работает дефолт движка: журнал эпизодов (события, решения, движение отношений, предметы) + живой снапшот состояния с блоком отношений.',
-                'Empty — the engine default is used: an episode log (events, decisions, relationship movement, items) plus a living state snapshot with a relationships block.'
+                'Пусто — работает дефолт движка: глава с названием и ключами (события, решения, движение отношений, предметы), сдвиги отслеживаемых персонажей и живой снапшот состояния.',
+                'Empty — the engine default is used: a titled, keyed chapter (events, decisions, relationship movement, items), shifts of tracked characters and a living state snapshot.'
               )}
         </p>
         <textarea className="input h-20" value={mc.summaryPrompt || ''} onChange={(e) => patchMem({ summaryPrompt: e.target.value || undefined })} />
@@ -1286,17 +1324,33 @@ function VectorTab({ project, onPatch, L }: { project?: Project | null; onPatch?
   return (
     <div>
       <p className="text-xs text-gray-500 mb-3">
-        {L('Подсос релевантных кусков истории по смыслу — на основном или стороннем API.', 'Retrieves relevant history chunks by meaning — on the main or a third-party API.')}
+        {L(
+          'Каждый ход движок ищет в свёрнутой истории дословные отрывки, похожие на то, что происходит сейчас, и кладёт их в блок меморибука. Единица поиска — один ход, модели уходит отрывок вокруг совпадения.',
+          'Every turn the engine searches the folded history for verbatim passages similar to what is happening now and puts them into the memorybook block. The unit is one turn; the model gets the passage around the match.'
+        )}
       </p>
-      <div className="flex gap-2 mb-3">
-        {(['off', 'builtin', 'custom'] as VectorizationMode[]).map((m) => (
+      <div className="flex gap-2 mb-3 flex-wrap">
+        {(['keyword', 'builtin', 'custom', 'off'] as VectorizationMode[]).map((m) => (
           <button key={m} className={`chip !px-3 !py-1.5 ${mc.vectorization === m ? 'bg-accent2 text-white' : ''}`} onClick={() => patchMem({ vectorization: m })}>
-            {m === 'off' ? L('Выкл', 'Off') : m === 'builtin' ? L('Встроенная', 'Built-in') : L('Свой API', 'Custom API')}
+            {m === 'off' ? L('Выкл', 'Off') : m === 'keyword' ? L('По словам', 'By words') : m === 'builtin' ? L('Встроенная модель', 'Built-in model') : L('Свой API', 'Custom API')}
           </button>
         ))}
       </div>
+      {mc.vectorization === 'keyword' && (
+        <p className="text-xs text-gray-500">
+          {L(
+            'Поиск по словам (BM25): без модели, мгновенно, офлайн и на любом языке. Частые слова (имя героини, «сказал») не учитываются, редкие — весят больше. Рекомендуется для русских игр.',
+            'Word search (BM25): no model, instant, offline, any language. Frequent words are ignored, rare ones weigh more. Recommended for non-English stories.'
+          )}
+        </p>
+      )}
       {mc.vectorization === 'builtin' && (
-        <p className="text-xs text-gray-500">{L('Модель (~25 МБ, MiniLM) грузится в браузере, считает в Web Worker.', 'Model (~25 MB, MiniLM) loads in-browser, runs in a Web Worker.')}</p>
+        <p className="text-xs text-gray-500">
+          {L(
+            'Модель смыслов MiniLM (~25 МБ) грузится в браузере и считает в Web Worker. Она обучена на английском: на русском тексте ищет заметно хуже поиска по словам.',
+            'The MiniLM meaning model (~25 MB) loads in-browser and runs in a Web Worker. It is English-trained: on non-English text it does noticeably worse than word search.'
+          )}
+        </p>
       )}
       {mc.vectorization === 'custom' && (
         <ApiConnectionField

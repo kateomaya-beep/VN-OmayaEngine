@@ -1,6 +1,7 @@
 import { usePlayerStore } from '../playerStore';
 import { Modal } from '../../../shared/ui';
 import { AssistantChat } from '../../constructor/editors/AssistantChat';
+import { runChapterJob, cancelChapterJob } from '../chapterJob';
 
 // Тот же ассистент-соавтор, что в конструкторе, но открытый прямо во время игры
 // (доработка §7): если по ходу партии нужно что-то поменять или дописать в
@@ -20,6 +21,12 @@ export function AssistantPanel({ open, onClose }: { open: boolean; onClose: () =
         project={s.project}
         update={(mutator) => void s.patchProject(mutator)}
         state={s.state}
+        memory={{
+          patch: s.patchMemory,
+          startJob: (scope, jobId) => void runChapterJob(scope, { source: 'assistant', jobId }),
+          // Откат запущенной ассистентом сборки: сначала остановить, потом убрать собранное.
+          dropJob: cancelChapterJob,
+        }}
       />
     </Modal>
   );

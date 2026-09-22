@@ -4,10 +4,11 @@ import { extractJson, stripMoveTag } from '../../../ai/responseParser';
 import { useLang } from '../../../shared/i18n';
 import { usePlayerStore } from '../playerStore';
 import type { Project, RuntimeState } from '../../../shared/types';
+import { chaptersOf } from '../../../ai/chapters';
 
 // История ходов для перечитывания (бэклог). Показывает свёрнутую хронику (старое,
 // сжатое), затем живые ходы в виде прозы: реплики «Имя: текст» + нарратив/мысли,
-// и что вводил игрок. Источник — state.memory.chronicle + state.history.
+// и что вводил игрок. Источник — главы меморибука + state.history.
 type TurnLine =
   | { kind: 'narration' | 'thought'; text: string }
   | { kind: 'dialogue'; name: string; text: string };
@@ -46,7 +47,7 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
   const state = usePlayerStore((s) => s.state);
   if (!open) return null;
 
-  const chronicle = state?.memory.chronicle ?? [];
+  const chronicle = state ? chaptersOf(state.memory).filter((c) => c.mode !== 'off') : [];
   const history = state?.history ?? [];
 
   return (
@@ -58,13 +59,17 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
           {chronicle.length > 0 && (
             <div className="rounded-lg border border-white/10 bg-panel2 p-3">
               <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">
-                {L('Ранее (сжато)', 'Earlier (compressed)')}
+                {L('Ранее (главы)', 'Earlier (chapters)')}
               </p>
               <div className="space-y-1.5">
                 {chronicle.map((c, i) => (
-                  <p key={c.id} className="text-sm text-gray-400">
-                    <span className="text-gray-600">[{i + 1}]</span> {c.text}
-                  </p>
+                  <div key={c.id} className="text-sm text-gray-400">
+                    <p className="text-gray-300 font-semibold">
+                      <span className="text-gray-600">{i + 1}.</span> {c.title}
+                      {c.fromTurn && c.toTurn ? <span className="text-gray-600 font-normal"> · {L('ходы', 'turns')} {c.fromTurn}–{c.toTurn}</span> : null}
+                    </p>
+                    <p className="whitespace-pre-wrap">{c.text}</p>
+                  </div>
                 ))}
               </div>
             </div>

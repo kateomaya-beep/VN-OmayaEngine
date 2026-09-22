@@ -260,6 +260,46 @@ function carryPlayerEdits(next: RuntimeState, live: RuntimeState | null): Runtim
   return { ...next, oocNote: live.oocNote, authorNotes: live.authorNotes };
 }
 
+// ПАМЯТЬ ТОЖЕ МЕНЯЕТСЯ, ПОКА ХОД ИДЁТ. Ход собирается из снимка состояния на
+// момент отправки, а за время генерации в живом состоянии могли появиться:
+// результат фоновой свёртки (глава, снапшот, кусок архива, срез истории), главы
+// из сборки по архиву, правки меморибука и ленты эволюции. Приезжая, ход затирал
+// всё это снимком — глава, собранная за минуту ожидания, пропадала бесследно.
+// Поэтому поля, которыми владеет память, берём из ЖИВОГО состояния, а от хода —
+// только его собственное (факты, вехи, счётчик до свёртки). То же при реролле и
+// переключении вариантов: снимок откатывает ход, но не отменяет сделанное памятью.
+function carryEngineMemory(next: RuntimeState, base: RuntimeState, live: RuntimeState | null): RuntimeState {
+  if (!live || live.memory === base.memory) return next;
+  const lm = live.memory;
+  const bm = base.memory;
+  const nm = next.memory;
+  const folded = Math.max(0, lm.foldedMsgCount - bm.foldedMsgCount);
+  const baseIds = new Set(bm.memorybook.map((e) => e.id));
+  const liveIds = new Set(lm.memorybook.map((e) => e.id));
+  // Что добавил сам этот ход (веха CG-момента).
+  const turnAdds = nm.memorybook.filter((e) => !baseIds.has(e.id) && !liveIds.has(e.id));
+  // Вехи отклонённого варианта (реролл): созданы ходом после снимка — не переносим.
+  const liveBook = lm.memorybook.filter(
+    (e) => !(e.source === 'auto' && e.kind === 'event' && !baseIds.has(e.id) && e.turn > base.turnCount)
+  );
+  return {
+    ...next,
+    history: folded > 0 ? next.history.slice(folded) : next.history,
+    memory: {
+      ...nm,
+      memorybook: [...liveBook, ...turnAdds],
+      arcs: lm.arcs,
+      chronicle: lm.chronicle,
+      storyState: lm.storyState,
+      storyStateAtTurn: lm.storyStateAtTurn,
+      rawArchive: lm.rawArchive,
+      foldedMsgCount: lm.foldedMsgCount,
+      liveSummary: lm.liveSummary,
+      messagesSinceSummary: folded > 0 ? lm.messagesSinceSummary + 2 : nm.messagesSinceSummary,
+    },
+  };
+}
+
 let preTurnState: { move: string; state: RuntimeState } | null = null;
 
 // Текущая генерация в полёте (для «Отменить»/регенерации). Модульная переменная, а не
@@ -304,7 +344,7 @@ async function compressInBackground(
     const cur = get().state;
     if (!cur) return;
     const addedSince = cur.memory.messagesSinceSummary - snapshot.memory.messagesSinceSummary;
-    set({ state: applyFold(cur, folded, result.memory, addedSince) });
+    set({ state: applyFold(cur, folded, result.memory, snapshot.memory, addedSince) });
     if (folded) {
       logEvent('info', 'memory', `Свёртка в фоне заняла ${Math.round((Date.now() - t0) / 1000)} с — ход игрока её не ждал`);
       void get().autosave();
@@ -755,7 +795,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const base: RuntimeState = carryPlayerEdits(JSON.parse(JSON.stringify(snap)), state);
     const turn = rpTurn(base, rp.prose, rp.worldState);
     const applied = await applyTurn(project, base, move, turn, last.swipes[index], {});
-    const next = applied.state;
+    const next = carryEngineMemory(applied.state, base, get().state);
     const h = [...next.history];
     h[h.length - 1] = { ...h[h.length - 1], swipes: last.swipes, swipe: index };
     const [first, ...rest] = turn.beats;
@@ -1457,8 +1497,23 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // выглядит как «всё это случилось дважды». При следующей свёртке период будет
     // пересказан один раз и заново ляжет в архив — ничего не теряется.
     const memory: MemoryState = JSON.parse(JSON.stringify(st.state.memory));
-    const chronIdx = memory.chronicle.findIndex((c) => c.atTurn === chunk.turn);
-    if (chronIdx >= 0) memory.chronicle.splice(chronIdx, 1);
+    // Глава этого периода (и её этапы эволюции) уходит вместе с ним: период
+    // снова живой, и при следующей свёртке глава о нём напишется заново.
+    const linked = new Set(
+      memory.memorybook.filter((e) => e.kind === 'chapter' && e.archiveTurn === chunk.turn).map((e) => e.id)
+    );
+    const chronIdx = linked.size ? 0 : -1;
+    memory.memorybook = memory.memorybook.filter((e) => !linked.has(e.id));
+    memory.arcs = (memory.arcs || []).map((a) => ({
+      ...a,
+      stages: a.stages.filter((x) => !x.chapterId || !linked.has(x.chapterId)),
+    }));
+    // Период, примыкавший к живой истории, возвращается ровно на своё место — счёт
+    // свёрнутых сообщений уменьшается на него. Из середины архива — порядок и так
+    // нарушен, счёт не трогаем.
+    if (archiveIndex === memory.rawArchive.length - 1) {
+      memory.foldedMsgCount = Math.max(0, memory.foldedMsgCount - msgs.length);
+    }
     memory.rawArchive = memory.rawArchive.filter((_, i) => i !== archiveIndex);
     const next: RuntimeState = { ...st.state, history: [...msgs, ...st.state.history], memory };
     set({ state: next });
@@ -1466,7 +1521,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       'info',
       'memory',
       `Период (ход ${chunk.turn}) возвращён в живую историю: ${msgs.length} сообщений; ` +
-        `его свёртка убрана из журнала${chronIdx >= 0 ? '' : ' (записи не было)'}, чтобы не задвоиться`
+        `его глава убрана из меморибука${chronIdx >= 0 ? '' : ' (главы не было)'}, чтобы не задвоиться`
     );
     pushToast('success', `Вернула ${msgs.length} сообщений периода в живую историю.`);
     void get().autosave();
@@ -1790,7 +1845,7 @@ async function runAndApply(
     set({
       // Записка и заметки — из ЖИВОГО состояния, а не из результата хода: игрок мог
       // поправить их, пока мы ждали ответ (см. carryPlayerEdits).
-      state: carryPlayerEdits(applied, get().state),
+      state: carryPlayerEdits(carryEngineMemory(applied, baseState, get().state), get().state),
       queue: rest,
       visibleBeats: first ? [first] : [],
       phase: turn.beats.length ? 'beats' : 'choices',

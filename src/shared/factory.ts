@@ -2,6 +2,7 @@ import type {
   Project,
   RuntimeState,
   MemoryState,
+  MemoryBookEntry,
   Character,
   CharacterRole,
   StatDefinition,
@@ -40,6 +41,7 @@ import {
   isDefaultSpriteDisplay,
 } from './types';
 import { uid, clamp } from './utils';
+import { migrateChronicle } from '../ai/chapters';
 
 export const DEFAULT_STYLE_PRESET = 'romance_club';
 
@@ -302,7 +304,7 @@ export function normalizeProject(raw: any): Project {
   };
 
   const mem = raw?.memoryConfig || {};
-  const vecSet = new Set(['builtin', 'custom', 'off']);
+  const vecSet = new Set(['keyword', 'builtin', 'custom', 'off']);
 
   return {
     id: str(raw?.id) || base.id,
@@ -382,8 +384,12 @@ export function normalizeProject(raw: any): Project {
           : 8000,
       minorEventsLimit:
         typeof mem.minorEventsLimit === 'number' ? clamp(Math.round(mem.minorEventsLimit), 3, 40) : 10,
-      vectorization: vecSet.has(mem.vectorization) ? mem.vectorization : 'off',
+      // Поля нет (проект старше поиска по словам) — включаем поиск по словам: он
+      // не качает модель и не ходит в сеть. Явное 'off' уважаем.
+      vectorization: vecSet.has(mem.vectorization) ? mem.vectorization : 'keyword',
       embeddingsConnection: normConnection(mem.embeddingsConnection),
+      memorybookScanDepth:
+        typeof mem.memorybookScanDepth === 'number' ? clamp(Math.round(mem.memorybookScanDepth), 1, 40) : 6,
     },
     audioMoods,
     playerTheme: raw?.playerTheme ? normalizePlayerTheme(raw.playerTheme) : undefined,
@@ -406,6 +412,7 @@ export function initialMemory(): MemoryState {
     memorybook: [],
     messagesSinceSummary: 0,
     rawArchive: [],
+    arcs: [],
   };
 }
 
@@ -763,19 +770,86 @@ function normalizeMemory(
       text: f.text,
     }));
 
-  const memorybook = arr<any>(raw?.memorybook)
+  const KINDS = new Set(['chapter', 'event', 'fact']);
+  const MODES = new Set(['constant', 'keyword', 'off']);
+  const SOURCES = new Set(['auto', 'manual', 'assistant', 'legacy']);
+  const optNum = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  const memorybook: MemoryBookEntry[] = arr<any>(raw?.memorybook)
     .filter((e) => e && typeof e.text === 'string')
-    .map((e) => ({
-      id: str(e.id) || uid('mem'),
-      text: e.text,
-      turn: num(e.turn, 0),
-      source: (e.source === 'manual' ? 'manual' : 'auto') as 'manual' | 'auto',
-      pinned: typeof e.pinned === 'boolean' ? e.pinned : false,
-    }));
+    .map((e) => {
+      const text: string = e.text;
+      // Запись до меморибука-лорбука: {text, pinned}. Закреплённая была «всегда в
+      // контексте» — это постоянная. Остальные авто-записи — сдвиги отношений вида
+      // «Имя: привязанность +6»: имя до двоеточия и есть естественный ключ.
+      const legacyShape = typeof e.mode !== 'string';
+      const nameBeforeColon = /^([^:\n]{2,30}):/.exec(text)?.[1]?.trim();
+      const keys = Array.isArray(e.keys)
+        ? e.keys.filter((k: unknown) => typeof k === 'string' && k.trim()).map((k: string) => k.trim())
+        : nameBeforeColon
+          ? [nameBeforeColon]
+          : [];
+      // Старые авто-записи без закрепления — это те самые «Имя: привязанность +6».
+      // По ключу-имени они срабатывали бы каждый ход, где звучит имя, — десятками
+      // строк шума. Выключаем: видны в меморибуке, но в запрос не идут. Движение
+      // отношений теперь описывают главы. Свои записи игрока остаются по ключам.
+      const mode = MODES.has(e.mode)
+        ? e.mode
+        : legacyShape && e.pinned
+          ? 'constant'
+          : legacyShape && e.source !== 'manual'
+            ? 'off'
+            : 'keyword';
+      return {
+        id: str(e.id) || uid('mem'),
+        kind: KINDS.has(e.kind) ? e.kind : 'event',
+        title: str(e.title) || text.replace(/\s+/g, ' ').slice(0, 60),
+        text,
+        keys,
+        mode,
+        gist: str(e.gist) || undefined,
+        turn: num(e.turn, 0),
+        fromTurn: optNum(e.fromTurn),
+        toTurn: optNum(e.toTurn),
+        fromMsg: optNum(e.fromMsg),
+        toMsg: optNum(e.toMsg),
+        dates: str(e.dates) || undefined,
+        chars: Array.isArray(e.chars) ? e.chars.filter((c: unknown) => typeof c === 'string') : undefined,
+        archiveTurn: optNum(e.archiveTurn),
+        source: SOURCES.has(e.source) ? e.source : 'auto',
+        jobId: str(e.jobId) || undefined,
+      } as MemoryBookEntry;
+    });
 
   const rawArchive = arr<any>(raw?.rawArchive)
     .filter((r) => r && typeof r.text === 'string')
-    .map((r) => ({ turn: num(r.turn, 0), text: r.text }));
+    .map((r) => ({
+      turn: num(r.turn, 0),
+      text: r.text,
+      fromMsg: optNum(r.fromMsg),
+      toMsg: optNum(r.toMsg),
+      fromTurn: optNum(r.fromTurn),
+      toTurn: optNum(r.toTurn),
+    }));
+
+  const arcs = arr<any>(raw?.arcs)
+    .filter((a) => a && typeof a.name === 'string' && Array.isArray(a.stages))
+    .map((a) => ({
+      name: a.name,
+      charId: str(a.charId) || undefined,
+      stages: a.stages
+        .filter((x: any) => x && (typeof x.now === 'string' || typeof x.change === 'string'))
+        .map((x: any) => ({
+          id: str(x.id) || uid('arc'),
+          turn: num(x.turn, 0),
+          dates: str(x.dates) || undefined,
+          label: str(x.label) || '—',
+          change: str(x.change),
+          cause: str(x.cause),
+          now: str(x.now),
+          chapterId: str(x.chapterId) || undefined,
+          source: x.source === 'manual' || x.source === 'assistant' ? x.source : 'auto',
+        })),
+    }));
 
   // Хроника: миграция старого формата (string[]) в записи с метаданными.
   const chronicle = arr<any>(raw?.chronicle)
@@ -795,8 +869,10 @@ function normalizeMemory(
     .filter(Boolean)
     .map(({ _i, ...e }: any) => e);
 
-  return {
+  // Журнал эпизодов переезжает в меморибук главами (текст не меняется).
+  return migrateChronicle({
     chronicle,
+    arcs,
     storyState: str(raw?.storyState),
     storyStateAtTurn: typeof raw?.storyStateAtTurn === 'number' ? raw.storyStateAtTurn : 0,
     foldedMsgCount: num(raw?.foldedMsgCount, 0),
@@ -805,5 +881,5 @@ function normalizeMemory(
     memorybook,
     messagesSinceSummary: num(raw?.messagesSinceSummary, 0),
     rawArchive,
-  };
+  });
 }

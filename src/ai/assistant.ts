@@ -1,11 +1,18 @@
 import type {
+  ArcStage,
   Character,
   CharacterRole,
   LorebookEntry,
+  MemoryBookEntry,
+  MemoryEntryKind,
+  MemoryEntryMode,
+  MemoryState,
   Project,
   RuntimeState,
   StatDefinition,
 } from '../shared/types';
+import { chaptersOf } from './chapters';
+import type { ChapterScope } from './chapterJobs';
 import { emptyRelationship } from '../shared/types';
 import { uid } from '../shared/utils';
 import { logEvent } from '../shared/logStore';
@@ -40,7 +47,12 @@ export type Revert =
   | { kind: 'deleteLorebook'; id: string }
   | { kind: 'restoreLorebook'; id: string; prev: LorebookEntry }
   | { kind: 'deleteStat'; id: string }
-  | { kind: 'restoreLore'; field: keyof Project['lore']; prev: string };
+  | { kind: 'restoreLore'; field: keyof Project['lore']; prev: string }
+  // Правки ПАМЯТИ ПРОХОЖДЕНИЯ (меморибук, эволюция) — только из игры.
+  | { kind: 'deleteMemory'; id: string }
+  | { kind: 'restoreMemory'; prev: MemoryBookEntry }
+  | { kind: 'deleteArcStage'; name: string; id: string }
+  | { kind: 'dropJob'; jobId: string };
 
 export interface AppliedChange {
   /** Человеческая строка: что именно изменилось. */
@@ -137,13 +149,7 @@ export function playthroughDigest(project: Project, state: RuntimeState): string
   if (state.memory.storyState?.trim()) {
     parts.push(`== ПОЛОЖЕНИЕ ДЕЛ (снапшот памяти) ==\n${state.memory.storyState.trim()}`);
   }
-  const chronicle = state.memory.chronicle.slice(-6);
-  if (chronicle.length) {
-    parts.push(
-      `== ЖУРНАЛ ЭПИЗОДОВ (последние ${chronicle.length}) ==\n` +
-        chronicle.map((c) => `- [ход ${c.atTurn}] ${truncate(c.text, 400)}`).join('\n')
-    );
-  }
+  parts.push(memorybookDigest(state));
 
   // Ключевые и важные события видны все: их и так немного, а мелочь вытесняется.
   const events = gm.events.filter((e) => e.level === 'key' || e.level === 'important').slice(-12);
@@ -231,16 +237,77 @@ export function playthroughDigest(project: Project, state: RuntimeState): string
   return parts.join('\n\n');
 }
 
+// Меморибук и эволюция для ассистента. Главы — оглавлением (id, ходы, режим,
+// ключи, суть): целиком их десятки тысяч знаков. Последние три — полнее, чтобы
+// было от чего оттолкнуться, дописывая следующую запись.
+const MAX_MB_ENTRIES = 80;
+function memorybookDigest(state: RuntimeState): string {
+  const m = state.memory;
+  const allCh = chaptersOf(m);
+  // Нумерация — только действующих глав (как в запросе к модели); выключенные
+  // идут списком после, чтобы ассистент знал об их существовании.
+  const chapters = allCh.filter((c) => c.mode !== 'off');
+  const offChapters = allCh.filter((c) => c.mode === 'off');
+  const others = [...m.memorybook.filter((e) => e.kind !== 'chapter'), ...offChapters];
+  const turns = (e: MemoryBookEntry) =>
+    e.fromTurn && e.toTurn ? `ходы ${e.fromTurn}–${e.toTurn}` : e.turn ? `ход ${e.turn}` : '';
+  const meta = (e: MemoryBookEntry) =>
+    [turns(e), e.mode === 'constant' ? 'постоянная' : e.mode === 'off' ? 'ВЫКЛ' : 'по ключам', e.keys.length ? `ключи: ${e.keys.join(', ')}` : 'без ключей']
+      .filter(Boolean)
+      .join('; ');
+  const lines: string[] = [];
+  const shownCh = chapters.slice(-MAX_MB_ENTRIES);
+  shownCh.forEach((c, i) => {
+    const n = chapters.length - shownCh.length + i + 1;
+    const full = i >= shownCh.length - 3;
+    lines.push(
+      `- #${c.id} Глава ${n} «${c.title}» (${meta(c)})${c.source === 'legacy' ? ' [из старого журнала]' : ''}\n  ${
+        full ? truncate(c.text, 900) : truncate(c.gist || c.text, 200)
+      }`
+    );
+  });
+  for (const e of others.slice(-40)) {
+    const label = e.kind === 'fact' ? 'Факт' : e.kind === 'chapter' ? 'Глава (выкл)' : 'Событие';
+    lines.push(`- #${e.id} ${label} «${e.title}» (${meta(e)})\n  ${truncate(e.text, 240)}`);
+  }
+  const arcs = (m.arcs || []).filter((a) => a.stages.length);
+  const arcLines = arcs.map((a) => {
+    const last = a.stages[a.stages.length - 1];
+    return `- ${a.name}: ${a.stages.map((x) => x.label).join(' → ')} (сейчас: ${truncate(last.now || last.change, 200)})`;
+  });
+  const covered = m.foldedMsgCount
+    ? `Свёрнуто сообщений: ${m.foldedMsgCount}; архив периодов: ${m.rawArchive.length}; живая история: ${state.history.length} сообщ.`
+    : `Живая история: ${state.history.length} сообщ., свёрток ещё не было.`;
+  return (
+    `== МЕМОРИБУК (${m.memorybook.length} записей: действующих глав ${chapters.length}) ==\n${covered}\n` +
+    (lines.length ? lines.join('\n') : '(пусто — ни одной записи)') +
+    (arcLines.length ? `\n\n== ЭВОЛЮЦИЯ ПЕРСОНАЖЕЙ ==\n${arcLines.join('\n')}` : '')
+  );
+}
+
 // Добавка к протоколу для работы ИЗ ИГРЫ. Отдельным куском, потому что в
 // конструкторе прохождения ещё нет и половина этих правил там бессмысленна.
 const IN_GAME_PROTOCOL = `ТЫ ОТКРЫТ ПРЯМО ВО ВРЕМЯ ИГРЫ.
 
-Выше слепок текущего прохождения: часы, досье движка, журнал эпизодов, связи и последние ходы. Пользуйся им как первоисточником о том, ЧТО уже произошло, — он свежее, чем описание мира в проекте.
+Выше слепок текущего прохождения: часы, досье движка, меморибук (главы), эволюция персонажей, связи и последние ходы. Пользуйся им как первоисточником о том, ЧТО уже произошло, — он свежее, чем описание мира в проекте.
 
 - Персонаж с пометкой «КАРТОЧКИ В ПРОЕКТЕ НЕТ» появился в истории, но постоянной карточки у него нет: досье движка живёт в прохождении и в другую партию не переедет. Если автор просит его завести — собери character.create ПО ТОМУ, ЧТО УЖЕ НАПИСАНО в досье и в последних ходах, а не выдумывай заново. Имя бери в точности как в досье: движок связывает карточку с досье по имени.
 - Правки уходят В ПРОЕКТ (в сеттинг), а не в текущую партию. Отредактировать сам ход истории отсюда нельзя — карточка повлияет на следующие ходы, а не на уже написанные.
 - Досье, часы, статусы и связи ты НЕ правишь: они принадлежат прохождению и меняются самой игрой (и вручную — в панели Game Master). Заметил в них противоречие — скажи словами, не пытайся исправить операцией.
-- Не пересказывай автору его же историю. Он её только что прочитал.`;
+- Не пересказывай автору его же историю. Он её только что прочитал.
+
+МЕМОРИБУК И ЭВОЛЮЦИЯ ТЫ ПРАВИТЬ МОЖЕШЬ — это память ЭТОЙ партии. Меморибук работает как лорбук: запись «по ключам» приходит модели, когда её ключ встречается в сцене; «постоянная» — всегда; «выкл» — никогда. Операции (только из игры):
+- { "op": "memory.add", "kind": "event|fact|chapter", "title": "...", "text": "...", "keys": ["...", "..."], "mode": "keyword|constant|off" }
+- { "op": "memory.update", "id": "<id записи>", "title": "...", "text": "...", "keys": [...], "mode": "..." }  — только меняемые поля
+- { "op": "memory.delete", "id": "<id записи>" }
+- { "op": "memory.chapters", "fromTurn": 120, "toTurn": 150 }  — движок САМ соберёт главы по дословному тексту этих ходов (из архива и живой истории)
+- { "op": "memory.fill" }  — заполнить меморибук с нуля: главы для всего, что ещё не описано главами (архив + живая история, кроме текущей сцены)
+- { "op": "arc.add", "name": "<имя персонажа>", "label": "название этапа", "change": "что в нём изменилось", "cause": "из-за чего", "now": "кто он теперь" }
+Как выбирать:
+- Просят «внести/запомнить событие, факт» — memory.add: коротко, по сути, ключи — имена, места и предметы В ТОЧНОСТИ как они пишутся в тексте игры (на её языке, с учётом того, как их там называют). Важное навсегда (родство, клятва, смерть) — mode "constant"; остальное — "keyword".
+- Просят занести в память кусок истории или «то, что было раньше», — memory.chapters с диапазоном ходов. Сам пересказывать давнюю историю НЕ пытайся: ты видишь только последние ходы, а движок читает дословный текст.
+- Меморибук пуст или памяти не было вовсе («заполни меморибук», «память не записывалась») — memory.fill. Это долгая фоновая сборка: так и скажи автору, прогресс виден в Game Master → Меморибук.
+- Id бери только из списка меморибука выше. Не заводи вторую запись о том, что уже есть, — правь существующую.`;
 
 export const DEFAULT_ASSISTANT_PERSONA = `Ты — соавтор и редактор этого проекта. Спокойный, конкретный, с хорошим вкусом к прозе.
 Говоришь коротко и по делу, без комплиментов и воды. Если задумка слабая — говоришь прямо и предлагаешь, чем заменить.
@@ -510,10 +577,185 @@ export function applyAssistantOps(draft: Project, ops: any[]): AppliedChange[] {
       continue;
     }
 
+    // Операции над памятью прохождения применяет плеер (applyAssistantMemoryOps).
+    if (op.startsWith('memory.') || op === 'arc.add') continue;
     logEvent('warn', 'prompt', `Ассистент прислал неизвестную операцию «${op}» — пропущена`);
   }
 
   return changes;
+}
+
+// ---- Операции над памятью прохождения ----------------------------------------
+
+const MEM_KINDS = new Set<MemoryEntryKind>(['chapter', 'event', 'fact']);
+const MEM_MODES = new Set<MemoryEntryMode>(['constant', 'keyword', 'off']);
+const strKeys = (v: unknown): string[] | undefined =>
+  Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string' && !!k.trim()).map((k) => k.trim()) : undefined;
+
+export interface MemoryOpsResult {
+  changes: AppliedChange[];
+  /** Сборки глав, которые нужно запустить (долгие, в фоне). */
+  jobs: { scope: ChapterScope; jobId: string }[];
+}
+
+/** Есть ли в ответе операции над памятью (их применяет плеер, а не конструктор). */
+export function hasMemoryOps(ops: any[]): boolean {
+  return ops.some((o) => typeof o?.op === 'string' && (o.op.startsWith('memory.') || o.op === 'arc.add'));
+}
+
+// Мутирует ЧЕРНОВИК памяти (patchMemory передаёт клон).
+export function applyAssistantMemoryOps(memory: MemoryState, ops: any[], turn: number): MemoryOpsResult {
+  const changes: AppliedChange[] = [];
+  const jobs: MemoryOpsResult['jobs'] = [];
+  for (const raw of ops) {
+    const op = str(raw?.op);
+    if (!op) continue;
+    if (op === 'memory.add') {
+      const title = str(raw.title)?.trim();
+      const text = str(raw.text)?.trim();
+      if (!title || !text) continue;
+      const e: MemoryBookEntry = {
+        id: uid('mem'),
+        kind: MEM_KINDS.has(raw.kind) ? raw.kind : 'event',
+        title,
+        text,
+        keys: strKeys(raw.keys) ?? [],
+        mode: MEM_MODES.has(raw.mode) ? raw.mode : 'keyword',
+        turn,
+        source: 'assistant',
+      };
+      memory.memorybook.push(e);
+      changes.push({
+        label: `Меморибук: «${title}» (${e.mode === 'constant' ? 'постоянная' : e.mode === 'off' ? 'выкл' : `ключи: ${e.keys.join(', ') || '—'}`})`,
+        revert: { kind: 'deleteMemory', id: e.id },
+      });
+      continue;
+    }
+    if (op === 'memory.update') {
+      const id = str(raw.id);
+      const idx = memory.memorybook.findIndex((e) => e.id === id);
+      if (idx === -1) {
+        logEvent('warn', 'prompt', `Ассистент правит несуществующую запись меморибука (${id}) — пропущено`);
+        continue;
+      }
+      const prev: MemoryBookEntry = JSON.parse(JSON.stringify(memory.memorybook[idx]));
+      const e = { ...prev };
+      const touched: string[] = [];
+      const title = str(raw.title)?.trim();
+      if (title && title !== e.title) {
+        e.title = title;
+        touched.push('название');
+      }
+      const text = str(raw.text);
+      if (text !== undefined && text.trim() && text !== e.text) {
+        e.text = text;
+        touched.push('текст');
+      }
+      const keys = strKeys(raw.keys);
+      if (keys && keys.join('|') !== e.keys.join('|')) {
+        e.keys = keys;
+        touched.push('ключи');
+      }
+      if (MEM_MODES.has(raw.mode) && raw.mode !== e.mode) {
+        e.mode = raw.mode;
+        touched.push('режим');
+      }
+      if (MEM_KINDS.has(raw.kind) && raw.kind !== e.kind) {
+        e.kind = raw.kind;
+        touched.push('тип');
+      }
+      if (!touched.length) continue;
+      memory.memorybook[idx] = e;
+      changes.push({ label: `Меморибук «${e.title}»: обновлены ${touched.join(', ')}`, revert: { kind: 'restoreMemory', prev } });
+      continue;
+    }
+    if (op === 'memory.delete') {
+      const id = str(raw.id);
+      const prev = memory.memorybook.find((e) => e.id === id);
+      if (!prev) continue;
+      memory.memorybook = memory.memorybook.filter((e) => e.id !== id);
+      changes.push({ label: `Меморибук: удалена «${prev.title}»`, revert: { kind: 'restoreMemory', prev: JSON.parse(JSON.stringify(prev)) } });
+      continue;
+    }
+    if (op === 'memory.chapters') {
+      const from = Math.round(Number(raw.fromTurn));
+      const to = Math.round(Number(raw.toTurn));
+      if (!Number.isFinite(from) || !Number.isFinite(to)) continue;
+      const jobId = uid('job');
+      jobs.push({ scope: { kind: 'range', fromTurn: Math.min(from, to), toTurn: Math.max(from, to) }, jobId });
+      changes.push({ label: `Запущена сборка глав по ходам ${Math.min(from, to)}–${Math.max(from, to)}`, revert: { kind: 'dropJob', jobId } });
+      continue;
+    }
+    if (op === 'memory.fill') {
+      const jobId = uid('job');
+      jobs.push({ scope: { kind: 'fill' }, jobId });
+      changes.push({ label: 'Запущено заполнение меморибука с нуля (главы для всей неописанной истории)', revert: { kind: 'dropJob', jobId } });
+      continue;
+    }
+    if (op === 'arc.add') {
+      const name = str(raw.name)?.trim();
+      const now = str(raw.now)?.trim() || '';
+      const change = str(raw.change)?.trim() || '';
+      if (!name || (!now && !change)) continue;
+      memory.arcs ||= [];
+      let arc = memory.arcs.find((a) => a.name.toLowerCase() === name.toLowerCase());
+      if (!arc) {
+        arc = { name, stages: [] };
+        memory.arcs.push(arc);
+      }
+      const stage: ArcStage = {
+        id: uid('arc'),
+        turn,
+        label: str(raw.label)?.trim() || '—',
+        change,
+        cause: str(raw.cause)?.trim() || '',
+        now,
+        source: 'assistant',
+      };
+      arc.stages.push(stage);
+      arc.stages.sort((a, b) => a.turn - b.turn);
+      changes.push({ label: `Эволюция «${arc.name}»: этап «${stage.label}»`, revert: { kind: 'deleteArcStage', name: arc.name, id: stage.id } });
+      continue;
+    }
+  }
+  return { changes, jobs };
+}
+
+/** Откат правок памяти (в обратном порядке). Проектные правки пропускает. */
+export function revertMemoryChanges(memory: MemoryState, changes: AppliedChange[]): void {
+  for (const ch of [...changes].reverse()) {
+    const r = ch.revert;
+    switch (r.kind) {
+      case 'deleteMemory':
+        memory.memorybook = memory.memorybook.filter((e) => e.id !== r.id);
+        break;
+      case 'restoreMemory': {
+        const i = memory.memorybook.findIndex((e) => e.id === r.prev.id);
+        if (i >= 0) memory.memorybook[i] = r.prev;
+        else memory.memorybook.push(r.prev);
+        break;
+      }
+      case 'deleteArcStage':
+        memory.arcs = (memory.arcs || []).map((a) =>
+          a.name === r.name ? { ...a, stages: a.stages.filter((x) => x.id !== r.id) } : a
+        );
+        break;
+      case 'dropJob': {
+        const gone = new Set(memory.memorybook.filter((e) => e.jobId === r.jobId).map((e) => e.id));
+        memory.memorybook = memory.memorybook.filter((e) => !gone.has(e.id));
+        memory.arcs = (memory.arcs || []).map((a) => ({
+          ...a,
+          stages: a.stages.filter((x) => !x.chapterId || !gone.has(x.chapterId)),
+        }));
+        break;
+      }
+    }
+  }
+}
+
+/** Правки из списка, которые касаются памяти прохождения. */
+export function isMemoryChange(ch: AppliedChange): boolean {
+  return ['deleteMemory', 'restoreMemory', 'deleteArcStage', 'dropJob'].includes(ch.revert.kind);
 }
 
 // Откат применяется в ОБРАТНОМ порядке: правки одного ответа могли опираться друг

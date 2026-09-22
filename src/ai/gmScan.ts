@@ -1,3 +1,4 @@
+import { chaptersOf } from './chapters';
 import type { Project, RuntimeState, GmCharacter } from '../shared/types';
 import { runCompletion } from './providers';
 import { nameHit } from './characterRegistry';
@@ -93,7 +94,10 @@ function contextText(state: RuntimeState, project?: Project): string {
     .slice(-40)
     .map((m) => `${m.role === 'user' ? 'PLAYER' : 'GAME'}: ${m.content}`)
     .join('\n');
-  const chronicle = state.memory.chronicle.map((c) => c.text).join('\n');
+  const chronicle = chaptersOf(state.memory)
+    .filter((c) => c.mode !== 'off')
+    .map((c) => `«${c.title}»: ${c.text}`)
+    .join('\n');
   const transcript = [chronicle && `EARLIER (summary):\n${chronicle}`, `RECENT:\n${recent}`]
     .filter(Boolean)
     .join('\n\n')

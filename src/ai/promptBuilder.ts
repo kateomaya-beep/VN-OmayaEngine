@@ -1,4 +1,4 @@
-import type { NarrativeMode, Project, RuntimeState, LlmMessage } from '../shared/types';
+import type { NarrativeMode, Project, RuntimeState, LlmMessage, MemoryBookEntry } from '../shared/types';
 import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, DEFAULT_BAN_WORDS, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
@@ -16,7 +16,8 @@ import { extractJson } from './responseParser';
 import { formatClock } from './gameMaster';
 import { parseDate, diffDays } from '../shared/gameDate';
 import { expandMacros, type MacroContext } from './macros';
-import { retrieveRelevant } from './vectorEngine';
+import { pastRecall } from './pastRecall';
+import { chaptersOf, isLiveChapter, pickMemorybook, type MemorybookPick } from './chapters';
 import { normName, resolvePerson, type Person } from './characterRegistry';
 import { estimateTokens } from '../shared/utils';
 
@@ -323,6 +324,8 @@ function whoIsWhoBlock(
     } else {
       lines.push(`Who they are: ${c.card.personality.slice(0, 110)}`);
     }
+    const evo = evolutionLines(state, c.name, c.id, inFocus);
+    if (evo) lines.push(evo);
     const d = dossierOf(c.id, c.name);
     if (d?.roleToHero) lines.push(`To the hero: ${d.roleToHero}`);
     // ТЕГИ — то, что помнит о человеке сама игра: что он знает, что обещал, чем
@@ -368,6 +371,8 @@ function whoIsWhoBlock(
     const lines = [`### ${e.canonicalName} — id: ${e.id} | ${e.role}${aka.length ? ` | aka: ${aka.join(', ')}` : ''}`];
     const d = dossierOf(e.id, e.canonicalName);
     if (d?.dossier) lines.push(`Who they are: ${d.dossier}`);
+    const evo = evolutionLines(state, e.canonicalName, e.sheetId, true);
+    if (evo) lines.push(evo);
     // Внешность человека без анкеты. Её знал Game Master и знал генератор
     // картинок — а рассказчик нет, и описывал его с нуля каждый раз.
     if (d?.appearance?.trim()) lines.push(`Appearance: ${d.appearance.trim()}`);
@@ -398,7 +403,7 @@ function whoIsWhoBlock(
     `- Identity is the id, never the bare name: nicknames drift ("Дэмиан"/"Дэм"/"парень из бара" are one person). ` +
     `Before introducing anyone, look here. Already present under any name or alias → reuse that id.\n` +
     `- "Now:" lines are a snapshot YOU maintain, and each carries its age. They are NOT eternal truth: if the recent ` +
-    `messages or the episode log show something newer — a pregnancy that ended in a birth, a wound that healed, a move, ` +
+    `messages or the chapters show something newer — a pregnancy that ended in a birth, a wound that healed, a move, ` +
     `a death — THE STORY WINS. Do not act on a stale line; describe the current reality and send the corrected value in ` +
     `worldState.characters this turn.\n` +
     `- Anyone with a "Phone:" line can be texted: sms_incoming / sms_photo when THEY write to the hero, ` +
@@ -406,6 +411,30 @@ function whoIsWhoBlock(
     `- Genuinely new person → {"type":"character_new",...}. Known person under a new nickname → ` +
     `{"type":"character_alias_add","id":"<existing id>","alias":"..."}. Situation changed → ` +
     `{"type":"character_update","id":"<id>","status":"..."}. Never create a second entry for the same person.`
+  );
+}
+
+// ЭВОЛЮЦИЯ ПЕРСОНАЖА. Анкета — это человек на старте. История его меняет, и без
+// ленты модель каждый ход играла анкету заново, будто ничего не было: после
+// признания и предательства он оставался тем же холодным незнакомцем из карточки.
+// Анкета остаётся основой (характер, голос, прошлое), а поверх неё — кем он стал.
+function evolutionLines(state: RuntimeState, name: string, charId: string | undefined, deep: boolean): string {
+  const arc = (state.memory.arcs || []).find(
+    (a) => (charId && a.charId === charId) || normName(a.name) === normName(name)
+  );
+  const stages = arc?.stages.filter((x) => x.now.trim() || x.change.trim()) || [];
+  if (!stages.length) return '';
+  const last = stages[stages.length - 1];
+  if (!deep) return `Evolution so far: now at stage «${last.label}» — ${last.now || last.change}`;
+  const path = stages.slice(-5).map((x) => x.label).join(' → ');
+  const recent = stages
+    .slice(-2)
+    .map((x) => `turn ${x.turn}: ${x.change}${x.cause ? ` (because: ${x.cause})` : ''}`)
+    .join('; ');
+  return (
+    `WHO THEY HAVE BECOME (the story changed them — play THIS stage, still rooted in the sheet above: same core, voice and past): ${last.now || last.change}\n` +
+    `Evolution path: ${stages.length > 5 ? '… → ' : ''}${path} (current)\n` +
+    `Latest shifts: ${recent}`
   );
 }
 
@@ -441,140 +470,227 @@ function statsState(project: Project, values: Record<string, number>): string {
     .join('\n');
 }
 
-// Доля бюджета, которую вправе занять БЛОК ПАМЯТИ (журнал эпизодов + снапшот).
-// Раньше потолка не было вообще: живую историю мы ограничили, а память росла
-// бесконечно — каждая свёртка дописывает эпизод, снапшот пухнет, и системная часть
-// в итоге перерастала весь бюджет. Тогда живая история зажималась в минимум, движок
-// форсировал свёртку, свёртка добавляла ЕЩЁ один эпизод — и так по кругу.
-const MEMORY_SHARE = 0.35;
+// БЮДЖЕТ ПАМЯТИ. Память — единственная часть запроса, которая растёт по ходу
+// игры, поэтому у неё жёсткие доли бюджета контекста:
+//   блок «Память» (MEMORY_SHARE) — снапшот «где мы сейчас» + оглавление ВСЕХ глав
+//     + свежие главы целиком;
+//   блок «Меморибук» (MEMORYBOOK_SHARE) — постоянные записи + старые главы и
+//     события, чьи ключи всплыли в сцене, + найденное в прошлом.
+// Что не влезло, не теряется: у каждой главы остаётся строка в оглавлении, а
+// полный текст ждёт своего ключа. Ничего не пережимается повторно — растёт только
+// оглавление, по строке на главу (~40 токенов), и даже его самые старые строки
+// при нехватке места ужимаются до названий, а не выбрасываются.
+const MEMORY_SHARE = 0.3;
+const MEMORYBOOK_SHARE = 0.1;
+const SNAPSHOT_SHARE = 0.4; // доля блока «Память» под снапшот
+const TOC_SHARE = 0.2; // доля блока «Память» под оглавление
+const MAX_RECENT_FULL = 6;
 
-// Ужимаем журнал под потолок: свежие эпизоды оставляем целиком (они важнее для
-// продолжения), самые старые сокращаем до начала записи. Ничего не удаляем
-// насовсем — полные тексты лежат в состоянии и правятся в Game Master → Саммари.
-function fitChronicle(
-  chronicle: { text: string; atTurn?: number }[],
-  budgetTokens: number
-): { text: string; trimmed: number } {
-  const render = (c: { text: string; atTurn?: number }, i: number) =>
-    `[Period ${i + 1}${c.atTurn ? `, up to turn ${c.atTurn}` : ''}]\n${c.text}`;
-  const full = chronicle.map(render);
-  let total = full.reduce((n, t) => n + estimateTokens(t), 0);
-  if (total <= budgetTokens) return { text: full.join('\n\n'), trimmed: 0 };
-
-  // Режем с самых старых, пока не влезем. Минимум — заголовок и первые строки,
-  // чтобы хронология не рвалась и модель видела, что период был.
-  const out = [...full];
-  let trimmed = 0;
-  for (let i = 0; i < out.length - 1 && total > budgetTokens; i++) {
-    const short = `${render({ ...chronicle[i], text: chronicle[i].text.slice(0, 300) }, i)}\n… (запись сокращена, полный текст — в Game Master → Саммари)`;
-    if (estimateTokens(short) >= estimateTokens(out[i])) continue;
-    total -= estimateTokens(out[i]) - estimateTokens(short);
-    out[i] = short;
-    trimmed++;
-  }
-  return { text: out.join('\n\n'), trimmed };
+export function memoryBudgets(budget: number): { memory: number; memorybook: number } {
+  return {
+    memory: Math.max(1500, Math.round((budget || 80000) * MEMORY_SHARE)),
+    memorybook: Math.max(800, Math.round((budget || 80000) * MEMORYBOOK_SHARE)),
+  };
 }
 
-async function memoryBlock(
-  project: Project,
-  state: RuntimeState,
-  playerMove: string,
-  skipVector?: boolean
-): Promise<string> {
-  const m = state.memory;
-  const parts: string[] = [];
-  // Потолок памяти в токенах. Снапшот приоритетнее журнала (он описывает «сейчас»),
-  // поэтому сначала считаем его, а журналу отдаём остаток.
-  const memBudget = Math.max(1500, Math.round((getPresetSettings().contextBudget || 80000) * MEMORY_SHARE));
-  const snapTokens = m.storyState?.trim() ? estimateTokens(m.storyState) : 0;
-  const chronBudget = Math.max(600, memBudget - Math.min(snapTokens, Math.round(memBudget * 0.6)));
+const turnsLabel = (e: MemoryBookEntry) =>
+  e.fromTurn && e.toTurn ? (e.fromTurn === e.toTurn ? `turn ${e.toTurn}` : `turns ${e.fromTurn}–${e.toTurn}`) : e.turn ? `up to turn ${e.turn}` : '';
 
-  // Журнал эпизодов — хронологически, от старых к новым, с явной нумерацией периодов.
-  if (m.chronicle.length) {
-    const fitted = fitChronicle(m.chronicle, chronBudget);
-    if (fitted.trimmed) {
-      logEvent(
-        'info',
-        'prompt',
-        `Журнал эпизодов не влезал в свою долю бюджета (~${chronBudget} ток.): ${fitted.trimmed} самых старых записей сокращены до начала. ` +
-          `Полные тексты целы — уплотните журнал в Game Master → Саммари, если это мешает.`
-      );
-    }
-    parts.push(
-      `EPISODE LOG (chronological, oldest → newest; ALL of this has already happened — never contradict it and NEVER replay these events as if new):\n${fitted.text}`
-    );
+function tocLine(e: MemoryBookEntry, n: number, withGist: boolean): string {
+  const meta = [turnsLabel(e), e.dates].filter(Boolean).join(', ');
+  const gist = withGist ? (e.gist || e.text.split('\n').find((l) => l.trim()) || '').replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+  return `Ch.${n} «${e.title}»${meta ? ` (${meta})` : ''}${gist ? ` — ${gist}` : ''}`;
+}
+
+function renderEntry(e: MemoryBookEntry, n?: number): string {
+  const meta = [turnsLabel(e), e.dates].filter(Boolean).join(' · ');
+  const head =
+    e.kind === 'chapter'
+      ? `[Chapter ${n ?? ''} «${e.title}»${meta ? ` · ${meta}` : ''}]`
+      : `[${e.kind === 'fact' ? 'Fact' : 'Event'} «${e.title}»${meta ? ` · ${meta}` : ''}]`;
+  return `${head}\n${e.text.trim()}`;
+}
+
+// Оглавление под потолок: сначала самые старые строки теряют строку сути, потом
+// склеиваются в одну строку одних названий. Главы из оглавления не пропадают.
+function fitToc(chapters: MemoryBookEntry[], numbers: Map<string, number>, cap: number): string[] {
+  const lines = chapters.map((c) => tocLine(c, numbers.get(c.id) || 0, true));
+  let total = lines.reduce((n, l) => n + estimateTokens(l), 0);
+  for (let i = 0; i < lines.length - 3 && total > cap; i++) {
+    const short = tocLine(chapters[i], numbers.get(chapters[i].id) || 0, false);
+    total -= estimateTokens(lines[i]) - estimateTokens(short);
+    lines[i] = short;
   }
-  // Снапшот состояния — с ЯВНЫМ возрастом. Раньше он объявлял себя «положением дел
-  // СЕЙЧАС» независимо от того, когда снят. Замороженный снапшот (обрыв ответа при
-  // свёртке) описывал момент десятки ходов назад — и модель продолжала историю
-  // оттуда: «ход идёт сразу после старого саммари», сюжет ходил по кругу.
+  if (total <= cap) return lines;
+  // Всё ещё много — склеиваем старейшие в одну строку названий.
+  let k = 0;
+  while (k < lines.length - 3 && total > cap) {
+    total -= estimateTokens(lines[k]) - Math.ceil(estimateTokens(chapters[k].title) + 2);
+    k++;
+  }
+  if (!k) return lines;
+  const first = numbers.get(chapters[0].id) || 1;
+  const last = numbers.get(chapters[k - 1].id) || k;
+  const merged = `Ch.${first}–${last}: ${chapters.slice(0, k).map((c) => `«${c.title}»`).join(' · ')}`;
+  return [merged, ...lines.slice(k)];
+}
+
+interface MemoryPlan {
+  memory: string;
+  memorybook: string;
+}
+
+export interface MemorySelection {
+  snapText: string;
+  tocText: string;
+  tocCount: number;
+  recent: MemoryBookEntry[];
+  numbers: Map<string, number>;
+  pick: MemorybookPick;
+  budgets: { memory: number; memorybook: number };
+  memoryTokens: number;
+}
+
+/**
+ * ЧТО ИЗ ПАМЯТИ УЙДЁТ МОДЕЛИ — без запросов и поиска по прошлому. Этим же
+ * расчётом пользуется панель меморибука: она показывает ровно то, что уйдёт.
+ */
+export function selectMemory(project: Project, state: RuntimeState, playerMove: string): MemorySelection {
+  const m = state.memory;
+  const budgets = memoryBudgets(getPresetSettings().contextBudget || 80000);
+
+  // --- Снапшот «где мы сейчас» ---
+  let snapText = '';
   if (m.storyState?.trim()) {
-    // ВОЗРАСТ — АБСОЛЮТНЫМ НОМЕРОМ ХОДА, а не «N ходов назад». Разница огромная:
-    // «N ходов назад» меняется КАЖДЫЙ ход, а строчка стоит в начале системного
-    // промпта — то есть каждый ход рушила общий префикс запроса, и провайдер
-    // пересчитывал весь контекст заново вместо того, чтобы взять его из своего кэша
-    // префикса. Измерено: до первой свёртки соседние ходы делили 97% запроса, после
-    // неё — 28%. Отсюда «контекст стал меньше, а ответ втрое дольше». Номер хода
-    // не меняется, пока не изменился сам снапшот; «какой ход сейчас» лежит в конце
-    // запроса, в блоке STATE RIGHT NOW, и модель вычитает одно из другого сама.
+    // ВОЗРАСТ — АБСОЛЮТНЫМ НОМЕРОМ ХОДА: «N ходов назад» менялось бы каждый ход и
+    // рушило общий префикс запроса (кэш провайдера). Какой ход сейчас — в конце
+    // запроса, в блоке STATE RIGHT NOW; модель вычитает сама.
     const at = m.storyStateAtTurn ?? 0;
     const stamp = at ? `taken at turn ${at}` : 'taken at an unknown point';
     const warn =
       ' Compare that turn number with the current turn at the end of this request: everything that happened' +
-      ' after it — the recent messages and the newest episode-log entries — OVERRIDES this snapshot.' +
+      ' after it — the recent messages and the newest chapters — OVERRIDES this snapshot.' +
       ' Continue from where the story is NOW, not from the situation described here.';
-    const snapCap = Math.round(memBudget * 0.6);
-    let snapText = m.storyState.trim();
-    if (estimateTokens(snapText) > snapCap) {
-      // Обрезаем по границе секции, чтобы не оборвать на полуслове.
-      const keep = Math.round(snapText.length * (snapCap / estimateTokens(snapText)));
-      const cut = snapText.slice(0, keep);
+    const snapCap = Math.round(budgets.memory * SNAPSHOT_SHARE);
+    let body = m.storyState.trim();
+    if (estimateTokens(body) > snapCap) {
+      const keep = Math.round(body.length * (snapCap / estimateTokens(body)));
+      const cut = body.slice(0, keep);
       const lastSection = cut.lastIndexOf('\n##');
-      snapText = (lastSection > keep * 0.5 ? cut.slice(0, lastSection) : cut) + '\n… (снапшот сокращён под бюджет — пересоберите его в Game Master → Саммари)';
-      logEvent(
-        'info',
-        'prompt',
-        `Снапшот состояния больше своей доли бюджета (~${snapCap} ток.) — в запрос ушла сокращённая версия. ` +
-          `Нажмите «пересобрать» в Game Master → Саммари или уменьшите лимит токенов саммари.`
-      );
+      body = (lastSection > keep * 0.5 ? cut.slice(0, lastSection) : cut) + '\n… (снапшот сокращён под бюджет — пересоберите его в Game Master → Саммари)';
     }
+    snapText = `STORY STATE SNAPSHOT (${stamp}) — background on who is who, relationships and open threads.${warn}\n${body}`;
+  }
+
+  // --- Главы: оглавление + свежие целиком ---
+  // Номера — только у действующих глав: выключенная (например, старая запись,
+  // которую заменили главы из архива) не должна рвать нумерацию «Ch.1, Ch.3».
+  const all = chaptersOf(m).filter((c) => c.mode !== 'off');
+  const numbers = new Map(all.map((c, i) => [c.id, i + 1] as const));
+  const chapters = all.filter((c) => !isLiveChapter(c, m) && c.text.trim());
+  const recent: MemoryBookEntry[] = [];
+  let tocText = '';
+  if (chapters.length) {
+    const tocLines = fitToc(chapters, numbers, Math.max(300, Math.round(budgets.memory * TOC_SHARE)));
+    tocText =
+      'STORY SO FAR — CHAPTER INDEX (every chapter of this story, oldest → newest; ALL of it already happened. ' +
+      'Full texts of older chapters appear in the MEMORYBOOK section when they become relevant):\n' +
+      tocLines.join('\n');
+    let room = budgets.memory - estimateTokens(snapText) - estimateTokens(tocText);
+    // Постоянные главы уходят блоком меморибука — здесь их не дублируем.
+    for (const c of [...chapters].reverse()) {
+      if (recent.length >= MAX_RECENT_FULL) break;
+      if (c.mode === 'constant') continue;
+      const t = estimateTokens(renderEntry(c, numbers.get(c.id)));
+      if (t > room && recent.length) break;
+      recent.unshift(c);
+      room -= t;
+    }
+  }
+
+  // --- Меморибук ---
+  const depth = Math.max(1, project.memoryConfig.memorybookScanDepth ?? 6);
+  const scanText = [
+    ...state.history.slice(-depth).map((h) => (h.role === 'assistant' ? stripStateBlock(String(h.content)) : String(h.content))),
+    playerMove,
+  ].join('\n');
+  const pick = pickMemorybook(m, scanText, budgets.memorybook, new Set(recent.map((c) => c.id)));
+  const memoryTokens =
+    estimateTokens(snapText) +
+    estimateTokens(tocText) +
+    recent.reduce((n, c) => n + estimateTokens(renderEntry(c, numbers.get(c.id))), 0);
+  return { snapText, tocText, tocCount: chapters.length, recent, numbers, pick, budgets, memoryTokens };
+}
+
+// ПЛАН ПАМЯТИ считается один раз на запрос: блоки «Память» и «Меморибук» могут
+// стоять в пресете в любом порядке, а решать, что куда идёт, надо вместе — иначе
+// свежая глава попала бы в запрос дважды.
+async function buildMemoryPlan(
+  project: Project,
+  state: RuntimeState,
+  playerMove: string,
+  skipVector?: boolean
+): Promise<MemoryPlan> {
+  const m = state.memory;
+  const sel = selectMemory(project, state, playerMove);
+  const { numbers, pick } = sel;
+  const parts: string[] = [];
+  if (sel.tocText) parts.push(sel.tocText);
+  if (sel.recent.length) {
     parts.push(
-      `STORY STATE SNAPSHOT (${stamp}) — background on who is who, relationships and open threads.${warn}\n${snapText}`
+      'RECENT CHAPTERS IN FULL (oldest → newest; ALL of this has already happened — never contradict it and NEVER replay these events as if new):\n' +
+        sel.recent.map((c) => renderEntry(c, numbers.get(c.id))).join('\n\n')
     );
   }
-  if (m.liveSummary.trim()) {
-    parts.push(`CURRENT ARC NOTE (from the author):\n${m.liveSummary}`);
+  if (sel.snapText) parts.push(sel.snapText);
+  if (m.liveSummary.trim()) parts.push(`CURRENT ARC NOTE (from the author):\n${m.liveSummary}`);
+  const facts = m.facts.filter((f) => f.kind !== 'choice');
+  if (facts.length) {
+    parts.push(
+      `KEY FACTS (canon — do not distort):\n${facts
+        .slice(-40)
+        .map((f) => `[turn ${f.turn}] ${f.text}`)
+        .join('; ')}`
+    );
   }
-  if (m.facts.length) {
-    const facts = m.facts
-      .slice(-40)
-      .map((f) => `[turn ${f.turn}] ${f.text}`)
-      .join('; ');
-    parts.push(`KEY DECISIONS AND FACTS (canon — do not distort):\n${facts}`);
-  }
+  const memory = parts.join('\n\n') || '(memory is empty — this is the start of the story)';
 
-  // Меморибук: закреплённые записи всегда, остальные — последние по времени.
-  const pinned = m.memorybook.filter((e) => e.pinned);
-  const recent = m.memorybook.filter((e) => !e.pinned).slice(-10);
-  const mb = [...pinned, ...recent];
-  if (mb.length) {
-    parts.push(`MEMORYBOOK (important events so far):\n${mb.map((e) => `- ${e.text}`).join('\n')}`);
+  const mb: string[] = [];
+  if (pick.constant.length) {
+    mb.push(pick.constant.map((e) => renderEntry(e, numbers.get(e.id))).join('\n\n'));
   }
-
-  // Векторный подсос релевантного из свёрнутого сырого архива (см. §E3).
-  if (!skipVector && project.memoryConfig.vectorization !== 'off' && m.rawArchive.length) {
-    const corpus = m.rawArchive.map((r, i) => ({ id: String(i), text: r.text }));
-    const hits = await retrieveRelevant(project, playerMove, corpus, 3);
+  if (pick.triggered.length) {
+    mb.push(pick.triggered.map((t) => renderEntry(t.entry, numbers.get(t.entry.id))).join('\n\n'));
+  }
+  if (pick.constant.length || pick.triggered.length || pick.skipped.length) {
+    logEvent(
+      'info',
+      'prompt',
+      `Меморибук: постоянных ${pick.constant.length}` +
+        (pick.triggered.length
+          ? `; по ключам: ${pick.triggered.map((t) => `«${t.entry.title}» (${t.keys.join(', ')})`).join('; ')}`
+          : '') +
+        (pick.skipped.length ? `; сработали, но не влезли в бюджет: ${pick.skipped.length} — остались в оглавлении` : '')
+    );
+  }
+  // Поиск по прошлому: дословные отрывки свёрнутых ходов, похожие на текущую сцену.
+  if (!skipVector) {
+    const lastStory = [...state.history].reverse().find((h) => h.role === 'assistant');
+    const query = `${playerMove}\n${lastStory ? stripStateBlock(String(lastStory.content)).slice(-800) : ''}`;
+    const hits = await pastRecall(project, state, query, 3);
     if (hits.length) {
-      parts.push(
-        `RELEVANT FROM THE PAST (matched to the player move):\n${hits
-          .map((h) => `- ${h.text.slice(0, 400)}`)
-          .join('\n')}`
+      mb.push(
+        `PASSAGES FROM EARLIER IN THE STORY (verbatim excerpts matched to what is happening now — they already happened):\n${hits
+          .map((h) => `[turn ${h.turn}] ${h.text}`)
+          .join('\n\n')}`
       );
     }
   }
-
-  return parts.join('\n\n') || '(memory is empty — this is the start of the story)';
+  const memorybook = mb.length
+    ? '== MEMORYBOOK (recalled from earlier in the story — ALL of this already happened; keep it consistent and never replay it as new) ==\n' +
+      mb.join('\n\n')
+    : '';
+  return { memory, memorybook };
 }
 
 // КОРОТКИЕ НАПОМИНАНИЯ «НА ГЛУБИНЕ». Правила поведения лежат в начале системной
@@ -830,7 +946,7 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
     // worldState, и если она забыла, запись остаётся старой. Раньше блок объявлял
     // себя «авторитетным» целиком, и модель возвращала героя в прежний город,
     // противореча уже сыгранным сценам. Теперь на месте/времени сюжет главнее.
-    'DATE, TIME AND LOCATION are only as fresh as your last update. If the story (recent turns, memory, the episode log) says the hero has since moved elsewhere or time has passed, the STORY WINS: continue from where the story actually is and CORRECT this record the same turn — never drag the hero back to the location written here.',
+    'DATE, TIME AND LOCATION are only as fresh as your last update. If the story (recent turns, memory, the chapters) says the hero has since moved elsewhere or time has passed, the STORY WINS: continue from where the story actually is and CORRECT this record the same turn — never drag the hero back to the location written here.',
     'WHENEVER the hero changes place — a trip, a flight, moving to another room, city or country — emit the control beat {"type":"location_change","location":"<where they are NOW>"} at that point in the beat flow. This is mandatory, not optional bookkeeping: without it the engine keeps showing the old place to you and to the player, and the story gets dragged back there.',
     'TIME (MANDATORY, same weight as the story text): the in-story date is always DD/MM/YYYY. ' +
       'Whenever time moves — a night passes, "a week later", "three years later", a montage, a jump — you MUST emit ' +
@@ -984,6 +1100,9 @@ export async function buildRequest(
     ? `The player's hero is named: ${state.protagonistName}.`
     : '';
 
+  let planPromise: Promise<MemoryPlan> | null = null;
+  const memoryPlan = () => (planPromise ||= buildMemoryPlan(project, state, playerMove, opts?.skipVector));
+
   // Content generators for the preset's dynamic blocks.
   const dynamicContent: Record<DynamicSource, () => Promise<string> | string> = {
     world: () =>
@@ -1004,7 +1123,8 @@ export async function buildRequest(
             state.currentBackgroundId ?? 'null'
           })\nMusic mood: ${state.currentMusicMood ?? 'none'}`,
     voice: () => voiceSamplesText(project, state, onScreenIds, mode, recentText, ctx),
-    memory: async () => `== MEMORY ==\n${await memoryBlock(project, state, playerMove, opts?.skipVector)}`,
+    memory: async () => `== MEMORY ==\n${(await memoryPlan()).memory}`,
+    memorybook: async () => (await memoryPlan()).memorybook,
     gamemaster: () => gameMasterBlock(state, state.turnCount),
     // История вставляется как СООБЩЕНИЯ, а не текст: обработчик выше перехватывает
     // этот блок раньше и запоминает позицию. Заглушка нужна лишь для полноты типа.
@@ -1077,7 +1197,7 @@ export async function buildRequest(
   // 'history' сюда НЕ входит: её отсутствие в пресете означает «как раньше,
   // в конце», а не «блок потерялся».
   const REQUIRED_DYNAMICS: DynamicSource[] = [
-    'world', 'plot', 'lorebook', 'characters', 'manifest', 'state', 'gamemaster', 'memory',
+    'world', 'plot', 'lorebook', 'characters', 'manifest', 'state', 'gamemaster', 'memory', 'memorybook',
   ];
   const turnedOff = REQUIRED_DYNAMICS.filter((k) => disabledDynamics.has(k));
   if (turnedOff.length) {
@@ -1158,7 +1278,7 @@ export async function buildRequest(
     `=== HOW THIS CONTEXT IS ORDERED (read before answering) ===
 ` +
       `Everything ABOVE is background: world, characters, and MEMORY of what happened EARLIER — ` +
-      `the episode log runs oldest → newest, and the story-state snapshot describes where things stood at the LAST fold, not necessarily now.
+      `the chapter index and chapters run oldest → newest, and the story-state snapshot describes where things stood at the LAST fold, not necessarily now.
 ` +
       `The messages that FOLLOW are the recent story itself, verbatim and in chronological order. They are NEWER than everything above. ` +
       `The final user message is the player's move you must answer now.

@@ -20,10 +20,6 @@ import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
 import { uid } from '../shared/utils';
 
-// Порог, с которого сдвиг отношений считается «заметным событием» и попадает
-// в Меморибук автоматически (обычный шаг ±1..5 — см. CR v2 §C.3).
-const NOTABLE_RELATIONSHIP_DELTA = 5;
-
 export interface TurnResult {
   turn: AiTurn;
   // Сырой ответ модели — как пришёл, до разбора и до вырезания служебных блоков.
@@ -135,7 +131,12 @@ export async function applyTurn(
   playerMove: string,
   turn: AiTurn,
   raw: string,
-  opts?: { eventFired?: boolean; smsFired?: boolean; forceCompress?: boolean }
+  opts?: {
+    eventFired?: boolean;
+    smsFired?: boolean;
+    forceCompress?: boolean;
+    stateBlock?: 'ok' | 'repaired' | 'lost';
+  }
 ): Promise<{ state: RuntimeState; compressDue: boolean }> {
   const nextTurnNumber = state.turnCount + 1;
 
@@ -178,10 +179,10 @@ export async function applyTurn(
       rel.relationship[c.id] = { ...c.relationship };
     }
   }
-  const facts: CanonicalFact[] = [
-    ...state.memory.facts,
-    { turn: nextTurnNumber, kind: 'choice', text: `выбор: ${playerMove}` },
-  ];
+  // Реплики игрока в факты больше не пишутся: «выбор: <ход>» каждый ход занимал
+  // все сорок мест блока фактов, вытесняя настоящие факты. Сами реплики и так
+  // есть в истории и в главах.
+  const facts: CanonicalFact[] = [...state.memory.facts];
   const memorybookAdds: MemoryBookEntry[] = [];
   for (const ch of turn.statChanges) {
     const orig = effective.find((e) => e.statId === ch.statId);
@@ -197,20 +198,23 @@ export async function applyTurn(
   for (const e of rel.effective) {
     const cName = project.characters.find((c) => c.id === e.charId)?.name || e.charId;
     const text = `${cName}: ${RELATIONSHIP_META[e.field].ru} ${e.delta > 0 ? '+' : ''}${e.delta}`;
+    // Сдвиги отношений — только в факты. Раньше заметные ещё и ложились в
+    // меморибук записями вида «Имя: привязанность +6»: для памяти это шум, а
+    // движение отношений со всеми причинами теперь описывает глава.
     facts.push({ turn: nextTurnNumber, kind: 'stat', text });
-    // Заметные сдвиги отношений — авто-запись в Меморибук (см. CR v2 §E1).
-    if (Math.abs(e.delta) >= NOTABLE_RELATIONSHIP_DELTA) {
-      memorybookAdds.push({ id: uid('mem'), text, turn: nextTurnNumber, source: 'auto', pinned: false });
-    }
   }
   if (turn.chapterEvent === 'cg_moment') {
     const gist = turn.beats.find((b) => b.type === 'narration')?.text || 'Ключевой момент сюжета';
     memorybookAdds.push({
       id: uid('mem'),
+      kind: 'event',
+      title: gist.replace(/\s+/g, ' ').slice(0, 60),
       text: gist.slice(0, 200),
+      keys: [],
+      // CG-момент — крупная веха: постоянная запись, всегда в контексте.
+      mode: 'constant',
       turn: nextTurnNumber,
       source: 'auto',
-      pinned: true, // CG-моменты — крупная веха, продвигается в постоянные сразу
     });
   }
 
@@ -681,6 +685,9 @@ export async function applyTurn(
       memorybook: [...state.memory.memorybook, ...memorybookAdds],
       messagesSinceSummary: state.memory.messagesSinceSummary + 2,
     },
+    stateBlockLog: opts?.stateBlock
+      ? [...(state.stateBlockLog || []), { turn: nextTurnNumber, status: opts.stateBlock }].slice(-30)
+      : state.stateBlockLog,
   };
 
   // СВЁРТКА ПАМЯТИ ЗДЕСЬ БОЛЬШЕ НЕ ЖДЁТСЯ. Раньше она вызывалась прямо тут, внутри
@@ -883,6 +890,7 @@ export async function runTurn(
     // Проза при этом ХОРОШАЯ — переспрашивать весь ход было бы расточительно и
     // испортило бы уже написанное. Поэтому добираем ровно недостающее: отдельный
     // короткий запрос, где просим по готовому тексту вернуть только сводку.
+    let stateBlock: 'ok' | 'repaired' | 'lost' | undefined = stateExpected(ps) ? (rp.worldState ? 'ok' : 'lost') : undefined;
     if (stateExpected(ps) && !rp.worldState) {
       logEvent('warn', 'llm', 'Модель не прислала служебную сводку — добираю отдельным запросом');
       try {
@@ -908,6 +916,7 @@ export async function runTurn(
         if (fixed.worldState) {
           rp = { ...rp, worldState: fixed.worldState };
           rawRp = `${rawRp.trimEnd()}\n${block.slice(block.indexOf(RP_STATE_OPEN))}`;
+          stateBlock = 'repaired';
           logEvent('info', 'llm', 'Сводка добрана — состояние мира обновлено');
         } else {
           logEvent('warn', 'llm', 'Добрать сводку не удалось — состояние мира этот ход не обновится');
@@ -929,6 +938,7 @@ export async function runTurn(
     // восстанавливается состояние мира при возврате к этому варианту (свайпы).
     const applied = await applyTurn(project, state, playerMove, turn, rawRp, {
       eventFired: evt.fired,
+      stateBlock,
       forceCompress: (req.droppedUnfolded ?? 0) > 0 && !req.systemOverBudget,
     });
     return { turn, raw: rawRp, state: applied.state, compressDue: applied.compressDue };

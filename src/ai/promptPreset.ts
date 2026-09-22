@@ -13,6 +13,10 @@ export type DynamicSource =
   | 'manifest'
   | 'state'
   | 'memory'
+  // МЕМОРИБУК — «лорбук случившегося»: постоянные записи, старые главы и события,
+  // чьи ключи всплыли в сцене, найденное в прошлом. Отдельным блоком, чтобы его
+  // можно было опустить ближе к ходу (под историю) или выключить.
+  | 'memorybook'
   | 'gamemaster'
   // Образцы речи персонажей в фокусе. Отдельный блок, а не часть анкеты: анкета
   // отвечает на «какой у него голос», образцы дают его услышать, и работают они
@@ -288,6 +292,7 @@ the beats) so the player gets a rich stretch of narrative each turn before the n
     b('current_state', '↳ Current State', '', { dynamic: 'state' }),
     b('game_master', '↳ Game Master State', '', { dynamic: 'gamemaster' }),
     b('memory', '↳ Memory', '', { dynamic: 'memory' }),
+    b('memorybook', '↳ Меморибук (сработавшие записи)', '', { dynamic: 'memorybook' }),
     // Живая переписка. Всё, что стоит НИЖЕ этого блока, модель читает как более
     // свежее — держите здесь только то, что должно перебивать историю.
     b('chat_history', '💬 История переписки', '', { dynamic: 'history' }),
@@ -388,6 +393,7 @@ function ensurePlaceholders(preset: PromptPreset): PromptPreset {
 const ADDED_BUILTINS: { key: string; after: string }[] = [
   { key: 'info_hygiene', after: 'living_npcs' },
   { key: 'realistic_conduct', after: 'info_hygiene' },
+  { key: 'memorybook', after: 'memory' },
 ];
 function ensureNewBuiltins(preset: PromptPreset): PromptPreset {
   const have = new Set(preset.blocks.map((b) => b.builtinKey).filter(Boolean));

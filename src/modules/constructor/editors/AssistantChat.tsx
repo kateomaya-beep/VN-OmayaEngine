@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
-import type { Project, RuntimeState } from '../../../shared/types';
+import type { MemoryState, Project, RuntimeState } from '../../../shared/types';
+import type { ChapterScope } from '../../../ai/chapterJobs';
 import { Markdown } from '../../../shared/markdown';
 import { runCompletion } from '../../../ai/providers';
 import { usePresetSettings } from '../../../ai/presetSettings';
@@ -9,6 +10,10 @@ import { logEvent } from '../../../shared/logStore';
 import { MessageMenu, type MessageMenuItem } from '../../../shared/MessageMenu';
 import { copyToClipboard } from '../../../shared/utils';
 import {
+  applyAssistantMemoryOps,
+  hasMemoryOps,
+  isMemoryChange,
+  revertMemoryChanges,
   applyAssistantOps,
   buildAssistantSystem,
   parseAssistantReply,
@@ -45,6 +50,10 @@ const QUICK_IN_GAME: { label: string; text: string }[] = [
     text: 'Сверь карточки персонажей в проекте с досье движка и последними ходами. Где история уже разошлась с карточкой (характер, речь, отношения)? Назови расхождения; правь только то, что я подтвержу.',
   },
   {
+    label: 'Заполнить меморибук',
+    text: 'Посмотри меморибук. Если в нём нет глав за какие-то периоды истории (или он пуст), заполни его: запусти сборку глав для всего, что ещё не описано. Если всё уже покрыто — так и скажи и назови, каких важных фактов (родство, клятвы, тайны) не хватает постоянными записями.',
+  },
+  {
     label: 'Дописать лор',
     text: 'В истории уже упоминались места, организации или обычаи, которых нет в лорбуке. Найди их по слепку прохождения и предложи записи.',
   },
@@ -67,11 +76,18 @@ export function AssistantChat(props?: {
   /** Состояние текущего прохождения — только из плеера. В конструкторе его нет,
    * и ассистент работает как раньше, по одному проекту. */
   state?: RuntimeState | null;
+  /** Память прохождения — только из плеера: меморибук, эволюция и сборка глав. */
+  memory?: {
+    patch: (mutator: (m: MemoryState) => void) => void;
+    startJob: (scope: ChapterScope, jobId: string) => void;
+    dropJob?: (jobId: string) => void;
+  };
 }) {
   const store = useProjectStore();
   const project = props?.project !== undefined ? props.project : store.project;
   const update = props?.update ?? store.update;
   const state = props?.state ?? null;
+  const memoryApi = props?.memory;
   const cfg = usePresetSettings((s) => s.settings);
   const patchCfg = usePresetSettings((s) => s.patch);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -139,6 +155,17 @@ export function AssistantChat(props?: {
         update((p) => {
           changes = applyAssistantOps(p, parsed.ops);
         });
+        // Память прохождения (меморибук, эволюция, сборка глав) — только из игры.
+        if (memoryApi && state && hasMemoryOps(parsed.ops)) {
+          let mem: ReturnType<typeof applyAssistantMemoryOps> = { changes: [], jobs: [] };
+          memoryApi.patch((m) => {
+            mem = applyAssistantMemoryOps(m, parsed.ops, state.turnCount);
+          });
+          changes = [...changes, ...mem.changes];
+          for (const j of mem.jobs) memoryApi.startJob(j.scope, j.jobId);
+        } else if (hasMemoryOps(parsed.ops)) {
+          logEvent('warn', 'prompt', 'Ассистент прислал правки памяти вне игры — пропущены (меморибук есть только у прохождения)');
+        }
         if (changes.length) logEvent('info', 'prompt', `Ассистент внёс правок: ${changes.length}`);
       }
       setChat([
@@ -160,6 +187,15 @@ export function AssistantChat(props?: {
     }
   }
 
+  // Откат правок одного ответа: проектные — в проекте, памяти — в прохождении.
+  function revertChanges(changes: NonNullable<AssistantMessage['changes']>) {
+    const mem = changes.filter(isMemoryChange);
+    if (mem.length && memoryApi) {
+      for (const c of mem) if (c.revert.kind === 'dropJob') memoryApi.dropJob?.(c.revert.jobId);
+      memoryApi.patch((m) => revertMemoryChanges(m, mem));
+    }
+  }
+
   async function send(text: string) {
     const body = text.trim();
     if (!body || busy || !project) return;
@@ -177,6 +213,7 @@ export function AssistantChat(props?: {
     if (busy || !project || msg?.role !== 'assistant' || index !== chat.length - 1) return;
     if (msg.changes?.length && !msg.reverted) {
       update((p) => revertAssistantChanges(p, msg.changes!));
+      revertChanges(msg.changes);
     }
     const history = chat.slice(0, index);
     setChat(history);
@@ -189,6 +226,7 @@ export function AssistantChat(props?: {
     if (!confirm('Удалить это сообщение из переписки?')) return;
     if (msg.changes?.length && !msg.reverted) {
       update((p) => revertAssistantChanges(p, msg.changes!));
+      revertChanges(msg.changes);
     }
     setChat(chat.filter((_, i) => i !== index));
     if (editing === index) setEditing(null);
@@ -214,7 +252,8 @@ export function AssistantChat(props?: {
       next[index] = { ...next[index], reverted: true };
       p.assistantChat = next;
     });
-    pushToast('success', 'Правки отменены — проект вернулся к тому, что было.');
+    revertChanges(msg.changes);
+    pushToast('success', 'Правки отменены — всё вернулось к тому, что было.');
   }
 
   return (
@@ -411,7 +450,7 @@ export function AssistantChat(props?: {
           {state && (
             <p className="text-xs text-gray-500 mt-1.5">
               Плюс <b>текущая партия</b>: часы и место, досье движка на всех, кто в ней появился,
-              журнал эпизодов, ключевые события, связи, открытые линии и последние ходы. Отдельной
+              меморибук с главами и эволюция персонажей, ключевые события, связи, открытые линии и последние ходы. Отдельной
               пометкой — кто уже есть в истории, но карточки в проекте не имеет.
             </p>
           )}

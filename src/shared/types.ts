@@ -302,7 +302,9 @@ export interface AiConfig {
 }
 
 // Настройки памяти проекта (см. CR v2 §E).
-export type VectorizationMode = 'builtin' | 'custom' | 'off';
+// 'keyword' — поиск по словам без модели: работает на русском, офлайн и сразу.
+// 'builtin' — локальная модель смыслов (английская: на русском слабая).
+export type VectorizationMode = 'keyword' | 'builtin' | 'custom' | 'off';
 
 export interface MemoryConfig {
   summaryEveryN: number; // частота свёртки (20/30/40/…) по счётчику сообщений
@@ -313,10 +315,19 @@ export interface MemoryConfig {
   minorEventsLimit?: number; // лимит MINOR EVENTS в саммари (Batch 6 §2), дефолт 10
   vectorization: VectorizationMode;
   embeddingsConnection?: ApiConnection; // для 'custom'
+  // Сколько последних сообщений (плюс ход игрока) просматривается в поиске ключей
+  // меморибука. Как «глубина сканирования» в лорбуке Таверны.
+  memorybookScanDepth?: number;
 }
 
 export function defaultMemoryConfig(): MemoryConfig {
-  return { summaryEveryN: 30, minorEventsLimit: 10, vectorization: 'off', summaryMaxTokens: 8000 };
+  return {
+    summaryEveryN: 30,
+    minorEventsLimit: 10,
+    vectorization: 'keyword',
+    summaryMaxTokens: 8000,
+    memorybookScanDepth: 6,
+  };
 }
 
 // Длина хода (слов). Ползунок/ввод ограничены этими границами; дефолт совпадает с
@@ -1251,15 +1262,65 @@ export interface CanonicalFact {
   text: string;
 }
 
-// Меморибук — динамическая, авто-заполняемая сущность (в отличие от статичного
-// Лорбука). Записи создаёт движок по значимым событиям; юзер правит/удаляет/
-// продвигает в постоянные прямо в игре (см. CR v2 §E1).
+// МЕМОРИБУК — «лорбук для случившегося». Устроен как лорбук проекта: запись
+// бывает постоянной (всегда в контексте), срабатывает по ключевым словам или
+// выключена. Разница в источнике: лорбук пишет автор до игры, меморибук
+// наполняется по ходу — главами при каждой свёртке, ассистентом, руками.
+//
+// ГЛАВА — главная запись меморибука. Её создаёт каждая свёртка памяти: название,
+// пересказ периода, ключи (имена, места, предметы), диапазон ходов. Главы НИКОГДА
+// не пережимаются повторно — раньше старые эпизоды журнала сжимались в сводку,
+// потом сводка вместе со следующими — ещё раз, и к 400-му ходу от начала истории
+// оставалась дюжина строк. Теперь у модели всегда оглавление всей истории, свежие
+// главы целиком, а старые подтягиваются полностью, когда в сцене всплывает их ключ.
+export type MemoryEntryMode = 'constant' | 'keyword' | 'off';
+export type MemoryEntryKind = 'chapter' | 'event' | 'fact';
+
 export interface MemoryBookEntry {
   id: string;
+  kind: MemoryEntryKind;
+  title: string;
   text: string;
-  turn: number;
-  source: 'auto' | 'manual';
-  pinned: boolean; // «продвинута в постоянные» — всегда в контексте, не сжимается
+  keys: string[];
+  mode: MemoryEntryMode;
+  // Одна строка сути — для оглавления (у глав). Пусто — берётся начало текста.
+  gist?: string;
+  turn: number; // ход, на котором запись создана (у главы — конец периода)
+  fromTurn?: number;
+  toTurn?: number;
+  // Абсолютные номера сообщений (1-based), которые покрывает глава. По ним движок
+  // понимает, какой кусок истории уже описан, и не пишет вторую главу о том же.
+  fromMsg?: number;
+  toMsg?: number;
+  dates?: string; // внутриигровые даты периода, как их назвала модель
+  chars?: string[]; // кто участвовал
+  archiveTurn?: number; // связь с периодом сырого архива (его turn)
+  // legacy — перенесено из старого журнала эпизодов (до глав): текст может быть
+  // пережатым, ключей нет. Такие записи заменяет «Восстановить главы из архива».
+  source: 'auto' | 'manual' | 'assistant' | 'legacy';
+  jobId?: string; // какая сборка глав создала запись (для отката правок ассистента)
+}
+
+// ЭВОЛЮЦИЯ ПЕРСОНАЖА. Анкета описывает человека на старте, а история его меняет:
+// недоверие становится привязанностью, потеря — ожесточением. Без ленты модель
+// каждый раз играла анкету с нуля, будто ничего не было. Этап добавляет свёртка
+// по прозе периода (не служебная сводка хода — её модели пропускают).
+export interface ArcStage {
+  id: string;
+  turn: number; // конец периода, в котором случился сдвиг
+  dates?: string;
+  label: string; // название этапа: «осторожный интерес»
+  change: string; // что изменилось в нём самом (черты, отношение к герою, страхи)
+  cause: string; // из-за чего
+  now: string; // кто он теперь, 1–2 предложения
+  chapterId?: string; // глава, из которой этап (пересборка главы заменяет этап)
+  source: 'auto' | 'manual' | 'assistant';
+}
+
+export interface CharacterArc {
+  name: string;
+  charId?: string; // персонаж проекта, если есть
+  stages: ArcStage[]; // по времени, от ранних к поздним
 }
 
 // Запись Хроники (одно сжатие). Пользователь видит список свёрток с диапазоном
@@ -1273,7 +1334,10 @@ export interface ChronicleEntry {
 }
 
 export interface MemoryState {
-  chronicle: ChronicleEntry[]; // ЖУРНАЛ ЭПИЗОДОВ: хронологические свёртки «что произошло» (append-only, редактируемые)
+  // СТАРЫЙ журнал эпизодов. С версии глав всегда пуст: при загрузке сейва записи
+  // переезжают в меморибук главами (source: 'legacy'). Поле оставлено, чтобы старые
+  // сейвы читались и чтобы ничего не терялось, если миграция чего-то не узнает.
+  chronicle: ChronicleEntry[];
   // ЖИВОЙ СНАПШОТ СОСТОЯНИЯ: одно эволюционирующее структурированное саммари
   // (персонажи/отношения/крючки/текущее положение). Заменяется при каждой свёртке.
   storyState?: string;
@@ -1286,8 +1350,20 @@ export interface MemoryState {
   memorybook: MemoryBookEntry[];
   messagesSinceSummary: number; // счётчик для триггера по частоте (E2.1)
   // Свёрнутые «сырые» куски истории — НЕ инжектятся целиком, только через
-  // векторный подсос релевантного (см. CR v2 §E3).
-  rawArchive: { turn: number; text: string }[];
+  // поиск по прошлому (см. pastRecall). Диапазоны пишутся с версии глав; у старых
+  // кусков их нет, и движок восстанавливает их, считая сообщения с конца.
+  rawArchive: RawArchiveChunk[];
+  // Эволюция любовных интересов и важных НПС (см. CharacterArc).
+  arcs?: CharacterArc[];
+}
+
+export interface RawArchiveChunk {
+  turn: number; // ход, на котором период свёрнут
+  text: string;
+  fromMsg?: number;
+  toMsg?: number;
+  fromTurn?: number;
+  toTurn?: number;
 }
 
 export type LlmRole = 'system' | 'user' | 'assistant';
@@ -1468,6 +1544,10 @@ export interface RuntimeState {
   onScreen: OnScreenSprite[];
   history: LlmMessage[];
   memory: MemoryState;
+  // Прислала ли модель служебную сводку в последних ходах (текстовый РП). Для
+  // индикатора здоровья памяти: видно, как часто модель её пропускает и спасает
+  // ли добор. ok — прислала сама, repaired — добрали отдельным запросом, lost — нет.
+  stateBlockLog?: { turn: number; status: 'ok' | 'repaired' | 'lost' }[];
   gm: GameMasterState; // динамическое состояние мира (Game Master)
   lastTurn: AiTurn | null;
   turnCount: number;
