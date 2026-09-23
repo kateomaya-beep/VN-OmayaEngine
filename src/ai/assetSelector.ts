@@ -127,13 +127,12 @@ async function selectCustom(project: Project, turn: AiTurn): Promise<Selection> 
     .join('\n');
 
   const system =
-    'You are an asset classifier for a visual novel engine. Pick values ONLY from the closed lists. ' +
-    'Reply with EXACTLY one JSON object, no prose.';
+    'Visual-novel asset classifier. Pick values ONLY from the closed lists. Output exactly one JSON object, no prose.';
   const user = [
     `SCENE:\n${scene}`,
     `\nEMOTIONS (closed): ${EMOTIONS.join(', ')}`,
     `MUSIC MOODS (closed): ${moodOptions(project).join(', ')}`,
-    `\nLINES (classify each; use the outfit list shown for that line, omit outfit if none):\n${lines || '(none)'}`,
+    `\nLINES (classify each; outfit only from that line's list, null if none):\n${lines || '(none)'}`,
     `\nReturn JSON: { "beats": [ { "i": number, "emotion": string, "outfit": string|null } ], "musicMood": string|null }`,
   ].join('\n');
 

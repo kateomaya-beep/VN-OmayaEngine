@@ -74,10 +74,10 @@ export interface AssistantMessage {
 function characterDigest(c: Character): string {
   const bits = [
     `#${c.id} «${c.name}» (${c.role})`,
-    c.card.appearance && `внешность: ${c.card.appearance}`,
-    c.card.personality && `характер: ${c.card.personality}`,
-    c.card.speechStyle && `речь: ${c.card.speechStyle}`,
-    c.card.backstory && `прошлое: ${c.card.backstory}`,
+    c.card.appearance && `appearance: ${c.card.appearance}`,
+    c.card.personality && `personality: ${c.card.personality}`,
+    c.card.speechStyle && `speech: ${c.card.speechStyle}`,
+    c.card.backstory && `backstory: ${c.card.backstory}`,
   ].filter(Boolean);
   return bits.join('\n  ');
 }
@@ -87,30 +87,30 @@ function characterDigest(c: Character): string {
 // значило бы платить за это каждым сообщением.
 export function projectDigest(project: Project): string {
   const parts: string[] = [];
-  parts.push(`== ПРОЕКТ ==\nНазвание: ${project.meta.title || '(без названия)'}\nРейтинг: ${project.meta.contentRating}`);
-  if (project.lore.worldDescription.trim()) parts.push(`== ОПИСАНИЕ МИРА ==\n${project.lore.worldDescription}`);
-  if (project.lore.plotOutline.trim()) parts.push(`== АРКА СЮЖЕТА ==\n${project.lore.plotOutline}`);
-  if (project.lore.openingScene.trim()) parts.push(`== СТАРТОВАЯ СЦЕНА ==\n${project.lore.openingScene}`);
-  if (project.lore.narrativeRules.trim()) parts.push(`== ПРАВИЛА ПОВЕСТВОВАНИЯ ==\n${project.lore.narrativeRules}`);
+  parts.push(`== PROJECT ==\nTitle: ${project.meta.title || '(untitled)'}\nRating: ${project.meta.contentRating}`);
+  if (project.lore.worldDescription.trim()) parts.push(`== WORLD ==\n${project.lore.worldDescription}`);
+  if (project.lore.plotOutline.trim()) parts.push(`== PLOT ARC ==\n${project.lore.plotOutline}`);
+  if (project.lore.openingScene.trim()) parts.push(`== OPENING SCENE ==\n${project.lore.openingScene}`);
+  if (project.lore.narrativeRules.trim()) parts.push(`== NARRATIVE RULES ==\n${project.lore.narrativeRules}`);
 
   parts.push(
     project.characters.length
-      ? `== ПЕРСОНАЖИ (${project.characters.length}) ==\n` +
+      ? `== CHARACTERS (${project.characters.length}) ==\n` +
           project.characters.map((c) => '- ' + characterDigest(c)).join('\n')
-      : '== ПЕРСОНАЖИ ==\n(ни одного)'
+      : '== CHARACTERS ==\n(none)'
   );
 
   parts.push(
     project.lorebook.length
-      ? `== ЛОРБУК (${project.lorebook.length} записей; показаны заголовки и ключи, содержимое спрашивайте) ==\n` +
+      ? `== LOREBOOK (${project.lorebook.length} entries; titles and keys only) ==\n` +
           project.lorebook.map((e) => `- #${e.id} «${e.title}» [${e.keys.join(', ')}]`).join('\n')
-      : '== ЛОРБУК ==\n(пусто)'
+      : '== LOREBOOK ==\n(empty)'
   );
 
   if (project.stats.length) {
     parts.push(
-      `== СТАТЫ ==\n` +
-        project.stats.map((s) => `- «${s.name}» ${s.min}…${s.max}, старт ${s.initial}${s.description ? ` — ${s.description}` : ''}`).join('\n')
+      `== STATS ==\n` +
+        project.stats.map((s) => `- «${s.name}» ${s.min}…${s.max}, start ${s.initial}${s.description ? ` — ${s.description}` : ''}`).join('\n')
     );
   }
   return parts.join('\n\n');
@@ -141,13 +141,13 @@ export function playthroughDigest(project: Project, state: RuntimeState): string
   const clock = [gm.clock.day, gm.clock.month, gm.clock.year].filter(Boolean).join(' ');
   const whereWhen = [clock, gm.clock.time, gm.clock.location].filter(Boolean).join(', ');
   parts.push(
-    `== ТЕКУЩЕЕ ПРОХОЖДЕНИЕ ==\nХод: ${state.turnCount}` +
-      (whereWhen ? `\nСейчас в истории: ${whereWhen}` : '') +
-      (state.protagonistName ? `\nГерой: ${state.protagonistName}` : '')
+    `== CURRENT PLAYTHROUGH ==\nTurn: ${state.turnCount}` +
+      (whereWhen ? `\nNow in the story: ${whereWhen}` : '') +
+      (state.protagonistName ? `\nHero: ${state.protagonistName}` : '')
   );
 
   if (state.memory.storyState?.trim()) {
-    parts.push(`== ПОЛОЖЕНИЕ ДЕЛ (снапшот памяти) ==\n${state.memory.storyState.trim()}`);
+    parts.push(`== STORY STATE (memory snapshot) ==\n${state.memory.storyState.trim()}`);
   }
   parts.push(memorybookDigest(state));
 
@@ -155,8 +155,8 @@ export function playthroughDigest(project: Project, state: RuntimeState): string
   const events = gm.events.filter((e) => e.level === 'key' || e.level === 'important').slice(-12);
   if (events.length) {
     parts.push(
-      `== КЛЮЧЕВЫЕ СОБЫТИЯ ==\n` +
-        events.map((e) => `- [ход ${e.turn}${e.date ? ', ' + e.date : ''}] ${truncate(e.summary, 200)}`).join('\n')
+      `== KEY EVENTS ==\n` +
+        events.map((e) => `- [turn ${e.turn}${e.date ? ', ' + e.date : ''}] ${truncate(e.summary, 200)}`).join('\n')
     );
   }
 
@@ -175,35 +175,35 @@ export function playthroughDigest(project: Project, state: RuntimeState): string
     const line = (c: (typeof gm.characters)[number]) => {
       const carded = c.charId && known.has(c.charId);
       const bits = [
-        c.dossier && `кто: ${truncate(c.dossier, 160)}`,
-        c.roleToHero && `герою: ${truncate(c.roleToHero, 100)}`,
-        c.appearance && `внешность: ${truncate(c.appearance, 160)}`,
-        c.personality && `характер: ${truncate(c.personality, 160)}`,
-        c.status && `статус: ${truncate(c.status, 80)}`,
-        c.location && `где: ${truncate(c.location, 60)}`,
-        c.tags.length && `знает/помнит: ${c.tags.map((t) => truncate(t, 80)).join('; ')}`,
+        c.dossier && `who: ${truncate(c.dossier, 160)}`,
+        c.roleToHero && `to the hero: ${truncate(c.roleToHero, 100)}`,
+        c.appearance && `appearance: ${truncate(c.appearance, 160)}`,
+        c.personality && `personality: ${truncate(c.personality, 160)}`,
+        c.status && `status: ${truncate(c.status, 80)}`,
+        c.location && `location: ${truncate(c.location, 60)}`,
+        c.tags.length && `knows/remembers: ${c.tags.map((t) => truncate(t, 80)).join('; ')}`,
       ].filter(Boolean);
       return (
-        `- «${c.name}»${carded ? ` (карточка #${c.charId})` : ' — КАРТОЧКИ В ПРОЕКТЕ НЕТ'}\n  ` +
+        `- «${c.name}»${carded ? ` (card #${c.charId})` : ' — NO CARD IN PROJECT'}\n  ` +
         bits.join('\n  ')
       );
     };
     parts.push(
-      `== ЛЮДИ В ЭТОЙ ИСТОРИИ (досье движка) ==\n` +
+      `== PEOPLE IN THIS STORY (engine dossiers) ==\n` +
         shown.map(line).join('\n') +
-        (cut > 0 ? `\n(ещё ${cut} — давно не упоминались, спросите, если нужны)` : '')
+        (cut > 0 ? `\n(${cut} more, not mentioned recently)` : '')
     );
   }
 
   if (gm.relations.length) {
     parts.push(
-      `== СВЯЗИ ==\n` +
+      `== RELATIONS ==\n` +
         gm.relations.slice(-40).map((r) => `- ${r.from} → ${r.to}: ${r.label}`).join('\n')
     );
   }
   if (gm.locations.length) {
     parts.push(
-      `== МЕСТА, ГДЕ УЖЕ БЫВАЛИ ==\n` +
+      `== PLACES VISITED ==\n` +
         gm.locations
           .slice(-24)
           .map((l) => `- ${l.name}${l.description ? ': ' + truncate(l.description, 160) : ''}`)
@@ -212,7 +212,7 @@ export function playthroughDigest(project: Project, state: RuntimeState): string
   }
   const openTasks = gm.agenda.filter((t) => !t.done);
   if (openTasks.length) {
-    parts.push(`== ОТКРЫТЫЕ ЛИНИИ ==\n` + openTasks.map((t) => `- ${t.text}`).join('\n'));
+    parts.push(`== OPEN THREADS ==\n` + openTasks.map((t) => `- ${t.text}`).join('\n'));
   }
 
   // Последние ходы дословно: досье говорит, ЧТО есть, а этот кусок — каким тоном
@@ -224,11 +224,11 @@ export function playthroughDigest(project: Project, state: RuntimeState): string
   const tail = state.history.slice(-MAX_HISTORY_TURNS);
   if (tail.length) {
     parts.push(
-      `== ПОСЛЕДНИЕ ХОДЫ (${tail.length}) ==\n` +
+      `== RECENT TURNS (${tail.length}) ==\n` +
         tail
           .map((m) => {
             const body = stripStateBlock(String(m.content)).replace(/^\s*\[[A-Z ]+\]\s*/, '');
-            return `[${m.role === 'user' ? 'игрок' : 'история'}] ${truncate(body, 700)}`;
+            return `[${m.role === 'user' ? 'player' : 'story'}] ${truncate(body, 700)}`;
           })
           .filter((l) => l.split('] ')[1])
           .join('\n')
@@ -250,9 +250,9 @@ function memorybookDigest(state: RuntimeState): string {
   const offChapters = allCh.filter((c) => c.mode === 'off');
   const others = [...m.memorybook.filter((e) => e.kind !== 'chapter'), ...offChapters];
   const turns = (e: MemoryBookEntry) =>
-    e.fromTurn && e.toTurn ? `ходы ${e.fromTurn}–${e.toTurn}` : e.turn ? `ход ${e.turn}` : '';
+    e.fromTurn && e.toTurn ? `turns ${e.fromTurn}–${e.toTurn}` : e.turn ? `turn ${e.turn}` : '';
   const meta = (e: MemoryBookEntry) =>
-    [turns(e), e.mode === 'constant' ? 'постоянная' : e.mode === 'off' ? 'ВЫКЛ' : 'по ключам', e.keys.length ? `ключи: ${e.keys.join(', ')}` : 'без ключей']
+    [turns(e), e.mode === 'constant' ? 'constant' : e.mode === 'off' ? 'OFF' : 'keyword', e.keys.length ? `keys: ${e.keys.join(', ')}` : 'no keys']
       .filter(Boolean)
       .join('; ');
   const lines: string[] = [];
@@ -261,85 +261,83 @@ function memorybookDigest(state: RuntimeState): string {
     const n = chapters.length - shownCh.length + i + 1;
     const full = i >= shownCh.length - 3;
     lines.push(
-      `- #${c.id} Глава ${n} «${c.title}» (${meta(c)})${c.source === 'legacy' ? ' [из старого журнала]' : ''}\n  ${
+      `- #${c.id} Chapter ${n} «${c.title}» (${meta(c)})${c.source === 'legacy' ? ' [old log]' : ''}\n  ${
         full ? truncate(c.text, 900) : truncate(c.gist || c.text, 200)
       }`
     );
   });
   for (const e of others.slice(-40)) {
-    const label = e.kind === 'fact' ? 'Факт' : e.kind === 'chapter' ? 'Глава (выкл)' : 'Событие';
+    const label = e.kind === 'fact' ? 'Fact' : e.kind === 'chapter' ? 'Chapter (off)' : 'Event';
     lines.push(`- #${e.id} ${label} «${e.title}» (${meta(e)})\n  ${truncate(e.text, 240)}`);
   }
   const arcs = (m.arcs || []).filter((a) => a.stages.length);
   const arcLines = arcs.map((a) => {
     const last = a.stages[a.stages.length - 1];
-    return `- ${a.name}: ${a.stages.map((x) => x.label).join(' → ')} (сейчас: ${truncate(last.now || last.change, 200)})`;
+    return `- ${a.name}: ${a.stages.map((x) => x.label).join(' → ')} (now: ${truncate(last.now || last.change, 200)})`;
   });
   const covered = m.foldedMsgCount
-    ? `Свёрнуто сообщений: ${m.foldedMsgCount}; архив периодов: ${m.rawArchive.length}; живая история: ${state.history.length} сообщ.`
-    : `Живая история: ${state.history.length} сообщ., свёрток ещё не было.`;
+    ? `Folded messages: ${m.foldedMsgCount}; archive periods: ${m.rawArchive.length}; live history: ${state.history.length} messages.`
+    : `Live history: ${state.history.length} messages; no folds yet.`;
   return (
-    `== МЕМОРИБУК (${m.memorybook.length} записей: действующих глав ${chapters.length}) ==\n${covered}\n` +
-    (lines.length ? lines.join('\n') : '(пусто — ни одной записи)') +
-    (arcLines.length ? `\n\n== ЭВОЛЮЦИЯ ПЕРСОНАЖЕЙ ==\n${arcLines.join('\n')}` : '')
+    `== MEMORYBOOK (${m.memorybook.length} entries; active chapters ${chapters.length}) ==\n${covered}\n` +
+    (lines.length ? lines.join('\n') : '(empty)') +
+    (arcLines.length ? `\n\n== CHARACTER EVOLUTION ==\n${arcLines.join('\n')}` : '')
   );
 }
 
 // Добавка к протоколу для работы ИЗ ИГРЫ. Отдельным куском, потому что в
 // конструкторе прохождения ещё нет и половина этих правил там бессмысленна.
-const IN_GAME_PROTOCOL = `ТЫ ОТКРЫТ ПРЯМО ВО ВРЕМЯ ИГРЫ.
+const IN_GAME_PROTOCOL = `YOU ARE OPEN DURING PLAY.
+The playthrough snapshot above (clock, engine dossiers, memorybook chapters, character evolution, relations, recent turns) is the source of truth for what already happened; it is newer than the project's world description.
+- "NO CARD IN PROJECT" = appeared in the story without a project card. If asked to add one, build character.create from the dossier and recent turns; do not invent. Copy the name exactly (the card links to the dossier by name).
+- Project ops change the setting, not past turns; they affect future turns only.
+- Do not edit dossiers, clock, statuses or relations (the game and the Game Master panel own them). Report contradictions in words.
+- Do not retell the author's story to them.
 
-Выше слепок текущего прохождения: часы, досье движка, меморибук (главы), эволюция персонажей, связи и последние ходы. Пользуйся им как первоисточником о том, ЧТО уже произошло, — он свежее, чем описание мира в проекте.
-
-- Персонаж с пометкой «КАРТОЧКИ В ПРОЕКТЕ НЕТ» появился в истории, но постоянной карточки у него нет: досье движка живёт в прохождении и в другую партию не переедет. Если автор просит его завести — собери character.create ПО ТОМУ, ЧТО УЖЕ НАПИСАНО в досье и в последних ходах, а не выдумывай заново. Имя бери в точности как в досье: движок связывает карточку с досье по имени.
-- Правки уходят В ПРОЕКТ (в сеттинг), а не в текущую партию. Отредактировать сам ход истории отсюда нельзя — карточка повлияет на следующие ходы, а не на уже написанные.
-- Досье, часы, статусы и связи ты НЕ правишь: они принадлежат прохождению и меняются самой игрой (и вручную — в панели Game Master). Заметил в них противоречие — скажи словами, не пытайся исправить операцией.
-- Не пересказывай автору его же историю. Он её только что прочитал.
-
-МЕМОРИБУК И ЭВОЛЮЦИЯ ТЫ ПРАВИТЬ МОЖЕШЬ — это память ЭТОЙ партии. Меморибук работает как лорбук: запись «по ключам» приходит модели, когда её ключ встречается в сцене; «постоянная» — всегда; «выкл» — никогда. Операции (только из игры):
+MEMORYBOOK AND EVOLUTION (this playthrough's memory) — you may edit them. The memorybook works like a lorebook: "keyword" entries reach the model when a key appears in the scene; "constant" always; "off" never. Ops (in-game only):
 - { "op": "memory.add", "kind": "event|fact|chapter", "title": "...", "text": "...", "keys": ["...", "..."], "mode": "keyword|constant|off" }
-- { "op": "memory.update", "id": "<id записи>", "title": "...", "text": "...", "keys": [...], "mode": "..." }  — только меняемые поля
-- { "op": "memory.delete", "id": "<id записи>" }
-- { "op": "memory.chapters", "fromTurn": 120, "toTurn": 150 }  — движок САМ соберёт главы по дословному тексту этих ходов (из архива и живой истории)
-- { "op": "memory.fill" }  — заполнить меморибук с нуля: главы для всего, что ещё не описано главами (архив + живая история, кроме текущей сцены)
-- { "op": "arc.add", "name": "<имя персонажа>", "label": "название этапа", "change": "что в нём изменилось", "cause": "из-за чего", "now": "кто он теперь" }
-Как выбирать:
-- Просят «внести/запомнить событие, факт» — memory.add: коротко, по сути, ключи — имена, места и предметы В ТОЧНОСТИ как они пишутся в тексте игры (на её языке, с учётом того, как их там называют). Важное навсегда (родство, клятва, смерть) — mode "constant"; остальное — "keyword".
-- Просят занести в память кусок истории или «то, что было раньше», — memory.chapters с диапазоном ходов. Сам пересказывать давнюю историю НЕ пытайся: ты видишь только последние ходы, а движок читает дословный текст.
-- Меморибук пуст или памяти не было вовсе («заполни меморибук», «память не записывалась») — memory.fill. Это долгая фоновая сборка: так и скажи автору, прогресс виден в Game Master → Меморибук.
-- Id бери только из списка меморибука выше. Не заводи вторую запись о том, что уже есть, — правь существующую.`;
+- { "op": "memory.update", "id": "<entry id>", "title": "...", "text": "...", "keys": [...], "mode": "..." }  — changed fields only
+- { "op": "memory.delete", "id": "<entry id>" }
+- { "op": "memory.chapters", "fromTurn": 120, "toTurn": 150 }  — the engine builds chapters from the verbatim text of these turns
+- { "op": "memory.fill" }  — build chapters for everything not yet covered (archive + live history except the current scene)
+- { "op": "arc.add", "name": "<character>", "label": "stage name", "change": "what changed in them", "cause": "why", "now": "who they are now" }
+Choosing:
+- "Remember this event/fact" → memory.add: brief; keys = names, places, objects exactly as written in the story (its language and spelling). Permanent facts (kinship, oaths, deaths) → "constant"; else "keyword".
+- "Add this part of the story / what happened earlier" → memory.chapters with the turn range. Do not retell old history yourself: you see only recent turns; the engine reads the full text.
+- Memorybook empty or memory never recorded → memory.fill. It is a long background job: tell the author; progress is in Game Master → Memorybook.
+- Use ids only from the memorybook list above. Edit existing entries instead of duplicating.`;
 
-export const DEFAULT_ASSISTANT_PERSONA = `Ты — соавтор и редактор этого проекта. Спокойный, конкретный, с хорошим вкусом к прозе.
-Говоришь коротко и по делу, без комплиментов и воды. Если задумка слабая — говоришь прямо и предлагаешь, чем заменить.
-Не пишешь за автора то, о чём не просили, и не «улучшаешь» молча уже написанное.`;
+export const DEFAULT_ASSISTANT_PERSONA = `You are the co-author and editor of this project: calm, specific, with good taste in prose.
+Short and to the point, no compliments or filler. If an idea is weak, say so and offer a replacement.
+Do not write what was not asked; never silently "improve" existing text.`;
 
-const PROTOCOL = `КАК ТЫ ПРАВИШЬ ПРОЕКТ.
-
-Ты можешь менять проект сам — но только явными операциями и только когда автор об этом попросил.
-Сначала обычным текстом коротко скажи, что делаешь. Потом, если правки нужны, добавь В САМОМ КОНЦЕ ответа ровно один блок:
+const PROTOCOL = `EDITING THE PROJECT.
+Reply in the author's language (the language they write to you in; Russian by default).
+You may change the project only through explicit operations, and only when the author asks.
+First say briefly in plain text what you are doing. Then, if changes are needed, end the reply with exactly one block:
 
 ${ASSIST_OPEN}
 [ { "op": "...", ... }, ... ]
 ${ASSIST_CLOSE}
 
-Операции (все поля-строки — обычный текст, без markdown-заголовков):
+Operations (string fields are plain text, no markdown headers):
 - { "op": "character.create", "name": "...", "role": "protagonist|love_interest|important_character|npc", "appearance": "...", "personality": "...", "speechStyle": "...", "backstory": "...", "relationshipArc": "..." }
-- { "op": "character.update", "id": "<id из ростера>", "name": "...", "role": "...", "appearance": "...", "personality": "...", "speechStyle": "...", "backstory": "...", "relationshipArc": "..." }  — присылай ТОЛЬКО те поля, которые меняешь
+- { "op": "character.update", "id": "<roster id>", "name": "...", "role": "...", "appearance": "...", "personality": "...", "speechStyle": "...", "backstory": "...", "relationshipArc": "..." }  — changed fields only
 - { "op": "lorebook.add", "title": "...", "keys": ["...", "..."], "content": "...", "alwaysActive": false }
-- { "op": "lorebook.update", "id": "<id>", "title": "...", "keys": [...], "content": "...", "alwaysActive": false }  — только меняемые поля
-- { "op": "lore.world", "content": "..." }      — заменить описание мира целиком
-- { "op": "lore.plot", "content": "..." }       — заменить арку сюжета
-- { "op": "lore.opening", "content": "..." }    — заменить стартовую сцену
-- { "op": "lore.rules", "content": "..." }      — заменить правила повествования
+- { "op": "lorebook.update", "id": "<id>", "title": "...", "keys": [...], "content": "...", "alwaysActive": false }  — changed fields only
+- { "op": "lore.world", "content": "..." }      — replaces the world description
+- { "op": "lore.plot", "content": "..." }       — replaces the plot arc
+- { "op": "lore.opening", "content": "..." }    — replaces the opening scene
+- { "op": "lore.rules", "content": "..." }      — replaces the narrative rules
 - { "op": "stat.create", "name": "...", "min": 0, "max": 100, "initial": 50, "description": "..." }
 
-ЖЁСТКИЕ ПРАВИЛА:
-- Нет блока — ничего не меняется. Это нормальный и частый случай: на вопрос отвечают текстом.
-- Не трогай то, о чём не просили. Заменять описание мира, когда попросили придумать соседа, — это порча работы автора.
-- lore.* заменяют поле ЦЕЛИКОМ. Прежде чем заменить непустое поле, дописав к нему абзац, — пришли текст целиком, вместе со старым содержимым.
-- Правишь существующего персонажа или запись — бери id из списка выше и шли только изменившиеся поля. Заводить второго «Дэма» вместо правки первого нельзя.
-- Всё, что ты пишешь в поля, — на языке проекта (том же, на котором написан лор).
-- Ничего, кроме прозы ответа и одного блока в конце. Никаких комментариев внутри JSON.`;
+RULES:
+- No block → nothing changes. Answering a question in text is normal.
+- Do not touch what was not asked.
+- lore.* replaces the whole field: to append, send the old text plus the addition.
+- Editing an existing character or entry: use its id from the lists above and send only changed fields. Never create a duplicate.
+- Field text in the project's language (the language of the lore).
+- Nothing but the reply text and one final block. No comments inside the JSON.`;
 
 // state передаётся, только когда ассистент открыт из игры: в конструкторе
 // прохождения нет, и слепок был бы пустым разделом на пустом месте.

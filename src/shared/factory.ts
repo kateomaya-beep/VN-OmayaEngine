@@ -391,8 +391,12 @@ export function normalizeProject(raw: any): Project {
       memorybookScanDepth:
         typeof mem.memorybookScanDepth === 'number' ? clamp(Math.round(mem.memorybookScanDepth), 1, 40) : 6,
       chapterSize: typeof mem.chapterSize === 'number' ? clamp(Math.round(mem.chapterSize), 4, 60) : 12,
+      // 7 — прежний дефолт (подробный пересказ); глава теперь бриф события.
+      // Своё значение, отличное от 7, сохраняем.
       chapterMaxPoints:
-        typeof mem.chapterMaxPoints === 'number' ? clamp(Math.round(mem.chapterMaxPoints), 3, 15) : 7,
+        typeof mem.chapterMaxPoints === 'number' && mem.chapterMaxPoints !== 7
+          ? clamp(Math.round(mem.chapterMaxPoints), 2, 15)
+          : 4,
     },
     audioMoods,
     playerTheme: raw?.playerTheme ? normalizePlayerTheme(raw.playerTheme) : undefined,

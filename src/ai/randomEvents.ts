@@ -19,8 +19,7 @@ const SMS_BLOCKING_MOODS = new Set(['tense', 'scary', 'dangerous']);
 const EVENT_TEXT: Record<RandomEventType, string> = {
   new_npc: 'A new character enters the story.',
   new_location: 'The story moves to a new location.',
-  secret_reveal:
-    'A secret comes to light. Draw the secret from the existing unresolved plot hooks / lorebook — do not invent an unrelated one.',
+  secret_reveal: 'A secret comes to light. Take it from existing unresolved hooks or the lorebook; do not invent an unrelated one.',
   dramatic_event: 'Something dramatic or heavy happens.',
   unexpected_twist: 'An unexpected twist occurs.',
 };
@@ -28,7 +27,7 @@ const EVENT_TEXT: Record<RandomEventType, string> = {
 function eventDirective(id: RandomEventType): string {
   return `[RANDOM EVENT TRIGGERED: ${id}]
 ${EVENT_TEXT[id]}
-Weave this into your next response organically. It must fit the current story, tone and pacing — introduce it naturally as part of the narrative, never as a jarring interruption or a system announcement. Do NOT mention that it was a random event.`;
+Weave it into this turn naturally, fitting the story, tone and pacing. Never announce it or call it a random event.`;
 }
 
 export interface RandomEventRoll {
@@ -162,13 +161,10 @@ export function rollRandomSms(project: Project, state: RuntimeState): RandomSmsR
     return `${nm} (${id})`;
   });
 
-  const directive = `[RANDOM SMS TRIGGERED — REQUIRED THIS TURN]
-Someone the hero knows texts them out of the blue. You MUST include a control beat
-{"type":"sms_incoming","characterId":"<id>","text":"<short in-character message>"} in this turn's beats.
-Use the EXACT characterId from this list: ${ids.join(', ')}. Pick whoever fits the current moment.
-Everyone on that list is somewhere ELSE right now — that is the whole point of a text message.
-The hero may notice the phone buzz in the narration, but the message text itself MUST go through the sms_incoming beat.
-Do NOT mention that it was a random event.`;
+  const directive = `[RANDOM SMS — REQUIRED THIS TURN]
+Someone the hero knows texts them. Include {"type":"sms_incoming","characterId":"<id>","text":"<short in-character message>"} in this turn's beats.
+characterId exactly from: ${ids.join(', ')} (all are elsewhere now); pick whoever fits.
+Narration may mention the phone buzzing; the message text goes only in the beat. Never call it a random event.`;
 
   return { fired: true, directive };
 }

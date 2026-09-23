@@ -97,11 +97,11 @@ function contactProfile(project: Project, state: RuntimeState, contact: PhoneCon
   if (char && cardFilled) {
     parts.push(characterProfile(project, state, char.id));
   } else {
-    parts.push(`You ARE ${name}. You are texting ${heroName} from your phone — this is a private messenger chat, NOT the main story scene.`);
+    parts.push(`You are ${name}, texting ${heroName} in a private messenger chat (not the main story scene).`);
   }
   const reg = who?.entry;
   if (reg) {
-    parts.push(`Who you are (from the story's character registry): ${reg.canonicalName}${reg.aliases.length ? ` (also called: ${reg.aliases.join(', ')})` : ''}. Current status: ${reg.status || 'unknown'}.`);
+    parts.push(`You (registry): ${reg.canonicalName}${reg.aliases.length ? ` (also called: ${reg.aliases.join(', ')})` : ''}. Status: ${reg.status || 'unknown'}.`);
   }
   // Досье Game Master — если оно есть, оно свежее реестра. По точному имени
   // запись, заведённая под прозвищем, не находилась: бот в переписке жил без
@@ -113,9 +113,9 @@ function contactProfile(project: Project, state: RuntimeState, contact: PhoneCon
       .join('\n');
     if (bits) parts.push(bits);
   }
-  if (contact.note?.trim()) parts.push(`The author's notes about you: ${contact.note.trim()}`);
+  if (contact.note?.trim()) parts.push(`Author's notes about you: ${contact.note.trim()}`);
   if (!cardFilled && !reg && !dossier && !contact.note?.trim()) {
-    parts.push(`You do not have a full character sheet — stay consistent with how this chat went so far.`);
+    parts.push(`No character sheet: stay consistent with this chat so far.`);
   }
   return parts.join('\n');
 }
@@ -127,13 +127,13 @@ function characterProfile(project: Project, state: RuntimeState, characterId: st
   const ctx = { project, state };
   const rel = state.relationship[c.id] || c.relationship;
   const parts = [
-    `You ARE ${c.name}. You are texting ${heroName} from your phone — this is a private SMS/messenger chat, NOT the main story scene.`,
+    `You are ${c.name}, texting ${heroName} in a private messenger chat (not the main story scene).`,
     `Personality: ${expandMacros(c.card.personality, ctx)}`,
     `Speech style: ${expandMacros(c.card.speechStyle, ctx)}`,
   ];
-  if (c.card.backstory?.trim()) parts.push(`Backstory (for consistency): ${expandMacros(c.card.backstory, ctx).slice(0, 400)}`);
+  if (c.card.backstory?.trim()) parts.push(`Backstory: ${expandMacros(c.card.backstory, ctx).slice(0, 400)}`);
   parts.push(
-    `Your feelings toward ${heroName} right now (range -100..100): affection ${rel.affection}, passion ${rel.passion_stat}, friendship ${rel.friendship}, respect ${rel.respect}. Let these tint your tone.`
+    `Feelings toward ${heroName} (-100..100): affection ${rel.affection}, passion ${rel.passion_stat}, friendship ${rel.friendship}, respect ${rel.respect}. Let them shape your tone.`
   );
   return parts.join('\n');
 }
@@ -150,16 +150,17 @@ function worldContext(project: Project, state: RuntimeState): string {
   const milestones = state.gm.events.filter((e) => e.level === 'key' || e.level === 'important').slice(-4);
   const recent = state.gm.events.filter((e) => e.level !== 'key' && e.level !== 'important').slice(-3);
   const events = [...milestones, ...recent].map((e) => `${e.date ? `[${e.date}] ` : ''}${e.summary}`);
-  if (events.length) parts.push(`What ${heroName} and you both know has happened: ${events.join('; ')}.`);
+  if (events.length) parts.push(`Known to you both: ${events.join('; ')}.`);
   // Снапшот состояния — коротко: где сейчас сюжет. Без него бот отвечал так, будто
   // истории вокруг переписки не существует.
   const snap = state.memory.storyState?.trim();
   if (snap) {
-    const cur = snap.split(/##\s*CURRENT SITUATION/i)[1];
-    if (cur) parts.push(`Where the story stands right now: ${cur.trim().slice(0, 400)}`);
+    // «NOW» — секция нового короткого снапшота, «CURRENT SITUATION» — прежнего.
+    const cur = snap.split(/##\s*(?:CURRENT SITUATION|NOW)\b/i)[2];
+    if (cur) parts.push(`Story now: ${cur.trim().slice(0, 400)}`);
   }
   const bal = state.statValues[PHONE_BALANCE_STAT];
-  if (typeof bal === 'number') parts.push(`(${heroName}'s wallet balance is ${bal} ${project.phone?.currencyName || '$'} — only relevant if money comes up.)`);
+  if (typeof bal === 'number') parts.push(`(${heroName}'s balance: ${bal} ${project.phone?.currencyName || '$'}; only if money comes up.)`);
   return parts.join('\n');
 }
 
@@ -171,7 +172,7 @@ function heroBlock(project: Project, state: RuntimeState, contact?: PhoneContact
   const hero = project.characters.find((c) => c.role === 'protagonist');
   const heroName = heroNameOf(project, state);
   const lines = [
-    `WHO YOU ARE TEXTING (this never changes): the person on the other side of this chat is ${heroName} — the player's character — and NOBODY else.`,
+    `You are texting ${heroName} (the player's character) and nobody else.`,
   ];
 
   // Кто такой герой: карточка протагониста + досье Game Master о нём.
@@ -183,7 +184,7 @@ function heroBlock(project: Project, state: RuntimeState, contact?: PhoneContact
   }
   const heroDossier = resolvePerson(project, state, { id: hero?.id, name: heroName })?.dossier;
   if (heroDossier?.dossier?.trim()) about.push(heroDossier.dossier.trim().slice(0, 300));
-  if (about.length) lines.push(`Who ${heroName} is: ${about.join('. ')}`);
+  if (about.length) lines.push(`${heroName}: ${about.join('. ')}`);
 
   // Кем герой приходится ИМЕННО ЭТОМУ собеседнику.
   if (contact) {
@@ -205,19 +206,16 @@ function heroBlock(project: Project, state: RuntimeState, contact?: PhoneContact
       else if (isHero(edge.from) && isContact(edge.to)) tie.push(`${heroName} → ${contactName}: ${edge.label.trim()}`);
     }
     if (contact.note?.trim()) tie.push(contact.note.trim().slice(0, 200));
-    if (tie.length) lines.push(`How ${heroName} and you are connected: ${tie.join('; ')}.`);
+    if (tie.length) lines.push(`Your connection: ${tie.join('; ')}.`);
   }
 
   lines.push(
-    `Never confuse ${heroName} with anyone else from your life — not a sibling, not a partner, not a friend mentioned in your own backstory. ` +
-      `Do not greet them by another name, do not bring up shared history that belongs to someone else, and if you are unsure who they are, treat them as ${heroName} and nobody else.`
+    `Never confuse ${heroName} with anyone else from your life (sibling, partner, friend from your backstory): no other name, no someone else's shared history.`
   );
   // Второе лицо. Модель то и дело сбивалась на «он/она» ПРО героя, хотя пишет
   // ЕМУ — в переписке это выглядит так, будто говорят у него за спиной.
   lines.push(
-    `You are writing TO ${heroName}, so address them DIRECTLY, in the second person — "ты" / "вы" / "you", by name if it fits. ` +
-      `NEVER speak about ${heroName} in the third person ("он", "она", "${heroName} сделала…") and never narrate their actions or feelings: ` +
-      `you are one side of a real text conversation, not a storyteller. Third person is only for people who are NOT in this chat.`
+    `Address ${heroName} directly in the second person ("ты"/"вы"/"you"). Never refer to them in the third person or narrate their actions or feelings. Third person only for people outside this chat.`
   );
   return lines.join('\n');
 }
@@ -247,10 +245,10 @@ export interface ChatTurn {
 // Правило записи события — общее для лички, групп и спонтанных входящих.
 function eventRule(narr: string): string {
   return [
-    `- STORY RECORD: this chat is part of the same story as everything else, so anything that matters here must be written down. If this exchange produced something the story has to remember — news, a plan or a meeting agreed, a confession, a quarrel or a reconciliation, a change in someone's life (a move, an illness, a pregnancy, a job, a breakup, a death) — add ONE extra line at the very END, after all the messages:`,
-    `  [event: one sentence in ${narr}, past tense, told as the story would tell it, saying it happened in the chat | important]`,
-    `  The "| important" part is optional: use "| important" when it changes the situation, "| key" for a turning point, and leave it out entirely for ordinary things.`,
-    `- MOST of the time there is NO such line. Small talk, jokes, flirting, "как дела", plans that were only discussed — not events. Never write more than one event line, and never write the event line INSTEAD of the messages.`,
+    `- STORY RECORD: if this exchange produced something the story must remember (news, an agreed plan or meeting, a confession, a quarrel or reconciliation, a life change: move, illness, pregnancy, job, breakup, death), add ONE line after all messages:`,
+    `  [event: one past-tense sentence in ${narr}, saying it happened in the chat | important]`,
+    `  "| important" = changes the situation; "| key" = turning point; omit for ordinary things.`,
+    `- Usually there is no event line (small talk, jokes, flirting, plans only discussed). Max one, never instead of the messages.`,
   ].join('\n');
 }
 
@@ -280,8 +278,8 @@ export function extractChatEvents(raw: string): { text: string; events: ChatEven
 // Правило про фото — общее для лички и групп. Модель сама решает, уместно ли фото.
 function photoRule(): string {
   return [
-    `- PHOTOS: you may send a photo when it is natural (showing where you are, what you're eating/wearing/doing, a joke picture, a selfie). To do it, write a line exactly like this: [photo: short description of the picture IN ENGLISH]. The message line right BEFORE it becomes the caption of that photo (write the caption line first, then the photo line). A photo line on its own = a photo with no caption.`,
-    `- Do not send photos often — only when a real person would. Never describe the photo in words instead of the marker.`,
+    `- PHOTOS: when natural (where you are, food, outfit, a joke, a selfie), write a line: [photo: short English description]. The message line right before it is the caption; a photo line alone has none.`,
+    `- Rarely, only when a real person would. Never describe a photo in words instead of the marker.`,
   ].join('\n');
 }
 
@@ -348,31 +346,31 @@ async function generateGroupReplies(
     .join('\n\n');
 
   const system = [
-    `You are running a GROUP CHAT in a messenger app. You play EVERY participant EXCEPT ${heroName} — ${heroName} is the human player, and you NEVER write a line for them.`,
+    `You run a messenger GROUP CHAT. You play every participant except ${heroName} (the player); never write for ${heroName}.`,
     `Group name: ${chat.title || 'Без названия'}.`,
-    chat.topic?.trim() ? `What this group is about / how people behave here: ${chat.topic.trim()}` : '',
-    `Group liveliness: ${typeof chat.groupActivity === 'number' ? chat.groupActivity : 50}/100 — higher means people chime in more and more often.`,
+    chat.topic?.trim() ? `Group topic and manners: ${chat.topic.trim()}` : '',
+    `Liveliness: ${typeof chat.groupActivity === 'number' ? chat.groupActivity : 50}/100 (higher = more and more frequent messages).`,
     ``,
-    `PARTICIPANTS (each with their own personality and chattiness):`,
+    `PARTICIPANTS:`,
     roster,
     ``,
     heroBlock(project, state),
     ``,
     worldContext(project, state),
     ``,
-    `HOW TO ANSWER:`,
-    `- YOU decide who speaks up, based on the context of the conversation and each person's chattiness: a talkative person jumps in often, a quiet one only when addressed or when it really matters. Someone directly addressed by name almost always answers.`,
-    `- Not everyone has to answer. Sometimes only one person replies. Never make all participants answer every time just because they are in the group.`,
-    `- Format: EVERY line is one message bubble and MUST start with the sender's name and a colon, e.g. "${nameOfContact(project, state, members[0])}: текст". No other prefixes.`,
-    `- Real texting style, in ${narr}: short lines, several in a row are fine, people talk over each other, react to each other — not only to ${heroName}.`,
-    `- When someone speaks TO ${heroName}, they address them in the second person ("ты"/"вы"/"you"), like in a real group chat. Third person is only for people who are not in this chat.`,
+    `RULES:`,
+    `- Choose who speaks by context and chattiness: talkative people often, quiet ones when addressed or when it matters. Someone addressed by name almost always answers.`,
+    `- Not everyone answers; sometimes only one person.`,
+    `- Each line = one message bubble, starting with the sender's name and a colon, e.g. "${nameOfContact(project, state, members[0])}: текст". No other prefixes.`,
+    `- Real texting in ${narr}: short lines, bursts, people react to each other, not only to ${heroName}.`,
+    `- Speaking to ${heroName}: second person ("ты"/"вы"/"you").`,
     photoRule().replace('[photo:', '[photo:'),
-    `- For a photo the line is "Name: [photo: english description]" — the sender's name still comes first.`,
+    `- Photo line: "Name: [photo: English description]".`,
     eventRule(narr),
-    `- FORBIDDEN: narration, asterisk actions (*smiles*), tone labels, quotes around a whole message, JSON, writing for ${heroName}.`,
+    `- Forbidden: narration, asterisk actions, tone labels, quotes around a whole message, JSON, lines for ${heroName}.`,
     opts?.spontaneous
-      ? `- NOBODY wrote just now. Start a conversation out of the blue: someone brings up news, a joke, a question, a photo — something that fits the story moment. 1-4 messages total.`
-      : `- Reply to what was just written in the chat. 1-5 messages total.`,
+      ? `- Nobody wrote just now: start a conversation that fits the story moment (news, joke, question, photo). 1–4 messages.`
+      : `- Reply to the latest messages. 1–5 messages.`,
   ]
     .filter(Boolean)
     .join('\n');
@@ -463,15 +461,15 @@ export async function generatePhoneReply(
     contact ? contactProfile(project, state, contact) : characterProfile(project, state, characterId),
     heroBlock(project, state, contact),
     worldContext(project, state),
-    `TEXTING RULES (this is a plain text-message chat, NOT the visual-novel narration engine):`,
-    `- Reply as ${charName} would type in a messenger: short, natural, in-character. React to ${heroNameOf(project, state)}'s last message.`,
+    `TEXTING RULES (a plain text chat, not story narration):`,
+    `- Reply as ${charName} types in a messenger: short, natural, in character. React to ${heroNameOf(project, state)}'s last message.`,
     photoRule(),
     eventRule(narr),
-    `- MESSAGE BURSTS: reply the way people really text — sometimes ONE message, sometimes several short ones fired in a row (up to 4). Put EACH separate message on ITS OWN LINE (a line break = a new message bubble). Split when it feels natural (a quick thought, then another), keep it to one message when that's natural.`,
-    `- Write in ${narr}. Use real texting culture WHEN IT FITS the character: casual tone, common abbreviations, emoji, and (for Russian) smiley parentheses like ), )), ))) or :). Lowercase and dropped punctuation are fine for a casual character. Match the character's personality — a formal or cold character texts differently; don't force slang on them.`,
-    `- Output ONLY the literal words ${charName} types. NOTHING else.`,
-    `- ABSOLUTELY FORBIDDEN: mood/tone labels or emotion tags of any kind (e.g. "(Defensive/Playful):", "[teasing]", "Amused:"), asterisk actions or roleplay markup (e.g. *smiles*, *rolls eyes*), narration, stage directions, character name prefixes, quotation marks around the whole message, JSON, or any commentary. Note: smiley parentheses like ")))" are allowed as emoji, but a parenthesis label like "(playful)" is NOT.`,
-    `- Keep each message short (a texting line, not a paragraph). Finish your thought — never cut off mid-sentence.`,
+    `- One message or a burst of up to 4 short ones; each message on its own line (a line = a bubble).`,
+    `- Write in ${narr}. Texting culture where it fits the character: casual tone, abbreviations, emoji, Russian smiley parentheses ) )) ))). A formal or cold character texts formally.`,
+    `- Output only the literal words ${charName} types.`,
+    `- Forbidden: tone or emotion labels ("(Playful):", "[teasing]", "Amused:"), asterisk actions, narration, stage directions, name prefixes, quotes around the whole message, JSON, commentary. ")))" smileys are fine; "(playful)" labels are not.`,
+    `- Short texting lines, not paragraphs. Never stop mid-sentence.`,
   ].join('\n');
 
   const messages: LlmMessage[] = conversation
@@ -589,7 +587,7 @@ async function completeWithRetry(
       .join('')})`
   );
   const second = await runCompletion({
-    system: `${system}\n\nIMPORTANT: reply with the message text directly. Do not think out loud, do not return an empty response.`,
+    system: `${system}\n\nReply with the message text directly; no thinking out loud, never empty.`,
     messages,
     temperature: Math.min(temperature, 1),
     maxTokens: 6000,
@@ -620,15 +618,13 @@ export async function generateIncomingSms(
     contact ? contactProfile(project, state, contact) : characterProfile(project, state, characterId),
     heroBlock(project, state, contact),
     worldContext(project, state),
-    `TASK: ${charName} texts ${heroNameOf(project, state)} FIRST, out of the blue — they did not write to you just now.`,
-    `- Pick a natural reason to reach out that fits the current story moment and your relationship: checking in, a question, a complaint, teasing, news, a request, missing them.`,
-    `- Write in ${narr}, in real texting style: short, casual, in character. 1-2 messages, EACH ON ITS OWN LINE.`,
+    `TASK: ${charName} texts ${heroNameOf(project, state)} first, unprompted.`,
+    `- A natural reason that fits the story moment and your relationship (checking in, question, complaint, teasing, news, request, missing them).`,
+    `- ${narr}, texting style, in character. 1–2 messages, each on its own line.`,
     photoRule(),
     eventRule(narr),
-    `- Output ONLY the literal words ${charName} types. No tone labels, no asterisk actions, no narration, no name prefix, no JSON.`,
-    conversation.length
-      ? `- Continue naturally from the existing chat; do not repeat what was already said.`
-      : `- This is the first message in this chat.`,
+    `- Output only the literal words ${charName} types: no tone labels, asterisk actions, narration, name prefix or JSON.`,
+    conversation.length ? `- Continue from the existing chat; do not repeat it.` : `- This is the first message in this chat.`,
   ].join('\n');
 
   const recent = conversation.slice(-8).map((m) => ({

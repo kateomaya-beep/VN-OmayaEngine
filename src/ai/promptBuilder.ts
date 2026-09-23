@@ -194,11 +194,8 @@ function voiceSamplesText(
     .filter((x) => x.text);
   if (!samples.length) return '';
   return (
-    'HOW THESE CHARACTERS SOUND — samples of their own speech, taken from their sheets.\n' +
-    'Match the vocabulary, rhythm, sentence length and manner; a line you write for them should be ' +
-    'attributable to them without a name tag. These are samples of a VOICE, not lines to reuse: never ' +
-    'quote one verbatim into the story, and never treat what happens in a sample as something that ' +
-    'happened in this story.\n\n' +
+    'VOICE SAMPLES (from the character sheets). Match vocabulary, rhythm, sentence length and manner. ' +
+    'Samples show a voice only: never quote them, and their content did not happen in this story.\n\n' +
     samples.map((x) => `--- ${x.name} ---\n${x.text}`).join('\n\n')
   );
 }
@@ -262,8 +259,8 @@ function whoIsWhoBlock(
       // «N ходов назад» меняется каждый ход и рушит общий префикс запроса.
       const stamp =
         recordedAt === null
-          ? ' [age unknown — verify against the story]'
-          : ` [recorded at turn ${recordedAt}; compare with the current turn at the end of this request]`;
+          ? ' [age unknown — check against the story]'
+          : ` [recorded at turn ${recordedAt}]`;
       out.push(`Last recorded: ${recorded.join('; ')}${stamp}`);
     }
     // ИСТОРИЯ СТАТУСА. Одна строка «status: беременна» не говорит, было это
@@ -277,7 +274,7 @@ function whoIsWhoBlock(
         // Человек в кадре — вся цепочка целиком: она читается как биография.
         const shown = log.slice(-4);
         out.push(
-          `Status history (oldest → newest; each entry CANCELS the ones before it): ${
+          `Status history (oldest → newest; each entry cancels the earlier ones): ${
             log.length > shown.length ? '… → ' : ''
           }${shown.map(fmt).join(' → ')}`
         );
@@ -316,7 +313,7 @@ function whoIsWhoBlock(
       // она реально отличается от анкетной — иначе это была бы вторая копия.
       const dNow = dossierOf(c.id, c.name)?.appearance?.trim();
       if (dNow && normName(dNow) !== normName(c.card.appearance)) {
-        lines.push(`Appearance as last recorded in play (newer than the sheet above): ${dNow}`);
+        lines.push(`Appearance now (newer than the sheet): ${dNow}`);
       }
       if (c.card.backstory.trim()) lines.push(`Backstory: ${expandMacros(c.card.backstory, ctx)}`);
       lines.push(`Speech: ${expandMacros(c.card.speechStyle, ctx)}`);
@@ -340,17 +337,17 @@ function whoIsWhoBlock(
     if (c.role !== 'protagonist') {
       const r = rels[c.id] || c.relationship;
       lines.push(
-        `Feelings toward the hero (ids for statChanges): ❤️ rel:${c.id}:affection=${r.affection}, 🔥 rel:${c.id}:passion_stat=${r.passion_stat}, 🍀 rel:${c.id}:friendship=${r.friendship}, 🎖 rel:${c.id}:respect=${r.respect} (range -100..100)`
+        `Feelings toward the hero (statChanges ids, -100..100): ❤️ rel:${c.id}:affection=${r.affection}, 🔥 rel:${c.id}:passion_stat=${r.passion_stat}, 🍀 rel:${c.id}:friendship=${r.friendship}, 🎖 rel:${c.id}:respect=${r.respect}`
       );
     }
     if (inFocus) {
       if (mode !== 'rp') {
         const emotions = Object.keys(c.sprites);
-        lines.push(`Emotions available: ${emotions.length ? emotions.join(', ') : '(no sprites — render as name + text)'}`);
+        lines.push(`Emotions available: ${emotions.length ? emotions.join(', ') : '(no sprites — name + text)'}`);
       }
       if (hasExtraOutfits(c)) {
         lines.push(
-          `Outfits — pick the tag matching the scene (default "${defaultOutfitTag(c)}"):\n${characterOutfits(c)
+          `Outfits (pick the tag that fits the scene; default "${defaultOutfitTag(c)}"):\n${characterOutfits(c)
             .map((tag) => {
               if (tag === defaultOutfitTag(c)) return `  - ${tag} (default everyday look)`;
               const desc = c.outfits?.find((o) => o.outfit === tag)?.description?.trim();
@@ -389,28 +386,12 @@ function whoIsWhoBlock(
 
   return (
     entries.join('\n\n') +
-    `\n\nHOW TO USE THIS SECTION — it is the ONLY roster; there is no second list of people anywhere.\n` +
-    // Персонажа могут звать как героя известной книги, аниме или фильма — и вот
-    // тогда модель уверенно пишет то, что помнит про него ОТТУДА, а не то, что
-    // стоит в анкете. Причём именно уверенно: канон она знает подробно, а анкету
-    // воспринимает как «дополнение» к нему. Поэтому старшинство проговаривается
-    // явно, а не подразумевается.
-    `- The sheet is the ONLY truth about a person. If a character shares a name with someone from a book, film, ` +
-    `anime or game, everything you remember about that character from the original work is NOT part of this story. ` +
-    `Where the sheet contradicts what you remember — the sheet is right and your memory is wrong here. Where the ` +
-    `sheet is silent, invent something that fits THIS story; never fill the gap from the original work, and never ` +
-    `state a "known fact" about them that the sheet does not support.\n` +
-    `- Identity is the id, never the bare name: nicknames drift ("Дэмиан"/"Дэм"/"парень из бара" are one person). ` +
-    `Before introducing anyone, look here. Already present under any name or alias → reuse that id.\n` +
-    `- "Now:" lines are a snapshot YOU maintain, and each carries its age. They are NOT eternal truth: if the recent ` +
-    `messages or the chapters show something newer — a pregnancy that ended in a birth, a wound that healed, a move, ` +
-    `a death — THE STORY WINS. Do not act on a stale line; describe the current reality and send the corrected value in ` +
-    `worldState.characters this turn.\n` +
-    `- Anyone with a "Phone:" line can be texted: sms_incoming / sms_photo when THEY write to the hero, ` +
-    `sms_outgoing when the HERO writes to them — always by their id.\n` +
-    `- Genuinely new person → {"type":"character_new",...}. Known person under a new nickname → ` +
-    `{"type":"character_alias_add","id":"<existing id>","alias":"..."}. Situation changed → ` +
-    `{"type":"character_update","id":"<id>","status":"..."}. Never create a second entry for the same person.`
+    `\n\nROSTER RULES (this is the only list of people):\n` +
+    `- The sheet is the only truth about a person. A name shared with a book, film, anime or game character does not import that canon. Where the sheet is silent, invent to fit this story; never state a fact the sheet does not support.\n` +
+    `- Identity is the id, not the name: nicknames vary. Reuse an existing id for anyone already listed under any name or alias.\n` +
+    `- "Last recorded" lines carry their age. If recent messages or chapters show something newer (birth, healing, move, death), the story wins: write the current reality and send the correction in worldState.characters.\n` +
+    `- "Phone:" means textable: sms_incoming / sms_photo when they write, sms_outgoing when the hero writes — by id.\n` +
+    `- New person → {"type":"character_new",...}; known person, new nickname → {"type":"character_alias_add","id":"<id>","alias":"..."}; changed situation → {"type":"character_update","id":"<id>","status":"..."}. Never duplicate a person.`
   );
 }
 
@@ -425,14 +406,14 @@ function evolutionLines(state: RuntimeState, name: string, charId: string | unde
   const stages = arc?.stages.filter((x) => x.now.trim() || x.change.trim()) || [];
   if (!stages.length) return '';
   const last = stages[stages.length - 1];
-  if (!deep) return `Evolution so far: now at stage «${last.label}» — ${last.now || last.change}`;
+  if (!deep) return `Evolution: stage «${last.label}» — ${last.now || last.change}`;
   const path = stages.slice(-5).map((x) => x.label).join(' → ');
   const recent = stages
     .slice(-2)
     .map((x) => `turn ${x.turn}: ${x.change}${x.cause ? ` (because: ${x.cause})` : ''}`)
     .join('; ');
   return (
-    `WHO THEY HAVE BECOME (the story changed them — play THIS stage, still rooted in the sheet above: same core, voice and past): ${last.now || last.change}\n` +
+    `WHO THEY HAVE BECOME (play this stage; the sheet stays the base — same core, voice, past): ${last.now || last.change}\n` +
     `Evolution path: ${stages.length > 5 ? '… → ' : ''}${path} (current)\n` +
     `Latest shifts: ${recent}`
   );
@@ -567,10 +548,7 @@ export function selectMemory(project: Project, state: RuntimeState, playerMove: 
     // запроса, в блоке STATE RIGHT NOW; модель вычитает сама.
     const at = m.storyStateAtTurn ?? 0;
     const stamp = at ? `taken at turn ${at}` : 'taken at an unknown point';
-    const warn =
-      ' Compare that turn number with the current turn at the end of this request: everything that happened' +
-      ' after it — the recent messages and the newest chapters — OVERRIDES this snapshot.' +
-      ' Continue from where the story is NOW, not from the situation described here.';
+    const warn = ' Anything after that turn (recent messages, newer chapters) overrides it. Continue from now, not from here.';
     const snapCap = Math.round(budgets.memory * SNAPSHOT_SHARE);
     let body = m.storyState.trim();
     if (estimateTokens(body) > snapCap) {
@@ -579,7 +557,7 @@ export function selectMemory(project: Project, state: RuntimeState, playerMove: 
       const lastSection = cut.lastIndexOf('\n##');
       body = (lastSection > keep * 0.5 ? cut.slice(0, lastSection) : cut) + '\n… (снапшот сокращён под бюджет — пересоберите его в Game Master → Саммари)';
     }
-    snapText = `STORY STATE SNAPSHOT (${stamp}) — background on who is who, relationships and open threads.${warn}\n${body}`;
+    snapText = `STORY STATE SNAPSHOT (${stamp}): who is who, relationships, open threads.${warn}\n${body}`;
   }
 
   // --- Главы: оглавление + свежие целиком ---
@@ -593,8 +571,7 @@ export function selectMemory(project: Project, state: RuntimeState, playerMove: 
   if (chapters.length) {
     const tocLines = fitToc(chapters, numbers, Math.max(300, Math.round(budgets.memory * TOC_SHARE)));
     tocText =
-      'STORY SO FAR — CHAPTER INDEX (every chapter of this story, oldest → newest; ALL of it already happened. ' +
-      'Full texts of older chapters appear in the MEMORYBOOK section when they become relevant):\n' +
+      'CHAPTER INDEX (all chapters, oldest → newest; all of it already happened. Older chapters appear in full in MEMORYBOOK when relevant):\n' +
       tocLines.join('\n');
     let room = budgets.memory - estimateTokens(snapText) - estimateTokens(tocText);
     // Постоянные главы уходят блоком меморибука — здесь их не дублируем.
@@ -638,16 +615,16 @@ async function buildMemoryPlan(
   if (sel.tocText) parts.push(sel.tocText);
   if (sel.recent.length) {
     parts.push(
-      'RECENT CHAPTERS IN FULL (oldest → newest; ALL of this has already happened — never contradict it and NEVER replay these events as if new):\n' +
+      'RECENT CHAPTERS (oldest → newest; already happened — never contradict or replay):\n' +
         sel.recent.map((c) => renderEntry(c, numbers.get(c.id))).join('\n\n')
     );
   }
   if (sel.snapText) parts.push(sel.snapText);
-  if (m.liveSummary.trim()) parts.push(`CURRENT ARC NOTE (from the author):\n${m.liveSummary}`);
+  if (m.liveSummary.trim()) parts.push(`AUTHOR'S ARC NOTE:\n${m.liveSummary}`);
   const facts = m.facts.filter((f) => f.kind !== 'choice');
   if (facts.length) {
     parts.push(
-      `KEY FACTS (canon — do not distort):\n${facts
+      `KEY FACTS (canon):\n${facts
         .slice(-40)
         .map((f) => `[turn ${f.turn}] ${f.text}`)
         .join('; ')}`
@@ -691,14 +668,14 @@ async function buildMemoryPlan(
     clearTimeout(timer);
     if (hits.length) {
       mb.push(
-        `PASSAGES FROM EARLIER IN THE STORY (verbatim excerpts matched to what is happening now — they already happened):\n${hits
+        `EARLIER PASSAGES (verbatim, matched to the current scene; already happened):\n${hits
           .map((h) => `[turn ${h.turn}] ${h.text}`)
           .join('\n\n')}`
       );
     }
   }
   const memorybook = mb.length
-    ? '== MEMORYBOOK (recalled from earlier in the story — ALL of this already happened; keep it consistent and never replay it as new) ==\n' +
+    ? '== MEMORYBOOK (recalled past; already happened — keep consistent, never replay) ==\n' +
       mb.join('\n\n')
     : '';
   return { memory, memorybook };
@@ -717,26 +694,18 @@ async function buildMemoryPlan(
 const DEPTH_REMINDERS: { keys: string[]; text: string }[] = [
   {
     keys: ['info_hygiene', 'rp_info_hygiene'],
-    text:
-      'Info hygiene: each character knows ONLY what they were actually told or witnessed. ' +
-      'Thoughts and narration are not audible. If you are unsure whether someone knows something — they do not.',
+    text: 'Knowledge: characters know only what they witnessed or were told. Thoughts are not heard. Unsure → they do not know.',
   },
   {
     keys: ['realistic_conduct', 'rp_realistic_conduct'],
-    text:
-      'Reality check before you write this turn: nobody owes the hero agreement, and the world is not arranging a happy ending. ' +
-      'If someone here would push back, be busy, be hurt, be jealous, want something else or simply say no — write THAT, ' +
-      'and let it stand instead of smoothing it over in the same turn. Affection is not compliance: even a settled, loving couple ' +
-      'bickers about ordinary things. A love interest who agrees with everything is a broken character, not a happy one.',
+    text: 'Realism: nobody owes the hero agreement. If someone would refuse, push back, be busy, hurt or jealous — write that and let it stand this turn. Affection is not compliance.',
   },
   {
     // Только РП: в новелле ход игрока приходит выбором, и разворачивать его — работа
     // модели. Здесь наоборот — это единственное, чего делать нельзя, и правило из
     // начала запроса к сороковому ходу перестаёт держать.
     keys: ['rp_no_impersonation'],
-    text:
-      'Do not write for the player. Not their words, not their thoughts, not their actions, not their feelings. ' +
-      'Stop where it is their move and leave the scene open.',
+    text: "Do not write the player's words, thoughts, actions or feelings. Stop at their move.",
   },
 ];
 
@@ -770,11 +739,8 @@ function gameMasterBlock(state: RuntimeState, turnNow = 0): string {
   const elapsed = elapsedPhrase(gm.clock.startDate, gm.clock.date);
   if (elapsed) {
     parts.push(
-      `The story began on ${gm.clock.startDate} — ${elapsed} of in-story time have passed since then.\n` +
-        `APPLY THAT ELAPSED TIME to everyone and everything, every turn: ages advance (someone who was 20 at the start ` +
-        `is now ${elapsed} older), children grow up and can walk and talk, wounds and pregnancies have long resolved, ` +
-        `jobs, homes and relationships have moved on, seasons turned. A character card describes who someone WAS when ` +
-        `it was written — add the elapsed time yourself instead of replaying the beginning.`
+      `Story began ${gm.clock.startDate}; ${elapsed} of in-story time have passed. Apply it: ages advance, children grow, ` +
+        `wounds and pregnancies have resolved, jobs, homes and relationships moved on. Cards describe people at the start.`
     );
   }
   if (gm.relations.length) {
@@ -784,20 +750,20 @@ function gameMasterBlock(state: RuntimeState, turnNow = 0): string {
   }
   if (gm.locations?.length) {
     parts.push(
-      `Known locations (keep descriptions consistent):\n${gm.locations
+      `Known locations:\n${gm.locations
         .map((l) => `- ${l.name}${l.description ? `: ${l.description}` : ''}${l.tags.length ? ` [${l.tags.join(', ')}]` : ''}`)
         .join('\n')}`
     );
   }
   const openTasks = gm.agenda.filter((t) => !t.done);
   if (openTasks.length) {
-    parts.push(`Open agenda (unresolved — still to happen):\n${openTasks.map((t) => `- ${t.text}`).join('\n')}`);
+    parts.push(`Open agenda:\n${openTasks.map((t) => `- ${t.text}`).join('\n')}`);
   }
   // Завершённые арки/задачи — чтобы ИИ НЕ повторял уже пройденное (фикс памяти).
   const doneTasks = gm.agenda.filter((t) => t.done).slice(-12);
   if (doneTasks.length) {
     parts.push(
-      `Already resolved / DONE (do NOT replay these as if they haven't happened):\n${doneTasks.map((t) => `- ${t.text}`).join('\n')}`
+      `Done (never replay):\n${doneTasks.map((t) => `- ${t.text}`).join('\n')}`
     );
   }
   if (gm.events.length) {
@@ -834,20 +800,20 @@ function gameMasterBlock(state: RuntimeState, turnNow = 0): string {
     const always = [...milestones, ...skips].filter((e, i, a) => a.indexOf(e) === i && !ordinary.includes(e));
     if (always.length) {
       parts.push(
-        `MILESTONES (major turning points — these NEVER scroll out of view; the story is past them, never undo or replay them):\n${always
+        `MILESTONES (the story is past these; never undo or replay):\n${always
           .slice(-20)
           .map(line)
           .join('\n')}`
       );
     }
     if (ordinary.length) {
-      parts.push(`Recent events (chronological — these already happened):\n${ordinary.map(line).join('\n')}`);
+      parts.push(`Recent events (already happened):\n${ordinary.map(line).join('\n')}`);
     }
   }
 
   return parts.length
     ? parts.join('\n\n')
-    : '(no game-master state yet — establish it via worldState this turn)';
+    : '(no game-master state yet — establish it in this turn\'s status block)';
 }
 
 // Единый WORLD STATE (Batch 8): дата/время/локация, экономика (баланс+долг+прайс-гайд
@@ -876,8 +842,7 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   // NOW в самом конце запроса, то есть там, где модель читает их последними.
   if (clock.date || clock.location) {
     parts.push(
-      'Current date, time and place are given ONCE, in the STATE RIGHT NOW block at the very end of this request. ' +
-        'That block is the only authoritative copy — do not reconstruct time or place from anything above it.'
+      'Current date, time and place: see STATE RIGHT NOW at the end of the request (the only authoritative copy).'
     );
   }
 
@@ -885,7 +850,7 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   // и обновлять их через statChanges (частая жалоба: «в тексте стат вырос, в статах нет»).
   if (hasStats) {
     parts.push(
-      `PROJECT STATS (update these via statChanges using the EXACT statId; if your narration says one of them changed, you MUST emit the matching statChange this same turn):\n${project.stats
+      `PROJECT STATS (update via statChanges with the exact statId; if the story changes one, emit the statChange this turn):\n${project.stats
         .map((s) => {
           const v = state.statValues[s.id] ?? s.initial;
           return `  - statId: ${s.id} | "${s.name}" = ${v} (${s.min}..${s.max})${s.description ? ` — ${s.description}` : ''}`;
@@ -896,10 +861,10 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
 
   // Экономика.
   if (hasEconomy && typeof bal === 'number') {
-    const debt = bal < 0 ? ' — THE HERO IS IN DEBT (negative balance): weave this into the story as a real pressure.' : '';
+    const debt = bal < 0 ? ' — the hero is IN DEBT; make it a real pressure in the story.' : '';
     parts.push(`Balance: ${bal} ${cur}.${debt}`);
     const pg = project.phone?.priceGuide?.trim();
-    if (pg) parts.push(`Price guide (keep all amounts in this order of magnitude, consistent between turns): ${pg}`);
+    if (pg) parts.push(`Price guide (keep amounts at this scale): ${pg}`);
     // Регулярные статьи — чтобы ИИ упоминал зарплату/аренду по датам.
     const rec = project.finance?.recurringEntries.filter((e) => e.enabled) || [];
     if (rec.length) {
@@ -917,7 +882,7 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
   // платье»), а движок такую вещь не находил и молча ничего не убирал.
   if (inv.length) {
     parts.push(
-      `INVENTORY — everything the hero owns, and the ONLY truth about it:\n${inv
+      `INVENTORY (everything the hero owns):\n${inv
         .map((it) => {
           // Откуда и с какого числа вещь у героя. Персонажи ссылаются на подарки
           // («то платье, что я тебе подарил»), а по дате видно, что снаряжение
@@ -928,7 +893,7 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
         .join('\n')}`
     );
   } else {
-    parts.push('INVENTORY: empty — the hero carries nothing.');
+    parts.push('INVENTORY: empty.');
   }
 
   // Когда протагонист последний раз виделся с персонажами (Batch 8 §VI) — чтобы ИИ
@@ -952,31 +917,17 @@ function worldStateBlock(project: Project, state: RuntimeState): string {
 
   // Правила.
   const rules: string[] = [
-    'This block is the engine\'s RECORD of the world, kept by you. Treat numbers and possessions as authoritative (never let the hero use an item they do not have or spend money they lack) and reflect it in the scene: characters notice the hero\'s clothing, remember when they last met, react to wealth or debt.',
-    // Место/время — самая частая рассинхронизация: их обновляет сама модель через
-    // worldState, и если она забыла, запись остаётся старой. Раньше блок объявлял
-    // себя «авторитетным» целиком, и модель возвращала героя в прежний город,
-    // противореча уже сыгранным сценам. Теперь на месте/времени сюжет главнее.
-    'DATE, TIME AND LOCATION are only as fresh as your last update. If the story (recent turns, memory, the chapters) says the hero has since moved elsewhere or time has passed, the STORY WINS: continue from where the story actually is and CORRECT this record the same turn — never drag the hero back to the location written here.',
-    'WHENEVER the hero changes place — a trip, a flight, moving to another room, city or country — emit the control beat {"type":"location_change","location":"<where they are NOW>"} at that point in the beat flow. This is mandatory, not optional bookkeeping: without it the engine keeps showing the old place to you and to the player, and the story gets dragged back there.',
-    'TIME (MANDATORY, same weight as the story text): the in-story date is always DD/MM/YYYY. ' +
-      'Whenever time moves — a night passes, "a week later", "three years later", a montage, a jump — you MUST emit ' +
-      '{"type":"time_advance","newDate":"DD/MM/YYYY","newTime":"HH:MM"} with the NEW date. ' +
-      'Writing the jump only in prose is NOT enough: the engine keeps its own clock, and if you skip this beat the clock ' +
-      'stays frozen at the old date. A few turns later the frozen clock is all that is left in context, and the story ' +
-      'silently rewinds to before the skip — characters un-age, events un-happen. Never write a date in any other format.',
-    'MONEY MOVES THROUGH THE TRANSACTION BEAT ONLY. Never also put the same amount into statChanges on the balance stat — the engine would apply both and charge the hero twice. One purchase = one beat.',
-    'INVENTORY (same weight as the story text): the hero owns exactly what the list above says — nothing more. ' +
-      'The moment the story gives them something, emit {"type":"inventory_add","name":"<short plain name>","emoji":"<one emoji>","quantity":1,"category":...,"source":"куплено|получено|найдено"}; ' +
-      'the moment they eat, spend, lose, break or hand something over, emit {"type":"inventory_remove","name":...,"quantity":1}. ' +
-      'A change you only narrated and did not send as a beat DID NOT HAPPEN: the engine keeps its own list, and next turn you will read the old one back. ' +
-      'For inventory_remove copy the name EXACTLY as it stands in the list above — that is how the engine finds the thing. ' +
-      'Never invent an item the hero does not have, and never re-add something they already carry.',
+    'This block is authoritative for numbers and possessions: the hero cannot use items they lack or spend money they do not have. Reflect it in scenes (clothing noticed, time since last meeting, wealth or debt).',
+    'Date, time and place are only as fresh as your last update. If the story has moved on, the story wins: continue from where it is and correct the record this turn.',
+    'Hero changes place (trip, another room, city, country) → emit {"type":"location_change","location":"<where now>"} at that point. Mandatory.',
+    'Time passes (night, "a week later", a jump) → emit {"type":"time_advance","newDate":"DD/MM/YYYY","newTime":"HH:MM"}. Mandatory: prose alone does not move the engine clock. Dates only as DD/MM/YYYY.',
+    'Money moves only through the transaction beat. Never also put it into statChanges on the balance stat (double charge).',
+    'Inventory: the hero owns exactly the list above. Gains → {"type":"inventory_add","name":"<short name>","emoji":"<emoji>","quantity":1,"category":...,"source":"куплено|получено|найдено"}; used, spent, lost, given → {"type":"inventory_remove","name":...,"quantity":1} with the name copied exactly from the list. Narrated-only changes did not happen. Never invent items or re-add owned ones.',
   ];
   if (hasEconomy) {
     rules.push(
-      'MONEY: when the hero spends or receives money, emit {"type":"transaction","amount":<neg to spend / pos to receive>,"vendor":"<where/from whom>","item":"<what for>","time":"HH:MM"} — vendor/item/time are required (they form the bank statement). Do NOT also mirror it in statChanges.',
-      'ZERO/LOW BALANCE: check the balance before a purchase. If the hero cannot afford it, do NOT emit a negative transaction for that purchase — write the scene with the shortfall (declined card, no cash). Recurring bills may still push the balance negative into debt.'
+      'Money spent or received → {"type":"transaction","amount":<negative spend / positive receive>,"vendor":"<where/from whom>","item":"<what>","time":"HH:MM"}; vendor, item, time required. Not also in statChanges.',
+      'Check the balance before a purchase. Cannot afford → no transaction; write the shortfall (declined card, no cash). Recurring bills may push the balance into debt.'
     );
   }
   parts.push('RULES:\n- ' + rules.join('\n- '));
@@ -990,11 +941,11 @@ function phoneBlock(project: Project, state: RuntimeState): string {
   const cfg = project.phone;
   if (!cfg?.enabled) return '';
   const parts = [
-    'The hero carries a smartphone. Phone control beats (no display text):',
-    '  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — a known character texts the hero (appears in Messages). ONLY someone who is somewhere else: a person standing in the scene talks, they do not text. The rare exception is a deliberate silent message under the table, and then the narration must show them reaching for their phone.',
-    '  - {"type":"sms_outgoing","characterId":"<id>","text":"<message>"} — the HERO texts that person. Use this whenever the hero writes, answers or forwards something on the phone during the scene. Never put the hero\'s own words into sms_incoming: that beat is the other person speaking.',
-    '  - {"type":"contact_added","characterId":"<id>"} — the hero saves someone\'s number (characters who appear are auto-added; use only for someone met off-screen).',
-    '  - {"type":"sms_photo","characterId":"<id>","caption":"<what they write with it>","photo":"<what the photo shows, from THEIR side: a selfie, their room, the street they are on>"} — a character sends the hero a PHOTO. The engine draws it. Use it when someone would naturally snap something (showing off, proof, a view, a joke); the caption is optional.',
+    'The hero has a smartphone. Phone beats (no display text):',
+    '  - {"type":"sms_incoming","characterId":"<id>","text":"<message>"} — someone elsewhere texts the hero. People in the scene talk, not text (exception: a deliberate secret text, shown in narration).',
+    '  - {"type":"sms_outgoing","characterId":"<id>","text":"<message>"} — the hero texts that person. The hero\'s words never go into sms_incoming.',
+    '  - {"type":"contact_added","characterId":"<id>"} — the hero saves a number (only for someone met off-screen; others are added automatically).',
+    '  - {"type":"sms_photo","characterId":"<id>","caption":"<optional text>","photo":"<what the photo shows, from their side>"} — a character sends a photo; the engine draws it.',
   ];
 
   // ПЕРЕПИСКА — часть сюжета. Без этого блока всё, что игрок написал персонажу в
@@ -1048,10 +999,7 @@ function phoneBlock(project: Project, state: RuntimeState): string {
   if (chatLines.length) {
     const tail = chatLines.sort((a, b) => a.at - b.at).slice(-14);
     parts.push(
-      'RECENT TEXT MESSAGES — ALREADY DELIVERED. They are on the hero\'s phone right now, both sides ' +
-        'remember them, and they are canon. NEVER send any of them again: if the hero mentions the ' +
-        'correspondence, or thinks about it, or answers it out loud, respond to that IN THE SCENE. ' +
-        'Emit sms_incoming ONLY for a message that has never been sent before.\n' +
+      'RECENT TEXT MESSAGES (already delivered, canon; never resend — react to them in the scene; sms_incoming only for new messages):\n' +
         tail.map((x) => x.line).join('\n')
     );
   }
@@ -1240,12 +1188,12 @@ export async function buildRequest(
   const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
   systemParts.push(
     mode === 'rp'
-      ? `TURN LENGTH (authoritative — this OVERRIDES every other length, pacing or "let it breathe" instruction above, including anything in the preset asking for a substantial or immersive reply): land the turn WITHIN ${tl.min}–${tl.max} words of story TOTAL.
-- ${tl.max} is a hard ceiling. Reaching a natural pause inside the range and stopping there is correct; padding to fill the range is not.
-- ${tl.min} is a real floor, not a suggestion. Under it, the scene has not been given its room — add another beat that MOVES something (someone acts, something is revealed, the situation shifts). Never pad with restatement, extra adjectives, or a summary of the mood.
-- Fill the range with the NUMBER of paragraphs, not by inflating any single one.
-- This range is the author's setting for how this story is played. A short range means fast exchanges and that is intended; a long one means a full scene. Do not "correct" it toward what feels like a normal reply length.`
-      : `TURN LENGTH & BEAT SIZE (authoritative — overrides any other length/beat guidance above): land the turn WITHIN ${tl.min}–${tl.max} words TOTAL — that is the target, do NOT overshoot it; once you reach a natural pause inside the range, stop rather than padding. Split the turn into medium beats: each beat a readable 1–3 sentence chunk (a short paragraph) — never a wall of text, never a bare one-liner. Fill the range with the NUMBER of medium beats, not by inflating any single beat. Keep a real mix of dialogue and narration: characters who are present must actually SPEAK — emit "dialogue" beats with that character's characterId (a dialogue beat with a valid characterId is what puts the character's sprite on screen), interleaved with narration/thought.`
+      ? `TURN LENGTH (authoritative; overrides every other length or pacing instruction): ${tl.min}–${tl.max} words of story.
+- ${tl.max} is a hard ceiling; stop at a natural pause inside the range, do not pad.
+- ${tl.min} is a real floor: if short, add a beat that moves something (an action, a reveal, a shift), never filler.
+- Reach the length with more paragraphs, not longer ones.
+- The range is the author's choice; do not drift toward a "normal" reply length.`
+      : `TURN LENGTH & BEATS (authoritative; overrides other length guidance): ${tl.min}–${tl.max} words total; stop at a natural pause, do not overshoot. Medium beats of 1–3 sentences; grow the turn with more beats, not bigger ones. Mix dialogue and narration: present characters speak via "dialogue" beats with their characterId (this shows their sprite).`
   );
   // Частота выборов. По умолчанию (gap = 0) выборы обязательны КАЖДЫЙ ход — иначе
   // игрок упирается в экран без вариантов. Ползунок в пресете (gap > 0) — осознанный
@@ -1260,8 +1208,8 @@ export async function buildRequest(
     const gap = ps.choiceMinGap ?? 0;
     systemParts.push(
       gap > 0
-        ? `CHOICE FREQUENCY (authoritative): offer a choices block at most about once every ${gap} turns. On all other turns return choices: [] and let the player type. Only surface choices at a real decision point.`
-        : `CHOICES (authoritative — overrides any other guidance above): EVERY turn ends with 2–4 choices. Returning an empty choices array is never acceptable, not even on a quiet or transitional turn — there is always something to choose between (speak / stay silent / leave / look closer / change the subject). Write them from the hero's side, meaningfully different in intent or tone, actions in *italics*, no move tags, no bare "Continue".`
+        ? `CHOICES (authoritative): offer choices at most once every ~${gap} turns, only at a real decision point; otherwise choices: [].`
+        : `CHOICES (authoritative): every turn ends with 2–4 choices; never an empty array. From the hero's side, different in intent or tone, actions in *italics*, no move tags, no bare "Continue".`
     );
   }
   // Язык повествования (пресет). Управляет языком ТЕКСТА истории; ключи JSON и
@@ -1269,8 +1217,8 @@ export async function buildRequest(
   const narr = ps.narrativeLanguage === 'en' ? 'English' : 'Russian (русский)';
   systemParts.push(
     mode === 'rp'
-      ? `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts and dialogue — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate character names or in-world proper nouns unless the setting calls for it.`
-      : `NARRATIVE LANGUAGE (authoritative): write ALL story text — narration, thoughts, character dialogue and choice texts — in ${narr}, regardless of the language of these instructions or of the character cards. Do NOT translate JSON keys, character ids, emotion keys, outfit tags, music moods or background ids — those stay exactly as given.`
+      ? `LANGUAGE (authoritative): all story text in ${narr}, whatever the language of instructions or cards. Keep names and proper nouns as given.`
+      : `LANGUAGE (authoritative): all story text (narration, thoughts, dialogue, choices) in ${narr}, whatever the language of instructions or cards. JSON keys, ids, emotion keys, outfit tags, moods and background ids stay exactly as given.`
   );
   // Реестр персонажей (patch character-registry) — идентичность по id + правило.
   // Единый WORLD STATE (Batch 8) — дата/деньги/долг/инвентарь + правила.
@@ -1286,16 +1234,10 @@ export async function buildRequest(
   // отдельно поток сообщений, не понимая, что новее. Отсюда и откаты состояния —
   // модель принимала снапшот (срез на момент прошлой свёртки) за самое свежее.
   systemParts.push(
-    `=== HOW THIS CONTEXT IS ORDERED (read before answering) ===
-` +
-      `Everything ABOVE is background: world, characters, and MEMORY of what happened EARLIER — ` +
-      `the chapter index and chapters run oldest → newest, and the story-state snapshot describes where things stood at the LAST fold, not necessarily now.
-` +
-      `The messages that FOLLOW are the recent story itself, verbatim and in chronological order. They are NEWER than everything above. ` +
-      `The final user message is the player's move you must answer now.
-` +
-      `If the recent messages contradict the background — someone travelled, an item changed hands, time passed, a relationship shifted — ` +
-      `THE RECENT MESSAGES WIN. Continue from them and correct the record; never rewind the story to an older state described above.`
+    `=== CONTEXT ORDER ===\n` +
+      `Above: background — world, characters, memory (chapters oldest → newest; the snapshot is from the last memory fold). ` +
+      `Below: the recent story verbatim, newer than everything above; the last user message is the move to answer. ` +
+      `If recent messages contradict the background, the recent messages win: continue from them, never rewind.`
   );
   const system = systemParts.join('\n\n');
 
@@ -1444,9 +1386,8 @@ export async function buildRequest(
     withMove.push({
       role: 'user',
       content:
-        '[OOC — from the player to you, the narrator. Not part of the story: nobody said it, nobody hears ' +
-        'it, never answer it inside the fiction and never mention it. It is a standing condition for how ' +
-        'you write THIS turn, and it outranks your own habits and preferences:]\n' +
+        '[OOC from the player to you, the narrator. Not in the story: nobody hears it; never answer or mention it. ' +
+        'A binding condition for how you write this turn:]\n' +
         ooc,
     });
   }
@@ -1475,7 +1416,7 @@ export async function buildRequest(
   // Так «сейчас» меняется в одной строке в хвосте, а не в начале системной части,
   // где каждая правка обнуляет кэш префикса у провайдера и заставляет пересчитывать
   // весь контекст с нуля каждый ход.
-  nowBits.push(`Current turn: ${state.turnCount}. Anything above stamped with an earlier turn number is OLDER than the story is now.`);
+  nowBits.push(`Current turn: ${state.turnCount}. Anything stamped with an earlier turn is older.`);
   const clockNow = formatClock(state.gm.clock);
   if (clockNow) {
     const el = elapsedPhrase(state.gm.clock.startDate, state.gm.clock.date);
@@ -1485,7 +1426,7 @@ export async function buildRequest(
   const locAge = locAt ? state.turnCount - locAt : null;
   if (locAge !== null && locAge > 2) {
     nowBits.push(
-      `(the place above was recorded ${locAge} turns ago — if the story has moved since, THE STORY WINS: continue from where it actually is and emit location_change)`
+      `(place recorded ${locAge} turns ago — if the story moved since, follow the story and emit location_change)`
     );
   }
   if (state.onScreen.length) nowBits.push(`In the scene: ${onScreenState(project, state)}`);
@@ -1500,7 +1441,7 @@ export async function buildRequest(
   if (freshDossiers.length) nowBits.push(`Current status: ${freshDossiers.join('; ')}`);
   if (nowBits.length) {
     tail.push(
-      `[STATE RIGHT NOW — the freshest values the engine has, they override anything older above]\n${nowBits.join('\n')}`
+      `[STATE RIGHT NOW — overrides older values above]\n${nowBits.join('\n')}`
     );
   }
 
@@ -1510,10 +1451,8 @@ export async function buildRequest(
   const notes = [...getGlobalNotes(), ...state.authorNotes].filter((n) => n.text.trim());
   if (notes.length) {
     tail.push(
-      '[AUTHOR NOTES — HIGHEST PRIORITY] The following directions come from the player and OVERRIDE ' +
-        'the plot outline, the open agenda, any plot hooks in memory and your own plans. A prohibition here ' +
-        'applies now and in later turns until the player changes it — never satisfy it indirectly ' +
-        '(through another character, a near-miss, a dream or a conversation about it):\n' +
+      '[AUTHOR NOTES — highest priority; override the plot outline, agenda, memory hooks and your plans. ' +
+        'A prohibition holds until the player removes it; never work around it (other character, near-miss, dream, talk about it):]\n' +
         notes.map((n) => `- ${expandMacros(n.text, ctx)}`).join('\n')
     );
   }
@@ -1528,11 +1467,8 @@ export async function buildRequest(
   const banWords = (ps.banWords ?? DEFAULT_BAN_WORDS).trim();
   if (banWords) {
     tail.push(
-      'BANNED WORDS AND PHRASES — do not write these, in any language, in any form: not reworded, not ' +
-        'as a near-synonym of the same image, however well it seems to fit. Each of them is a phrase you ' +
-        'reach for out of habit, not because this scene needs it. When one comes to mind, that is the ' +
-        'signal to find a DIFFERENT image or to drop the beat entirely — a synonym of a banned phrase is ' +
-        'the same phrase:\n' +
+      'BANNED PHRASES — never write these in any language or form, including rewordings and synonyms of the same image. ' +
+        'Use a different image or drop the beat:\n' +
         banWords
     );
   }
@@ -1547,24 +1483,22 @@ export async function buildRequest(
   const stateOn = mode === 'rp' && enabledBuiltins.has(RP_STATE_BLOCK_KEY);
   const lengthReminder =
     mode === 'rp'
-      ? `Stay WITHIN ~${tl.min}–${tl.max} words of story (do not overshoot). Prose in paragraphs, no walls of text, no bare one-liners.`
-      : `Stay WITHIN ~${tl.min}–${tl.max} words (do not overshoot) as medium beats of 1–3 sentences each — mix dialogue (with the speaking character's characterId, so their sprite shows) and narration. No walls of text, no bare one-liners.`;
+      ? `Length: ${tl.min}–${tl.max} words of story. Paragraphs; no walls of text, no one-liners.`
+      : `Length: ${tl.min}–${tl.max} words in beats of 1–3 sentences; mix dialogue (with the speaker's characterId) and narration.`;
   const formatReminder =
     mode === 'rp'
-      ? 'Reminder: reply with the story only — plain prose, no JSON, no headers, no out-of-character text, and NOTHING written for the player.' +
+      ? 'Reply with the story only: plain prose, no JSON, no headers, no OOC text, nothing written for the player.' +
         // Сам контракт сводки лежит блоком пресета — далеко наверху, за всей
         // историей. Одной строки-упоминания в хвосте не хватало: модель дописывала
         // прозу и на этом останавливалась, а сводка «терялась» — с ней переставали
         // обновляться часы, досье и память. Поэтому здесь не напоминание, а сам
         // каркас: его остаётся заполнить, а не вспомнить.
         (stateOn
-          ? `\n\nAFTER the prose, and only after it, append the status block — it is NOT optional and NOT ` +
-            `part of the story; the player never sees it. Nothing may follow it.\n` +
+          ? `\nThen append the status block (required, hidden from the player, last thing in the reply):\n` +
             `${RP_STATE_OPEN}\n{ "clock": { "day": "...", "month": "...", "year": "...", "time": "...", "location": "..." },\n` +
             `  "characters": [ { "name": "...", "status": "...", "mood": "...", "location": "..." } ] }\n` +
             `${RP_STATE_CLOSE}\n` +
-            `clock and characters are required EVERY turn, even when nothing changed — anything you omit silently ` +
-            `keeps its old value. The full field list is in the contract above; these two are the minimum.`
+            `clock and characters every turn, even if unchanged; other fields per the contract above.`
           : '')
       : FORMAT_REMINDER;
 
@@ -1604,18 +1538,14 @@ export async function buildRequest(
       // отдаём чек-лист без тегов и без префилла: пусть пройдёт его в своём
       // размышлении, а в ответ напишет только сцену.
       tail.push(
-        'SELF-CHECK — before you write a single line, work through this checklist IN YOUR OWN REASONING, ' +
-          'in order, and let the answers decide what you write.\n' +
+        'SELF-CHECK: before writing, go through this checklist in your own reasoning, in order; let the answers shape the turn.\n' +
           // Просьбы «не пиши это в ответ» мало: список с заголовками выглядит как
           // форма, и модель её заполняет. Gemini 3.x делает это особенно охотно и
           // особенно неудобно — JSON-объектом с нашими же ключами прямо перед
           // сценой. Поэтому запрет конкретный, названы обе формы, и оставлен
           // выход: если удержаться невозможно — в теги, откуда движок это вырежет.
-          'THE REPLY ITSELF CONTAINS ONLY THE STORY. Do not restate these steps, do not answer them on the ' +
-          'page, and above all do not emit a JSON object with these labels as keys ("scene", "wants", ' +
-          '"the turn"…) — that is engine plumbing, and the player would see it as part of the scene. ' +
-          'If you cannot keep the reasoning silent, put it in <thinking></thinking> before the prose so it ' +
-          'can be removed; never leave it bare:\n' +
+          'The reply contains only the story: never write these steps or their answers, and never a JSON object with these labels as keys. ' +
+          'If reasoning must appear, put it in <thinking></thinking> before the prose:\n' +
           plan
       );
       tail.push(`${formatReminder}\n${lengthReminder}`);
@@ -1628,15 +1558,11 @@ export async function buildRequest(
     } else {
       const after =
         mode === 'rp'
-          ? 'Then immediately close </thinking> and write the scene itself and nothing else.'
-          : 'Then immediately close </thinking> and output the ONE JSON object per the schema and nothing after it.';
+          ? 'Then close </thinking> and write the scene only.'
+          : 'Then close </thinking> and output the one JSON object, nothing after it.';
       tail.push(
-        'REASONING PROTOCOL: before writing anything, work through this checklist ONCE, inside a single ' +
-          '<thinking></thinking> block at the very start of your reply. One short line per numbered step, ' +
-          'in this order, in the language you are writing the story in. It is a CHECKLIST, not an essay: no ' +
-          'prose, no drafting the scene inside it, no second pass. A step that comes out clean is answered ' +
-          'in two words ("clean", "same", "ok") — the point is that you actually looked. A step that does ' +
-          'NOT come out clean is answered by naming what you are changing.\n' +
+        'REASONING: start the reply with one <thinking></thinking> block. One short line per step, in order, in the story language. ' +
+          'Checklist, not prose: no drafting, no second pass. Clean step → "clean"/"ok"; otherwise name the fix.\n' +
           `${plan}\n${after}\n${lengthReminder}\n${formatReminder}`
       );
       prefill = '<thinking>\n';
@@ -1648,7 +1574,7 @@ export async function buildRequest(
   withMove.push({
     role: 'user',
     content:
-      `(Engine directives for THIS turn. Reply to the player's move ABOVE — this block only constrains how.)\n\n` +
+      `(Engine directives for this turn. Answer the player's move above; this block only constrains how.)\n\n` +
       tail.join('\n\n'),
   });
 

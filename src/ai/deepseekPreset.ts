@@ -29,42 +29,37 @@ import { defaultRpPreset, RP_OUTDATED_SIGNATURES } from './rpPreset';
 // DEEPSEEK_THINKING_PLAN) и механические штрафы за повтор в параметрах профиля.
 // Ни один из них по отдельности не справляется.
 
-export const DEEPSEEK_ANTI_ECHO = `NEVER open your reply by restating, paraphrasing or "reflecting back" what {{user}} just did. They wrote it — they know it happened. Repeating it back is the single most wasteful thing you can do with the opening of a turn.
+export const DEEPSEEK_ANTI_ECHO = `Never open by restating, paraphrasing or mirroring {{user}}'s last move. Do not start with:
+- a retelling of their action ("You stepped up to the bar…");
+- their action seen from outside ("The stranger approached the counter…");
+- a summary of their words ("So you wanted to know about…");
+- their phrasing reworded.
+The first sentence must contain something {{user}} did not know yet: a response, a line, a change in the scene. Begin at the effect, not the cause.`;
 
-Concretely, do NOT start with:
-- a retelling of their action ("You stepped up to the bar…"),
-- their action re-described from outside ("The stranger approached the counter…"),
-- a summary of their words ("So you wanted to know about the road north…"),
-- an echo of their phrasing in different words.
+export const DEEPSEEK_ANTI_REPETITION = `Do not reuse your own phrasing.
+- An image, metaphor or turn of phrase used once in this story is spent. Do not repeat it, even reworded.
+- Especially atmosphere filler: thickening air, held breath, hanging silence, something shifting imperceptibly, a charged pause, a lingering look.
+- Do not repeat sentence rhythms: if the last turn ended on a short dramatic fragment, this one must not.
+- Repetition is not a motif. Assume any repeat is a habit.`;
 
-START WHERE THE WORLD ANSWERS. The first sentence must contain something {{user}} did not already know: what someone does in response, what they say, what changes in the room. Their action is the cause — begin at the effect.`;
-
-export const DEEPSEEK_ANTI_REPETITION = `You have a strong pull toward reusing your own successful phrasings. Resist it deliberately — you cannot feel it from inside, so treat it as a rule rather than a matter of taste.
-
-- Any vivid image, metaphor or turn of phrase you have already used in this story is SPENT. Do not use it again, even slightly reworded. Find another way or drop the beat.
-- Watch especially for atmosphere filler: thickening air, held breath, hanging silence, something shifting imperceptibly, a charged pause, a look that lingers. If you have written it once, it is gone.
-- Do not reuse your own sentence rhythms either: if the last turn ended on a short dramatic fragment, this one must not.
-- Repeating a phrase does NOT make it a motif. A motif is deliberate and rare; repetition is a habit. Assume yours is the habit.`;
-
-export const DEEPSEEK_ANTI_TEMPLATE = `Vary the SHAPE of the turn, not just its words. Your default composition — react, describe the room, hold a meaningful pause, ask {{user}} a question — must not repeat two turns running.
-
-Other ways to build a turn, all legitimate: open on dialogue with no lead-in; open mid-action; give the beat to a character who is not talking to {{user}} at all; end on someone leaving; end flatly with no invitation. A turn does NOT have to end with a question or an offer to act — the scene can simply continue and leave the move to {{user}} without asking for it.`;
+export const DEEPSEEK_ANTI_TEMPLATE = `Vary the shape of the turn. Do not use the same composition two turns in a row (react → describe the room → meaningful pause → question to {{user}}).
+Alternatives: open on dialogue with no lead-in; open mid-action; give the beat to characters not talking to {{user}}; end on someone leaving; end flat. A turn need not end with a question or an invitation.`;
 
 // План размышления под DeepSeek. Первый пункт — тот самый «разбор прошлого
 // ответа»: заставляет модель ПОСМОТРЕТЬ на собственный предыдущий ход и назвать
 // его фразы вслух, прежде чем писать новый. Без этого запрет «не повторяйся»
 // повисает в воздухе — модель искренне не считает, что повторяется.
-export const DEEPSEEK_THINKING_PLAN = `1. MY LAST REPLY: name 2-3 exact phrases or images I used, and how it was built (what opened it, what closed it). All of it is BANNED for this turn. (1 line)
-2. OPENING: what happens FIRST that {{user}} does not already know? Never a retelling, paraphrase or mirror of their move — start where the world ANSWERS. (1 line)
-3. SHAPE: how is this turn built differently from the last one — what opens it, what closes it? (1 line)
-4. BAN LIST: is anything from the banned words and phrases about to slip in? Name it and what replaces it, or "clean". (1 line)
-5. SCENE: where, when, who is physically here, what each is doing and wearing — carried over; name only what CHANGES now. (1 line)
-6. SAID vs THOUGHT: what did {{user}} actually say or do OUT LOUD this turn, and what was only a thought or an unstated intention? Thoughts are NOT audible — nobody may react to them. (1 line)
-7. WHO KNOWS WHAT: for every character about to speak or act, name the fact they are about to use and WHERE THEY GOT IT — saw it themselves / were told it in a played scene / it is in their tags / common knowledge. Anything not on that list they DO NOT KNOW: say so and change what they do. (1-2 lines)
-8. WHO ACTS: who moves or speaks on their own initiative this turn, and what do they want? (1 line)
-9. FRICTION: who here does not simply go along with {{user}}, and why? ("nobody, and here is why that is earned" is a valid answer — but it has to be earned.) (1 line)
-10. THE TURN: the first beat, the turn it takes, and where it STOPS — and it stops where it is {{user}}'s move. (1-2 lines)
-11. FORMAT: speech in one kind of quotation marks, a quote inside speech in 'single' ones, {{user}} in the second person, italics only for an unspoken thought, no dash opening a line of speech, nothing written for {{user}}. ("ok", or name what you are fixing.)`;
+export const DEEPSEEK_THINKING_PLAN = `1. LAST REPLY: 2–3 exact phrases or images I used, and its opening and ending. All banned this turn.
+2. OPENING: the first thing {{user}} does not know yet. Never a retelling of their move.
+3. SHAPE: how this turn is built differently from the last (opening, ending).
+4. BAN LIST: any banned word or phrase about to appear → its replacement, or "clean".
+5. SCENE: place, time, who is here, what each is doing and wearing; only what changes now.
+6. SAID vs THOUGHT: what {{user}} said or did out loud vs only thought. Thoughts are not heard.
+7. KNOWLEDGE: for each acting character, the fact they use and its source (witnessed / told in a scene / tags / common knowledge). No source → they don't know; adjust.
+8. INITIATIVE: who acts on their own this turn, and what they want.
+9. FRICTION: who does not simply go along with {{user}}, and why ("nobody" only if earned).
+10. TURN: first beat, the shift, where it stops (at {{user}}'s move).
+11. FORMAT: one quote style; 'single' inside speech; {{user}} = "you"; italics only for thoughts; no dash before speech; nothing written for {{user}}. "ok" or the fix.`;
 
 function makeDefaults(): PromptBlock[] {
   // Основа — полный РП-пресет: всё, что в нём есть про запрет писать за игрока,
@@ -110,6 +105,14 @@ export function defaultDeepseekBlockContent(builtinKey: string): string | null {
   return makeDefaults().find((b) => b.builtinKey === builtinKey)?.content ?? null;
 }
 
+
+// Прежние полные тексты блоков DeepSeek (до сжатия): нетронутые обновятся.
+const DS_VERBOSE_V1 = [
+  { key: 'ds_anti_echo', signature: "NEVER open your reply by restating, paraphrasing or \"reflecting back\" what {{user}} just did. They wrote it — they know it happened. Repeating it back is the single most wasteful thing you can do with the opening of a turn.\n\nConcretely, do NOT start with:\n- a retelling of their action (\"You stepped up to the bar…\"),\n- their action re-described from outside (\"The stranger approached the counter…\"),\n- a summary of their words (\"So you wanted to know about the road north…\"),\n- an echo of their phrasing in different words.\n\nSTART WHERE THE WORLD ANSWERS. The first sentence must contain something {{user}} did not already know: what someone does in response, what they say, what changes in the room. Their action is the cause — begin at the effect.", exact: true },
+  { key: 'ds_anti_repetition', signature: "You have a strong pull toward reusing your own successful phrasings. Resist it deliberately — you cannot feel it from inside, so treat it as a rule rather than a matter of taste.\n\n- Any vivid image, metaphor or turn of phrase you have already used in this story is SPENT. Do not use it again, even slightly reworded. Find another way or drop the beat.\n- Watch especially for atmosphere filler: thickening air, held breath, hanging silence, something shifting imperceptibly, a charged pause, a look that lingers. If you have written it once, it is gone.\n- Do not reuse your own sentence rhythms either: if the last turn ended on a short dramatic fragment, this one must not.\n- Repeating a phrase does NOT make it a motif. A motif is deliberate and rare; repetition is a habit. Assume yours is the habit.", exact: true },
+  { key: 'ds_anti_template', signature: "Vary the SHAPE of the turn, not just its words. Your default composition — react, describe the room, hold a meaningful pause, ask {{user}} a question — must not repeat two turns running.\n\nOther ways to build a turn, all legitimate: open on dialogue with no lead-in; open mid-action; give the beat to a character who is not talking to {{user}} at all; end on someone leaving; end flatly with no invitation. A turn does NOT have to end with a question or an offer to act — the scene can simply continue and leave the move to {{user}} without asking for it.", exact: true },
+];
+
 const DS_ORDER = makeDefaults().map((b) => b.builtinKey as string);
 
 export function normalizeDeepseekPreset(raw: unknown): PromptPreset {
@@ -118,7 +121,8 @@ export function normalizeDeepseekPreset(raw: unknown): PromptPreset {
   if (!parsed) return defaultDeepseekPreset();
   // Блоки здесь — копии РП-шных (те же builtinKey), поэтому и устаревают они по тем
   // же сигнатурам: правка общего блока должна доезжать и до этого пресета.
-  const fresh = (pr: PromptPreset) => refreshBuiltins(pr, makeDefaults(), RP_OUTDATED_SIGNATURES);
+  const fresh = (pr: PromptPreset) =>
+    refreshBuiltins(pr, makeDefaults(), [...RP_OUTDATED_SIGNATURES, ...DS_VERBOSE_V1]);
   const have = new Set(parsed.blocks.map((b) => b.builtinKey).filter(Boolean) as string[]);
   const missing = makeDefaults().filter((b) => b.builtinKey && !have.has(b.builtinKey));
   if (!missing.length) return fresh(parsed);

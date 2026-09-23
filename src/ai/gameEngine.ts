@@ -33,12 +33,12 @@ export interface TurnResult {
 }
 
 const RETRY_HINT =
-  '\n\nThe response failed validation. Reply with EXACTLY one JSON object per the schema — no markdown, no text outside the JSON.';
+  '\n\nInvalid response. Reply with exactly one JSON object per the schema; nothing outside it.';
 
 // То же для текстового РП: там схемы нет, и пустой ответ значит либо съеденный
 // reasoning-бюджет, либо срабатывание фильтра — просим просто написать сцену.
 const RP_RETRY_HINT =
-  '\n\nYour previous reply came back empty. Write the scene itself now: plain prose, no planning, no preamble, nothing written for the player.';
+  '\n\nYour reply was empty. Write the scene now: plain prose, no planning, no preamble, nothing for the player.';
 
 // Подбор трека под настроение: ротация среди треков этого настроения; нет треков →
 // пробуем 'calm'; ничего нет → null (тишина). Не крашит.
@@ -753,12 +753,10 @@ export async function runTurn(
     : '';
   const rerollDirective = rejectedText
     ? [
-        '[REROLL] The player REJECTED your previous version of this turn and asked for another one.',
-        'This is what you wrote — it must NOT happen again:',
+        '[REROLL] The player rejected this version of the turn:',
         rejectedText.slice(0, 1200),
-        'Write a DIFFERENT continuation of the SAME player move: different events, a different turn of the scene, a different outcome.',
-        'Do not merely rephrase the rejected version and do not steer back to the same event by another route.',
-        'If an author note forbids something, that prohibition outranks the plot outline, the agenda and any plot hooks.',
+        'Write a different continuation of the same move: different events, turn and outcome. Do not rephrase it or steer back to the same event.',
+        'Author-note prohibitions outrank the plot outline, agenda and hooks.',
       ].join('\n')
     : undefined;
   const extraDirective =
@@ -903,10 +901,9 @@ export async function runTurn(
       try {
         const patch = await runCompletion({
           system:
-            'You extract a status block from a roleplay turn that was just written. Reply with the block ' +
-            'and NOTHING else — no prose, no explanation, no code fences.',
+            'You extract a status block from a roleplay turn. Reply with the block only: no prose, no explanation, no code fences.',
           messages: [
-            { role: 'user', content: `The turn:\n\n${rp.prose}\n\nNow output the status block for it.` },
+            { role: 'user', content: `Turn:\n\n${rp.prose}\n\nOutput its status block.` },
           ],
           temperature: 0,
           maxTokens: 900,

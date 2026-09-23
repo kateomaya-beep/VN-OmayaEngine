@@ -116,10 +116,9 @@ export async function scanCharacter(
   project?: Project
 ): Promise<Partial<GmCharacter>> {
   const system =
-    'You are a story analyst for a visual-novel engine. From the transcript, build a compact dossier ' +
-    `for the character named "${name}". Reply with ONLY a JSON object (no prose, English values): ` +
-    '{"dossier":string,"appearance":string,"personality":string,"roleToHero":string,"outfit":string,"mood":string,"status":string,"location":string,"tags":[string]}. ' +
-    'Base every field strictly on what the context shows (character sheets and lore count as canon); leave a field as "" if unknown.';
+    `Build a compact dossier for "${name}" from the context (sheets and lore are canon). ` +
+    'Reply with ONLY this JSON, English values, "" if unknown: ' +
+    '{"dossier":string,"appearance":string,"personality":string,"roleToHero":string,"outfit":string,"mood":string,"status":string,"location":string,"tags":[string]}.';
   const obj = await scanJson(system, contextText(state, project));
   return {
     dossier: s(obj.dossier),
@@ -143,9 +142,8 @@ export interface ScannedEvent {
 // Извлекает ключевые события из недавнего контекста (для журнала событий).
 export async function scanEvents(state: RuntimeState): Promise<ScannedEvent[]> {
   const system =
-    'You are a story analyst. Extract the key events from the transcript in chronological order. ' +
-    'Reply with ONLY a JSON array (English values): [{"summary":string,"chars":[string],"mood":string}]. ' +
-    'Keep each summary to one sentence; at most 12 items; only genuinely notable beats.';
+    'Extract the notable events from the transcript, chronological, max 12, one sentence each. ' +
+    'Reply with ONLY a JSON array, English values: [{"summary":string,"chars":[string],"mood":string}].';
   const arr = await scanJson(system, contextText(state));
   if (!Array.isArray(arr)) return [];
   return arr
@@ -161,16 +159,11 @@ export async function scanContacts(
   project?: Project
 ): Promise<string[]> {
   const system =
-    'You are a story analyst for a phone-contacts feature. List the NAMED people the protagonist ' +
-    'personally knows and could realistically have a phone number for (family, friends, love interests, ' +
-    'colleagues, acquaintances). ' +
-    'Use BOTH sources: the "WHO IS WHO" block (character sheets, lore, dossiers) AND the transcript. ' +
-    'A person counts even if they never appear on stage — if the hero\'s own sheet or the lore says they ' +
-    'have a mother, a father, a sister, a best friend or a boss, those people belong in the phone. ' +
-    'If such a relative or close person is described WITHOUT a name, use the name the story uses for them ' +
-    '("Мама", "Папа", "Mom", "Dad") — do not skip them. ' +
-    'EXCLUDE: strangers, one-off passersby, groups/organisations, and people the hero has no personal tie to. ' +
-    'Reply with ONLY a JSON array of names (strings), most relevant first, at most 12.';
+    'List people the protagonist personally knows and would have a phone number for (family, friends, love interests, colleagues, acquaintances). ' +
+    'Sources: the WHO IS WHO block (sheets, lore, dossiers) and the transcript; people never on stage count too (e.g. a parent from the hero\'s sheet). ' +
+    'Unnamed relatives → the name the story uses ("Мама", "Папа", "Mom"). ' +
+    'Exclude strangers, passersby, organisations, people with no personal tie. ' +
+    'Reply with ONLY a JSON array of names, most relevant first, max 12.';
   // Отсев уже известных и дедуп — с точностью до падежа: «Лиза» и «Лизу» это
   // один человек, и предлагать его дважды не надо.
   const arr = await scanJson(system, contextText(state, project));
@@ -199,16 +192,11 @@ export async function generateCharacterSheet(
   project?: Project
 ): Promise<GeneratedSheet> {
   const system =
-    'You are a character-card writer for a visual-novel engine. Build a FULL character sheet for the ' +
-    `character named "${name}", based strictly on what the transcript shows (infer tastefully where the ` +
-    'transcript is silent, staying consistent). ALL VALUES IN ENGLISH regardless of the story language. ' +
-    'Gather EVERYTHING known about this character from the transcript (summary sections, canonical ' +
-    'facts, events) and produce ONE consistent sheet that preserves established facts and never ' +
-    'contradicts canon — this UPDATES the character, it does not invent a second version of them. ' +
-    'Reply with ONLY a JSON object: {"name":string,"appearance":string,"personality":string,' +
+    `Write a full character sheet for "${name}" from everything the context shows (chapters, facts, events). ` +
+    'Keep established facts; never contradict canon; infer only where silent, consistently. English values. ' +
+    'Reply with ONLY this JSON: {"name":string,"appearance":string,"personality":string,' +
     '"backstory":string,"speechStyle":string,"scenario":string,"greetings":[string]}. ' +
-    'appearance/personality/backstory are a few sentences each; speechStyle describes how they talk; ' +
-    'scenario is the situation framing; greetings is 1-2 opening lines in their voice.';
+    'appearance/personality/backstory: a few sentences each; speechStyle: how they talk; scenario: situation framing; greetings: 1–2 opening lines in their voice.';
   const obj = await scanJson(system, contextText(state, project));
   return {
     name: s(obj.name) || name,
@@ -224,9 +212,8 @@ export async function generateCharacterSheet(
 // Извлекает открытые задачи/цели из контекста (для адженды).
 export async function scanAgenda(state: RuntimeState): Promise<string[]> {
   const system =
-    'You are a story analyst. From the transcript, list the currently OPEN goals, quests, promises, ' +
-    'and unresolved tasks facing the protagonist. Reply with ONLY a JSON array of short strings ' +
-    '(English), at most 10 items, most important first.';
+    'List the protagonist\'s open goals, quests, promises and unresolved tasks from the transcript. ' +
+    'Reply with ONLY a JSON array of short English strings, max 10, most important first.';
   const arr = await scanJson(system, contextText(state));
   return sArr(arr);
 }

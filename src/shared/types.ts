@@ -322,7 +322,7 @@ export interface MemoryConfig {
   // наберёт столько сообщений: свёртки идут по бюджету и бывают по 2–4 сообщения,
   // и глава на каждую давала россыпь глав-огрызков.
   chapterSize?: number;
-  // Сколько пунктов максимум в пересказе главы: коротко и только важное.
+  // Сколько пунктов максимум в главе: бриф события, только важное.
   chapterMaxPoints?: number;
 }
 
@@ -334,7 +334,7 @@ export function defaultMemoryConfig(): MemoryConfig {
     summaryMaxTokens: 8000,
     memorybookScanDepth: 6,
     chapterSize: 12,
-    chapterMaxPoints: 7,
+    chapterMaxPoints: 4,
   };
 }
 
@@ -369,18 +369,18 @@ export const TURN_LENGTH_PRESETS: { id: string; name: string; hint: string; min:
 // Список закрытый и упорядоченный: сначала обстановка, потом информационная
 // гигиена, потом повторы, потом сам ход и формат. Пункт, ответ на который «чисто»,
 // стоит две-три токена — платим мы за те, где ответ другой.
-export const DEFAULT_THINKING_PLAN = `1. SCENE: where, when, who is physically present, what each is doing and wearing — carried over from last turn; name only what CHANGES now. (1 line)
-2. WANTS: what does each present character want in this exact moment, and what are they covering up? (1 line)
-3. PUBLIC vs PRIVATE: what did the hero's move actually make visible or audible to the others? Their private reasoning is not perceivable — nobody reacts to it. (1 line)
-4. WHO KNOWS WHAT: for every character about to speak or act, name the fact they are about to use and WHERE THEY GOT IT — saw it themselves / were told it in a played scene / it is in their dossier or tags / common knowledge. Anything not on that list they DO NOT KNOW: say so and change what they do. (1-2 lines)
-5. MY LAST REPLY: name 2-3 exact phrases or images I used last turn, and how it was built (what opened it, what closed it). They are BANNED for this turn. (1 line)
-6. ECHO: does my planned opening retell, paraphrase or mirror the hero's move? If yes, move the opening to where the world ANSWERS. (1 line)
-7. BAN LIST: is anything from the banned words and phrases about to slip in? Name it and what replaces it, or "clean". (1 line)
-8. FRICTION: who here does NOT simply go along with the hero right now, and why? ("nobody, and here is why that is earned" is a valid answer — but it has to be earned.) (1 line)
-9. THE TURN: the first beat, the turn it takes, where it stops. (1-2 lines)
-10. STATE: any stat or relationship change this turn? (1 line, or "none")
-11. CHOICE: is this a real fork? (only at a real fork, else "no")
-12. FORMAT: one JSON object per the schema, every dialogue beat carrying the speaker's characterId, nothing outside the JSON. ("ok", or name what you are fixing.)`;
+export const DEFAULT_THINKING_PLAN = `1. SCENE: place, time, who is here, what each is doing and wearing; only what changes now.
+2. WANTS: what each present character wants right now and what they hide.
+3. VISIBLE: what the hero's move made visible or audible. Private reasoning is not perceived.
+4. KNOWLEDGE: for each acting character, the fact they use and its source (witnessed / told in a scene / dossier or tags / common knowledge). No source → they don't know; adjust.
+5. LAST REPLY: 2–3 exact phrases or images I used and its opening and ending. All banned this turn.
+6. ECHO: does my opening retell or mirror the hero's move? If so, open where the world answers.
+7. BAN LIST: any banned word or phrase about to appear → its replacement, or "clean".
+8. FRICTION: who does not simply go along with the hero, and why ("nobody" only if earned).
+9. TURN: first beat, the shift, where it stops.
+10. STATE: stat or relationship changes, or "none".
+11. CHOICE: real fork? else "no".
+12. FORMAT: one JSON object per schema; every dialogue beat has the speaker's characterId; nothing outside the JSON. "ok" or the fix.`;
 
 // РП-вариант того же чек-листа. Отличия не косметические:
 //  — нет пунктов про статы и выбор: в РП нет ни JSON-статов, ни кнопок, и строка
@@ -391,16 +391,16 @@ export const DEFAULT_THINKING_PLAN = `1. SCENE: where, when, who is physically p
 //    собственным текстом, где курсив = невысказанная мысль, и слышать её никто
 //    не может;
 //  — пункт формата проверяет кавычки и второе лицо, а не JSON.
-export const DEFAULT_RP_THINKING_PLAN = `1. SCENE: where, when, who is physically here, what each is doing and wearing — carried over from last turn; name only what CHANGES now. (1 line)
-2. WANTS: what does each present character want in this exact moment, and what are they covering up? (1 line)
-3. SAID vs THOUGHT: what did {{user}} actually say or do OUT LOUD this turn, and what was only a thought or an unstated intention? Thoughts are NOT audible — nobody may react to them. (1 line)
-4. WHO KNOWS WHAT: for every character about to speak or act, name the fact they are about to use and WHERE THEY GOT IT — saw it themselves / were told it in a played scene / it is in their tags / common knowledge. Anything not on that list they DO NOT KNOW: say so and change what they do. (1-2 lines)
-5. MY LAST REPLY: name 2-3 exact phrases or images I used last turn, and how it was built (what opened it, what closed it). They are BANNED for this turn. (1 line)
-6. ECHO: does my planned opening retell, paraphrase or mirror {{user}}'s move? If yes, move the opening to where the world ANSWERS. (1 line)
-7. BAN LIST: is anything from the banned words and phrases about to slip in? Name it and what replaces it, or "clean". (1 line)
-8. FRICTION: who here does NOT simply go along with {{user}} right now, and why? ("nobody, and here is why that is earned" is a valid answer — but it has to be earned.) (1 line)
-9. THE TURN: the first beat, the turn it takes, and where it STOPS — and it stops where it is {{user}}'s move. (1-2 lines)
-10. FORMAT: speech in one kind of quotation marks, a quote inside speech in 'single' ones, {{user}} in the second person, italics only for an unspoken thought, no dash opening a line of speech, nothing written for {{user}}. ("ok", or name what you are fixing.)`;
+export const DEFAULT_RP_THINKING_PLAN = `1. SCENE: place, time, who is here, what each is doing and wearing; only what changes now.
+2. WANTS: what each present character wants right now and what they hide.
+3. SAID vs THOUGHT: what {{user}} said or did out loud vs only thought. Thoughts are not heard.
+4. KNOWLEDGE: for each acting character, the fact they use and its source (witnessed / told in a scene / tags / common knowledge). No source → they don't know; adjust.
+5. LAST REPLY: 2–3 exact phrases or images I used and its opening and ending. All banned this turn.
+6. ECHO: does my opening retell or mirror {{user}}'s move? If so, open where the world answers.
+7. BAN LIST: any banned word or phrase about to appear → its replacement, or "clean".
+8. FRICTION: who does not simply go along with {{user}}, and why ("nobody" only if earned).
+9. TURN: first beat, the shift, where it stops (at {{user}}'s move).
+10. FORMAT: one quote style; 'single' inside speech; {{user}} = "you"; italics only for thoughts; no dash before speech; nothing written for {{user}}. "ok" or the fix.`;
 
 // СТОП-СЛОВА по умолчанию. Не «плохие слова», а обороты, которые модели тянут в
 // каждый второй ход независимо от сцены: они не режут глаз поодиночке, но на
@@ -413,6 +413,11 @@ the air thickened, a shiver ran down their spine, their breath hitched, silence 
 // правил, просто он сохранился при первом открытии панели, и его надо обновить.
 // Отредактированный вручную план не трогаем никогда.
 export const LEGACY_THINKING_PLANS = [
+  // Многословные версии пошагового разбора (до сжатия инструкций).
+  "1. SCENE: where, when, who is physically present, what each is doing and wearing — carried over from last turn; name only what CHANGES now. (1 line)\n2. WANTS: what does each present character want in this exact moment, and what are they covering up? (1 line)\n3. PUBLIC vs PRIVATE: what did the hero's move actually make visible or audible to the others? Their private reasoning is not perceivable — nobody reacts to it. (1 line)\n4. WHO KNOWS WHAT: for every character about to speak or act, name the fact they are about to use and WHERE THEY GOT IT — saw it themselves / were told it in a played scene / it is in their dossier or tags / common knowledge. Anything not on that list they DO NOT KNOW: say so and change what they do. (1-2 lines)\n5. MY LAST REPLY: name 2-3 exact phrases or images I used last turn, and how it was built (what opened it, what closed it). They are BANNED for this turn. (1 line)\n6. ECHO: does my planned opening retell, paraphrase or mirror the hero's move? If yes, move the opening to where the world ANSWERS. (1 line)\n7. BAN LIST: is anything from the banned words and phrases about to slip in? Name it and what replaces it, or \"clean\". (1 line)\n8. FRICTION: who here does NOT simply go along with the hero right now, and why? (\"nobody, and here is why that is earned\" is a valid answer — but it has to be earned.) (1 line)\n9. THE TURN: the first beat, the turn it takes, where it stops. (1-2 lines)\n10. STATE: any stat or relationship change this turn? (1 line, or \"none\")\n11. CHOICE: is this a real fork? (only at a real fork, else \"no\")\n12. FORMAT: one JSON object per the schema, every dialogue beat carrying the speaker's characterId, nothing outside the JSON. (\"ok\", or name what you are fixing.)",
+  "1. SCENE: where, when, who is physically here, what each is doing and wearing — carried over from last turn; name only what CHANGES now. (1 line)\n2. WANTS: what does each present character want in this exact moment, and what are they covering up? (1 line)\n3. SAID vs THOUGHT: what did {{user}} actually say or do OUT LOUD this turn, and what was only a thought or an unstated intention? Thoughts are NOT audible — nobody may react to them. (1 line)\n4. WHO KNOWS WHAT: for every character about to speak or act, name the fact they are about to use and WHERE THEY GOT IT — saw it themselves / were told it in a played scene / it is in their tags / common knowledge. Anything not on that list they DO NOT KNOW: say so and change what they do. (1-2 lines)\n5. MY LAST REPLY: name 2-3 exact phrases or images I used last turn, and how it was built (what opened it, what closed it). They are BANNED for this turn. (1 line)\n6. ECHO: does my planned opening retell, paraphrase or mirror {{user}}'s move? If yes, move the opening to where the world ANSWERS. (1 line)\n7. BAN LIST: is anything from the banned words and phrases about to slip in? Name it and what replaces it, or \"clean\". (1 line)\n8. FRICTION: who here does NOT simply go along with {{user}} right now, and why? (\"nobody, and here is why that is earned\" is a valid answer — but it has to be earned.) (1 line)\n9. THE TURN: the first beat, the turn it takes, and where it STOPS — and it stops where it is {{user}}'s move. (1-2 lines)\n10. FORMAT: speech in one kind of quotation marks, a quote inside speech in 'single' ones, {{user}} in the second person, italics only for an unspoken thought, no dash opening a line of speech, nothing written for {{user}}. (\"ok\", or name what you are fixing.)",
+  "1. MY LAST REPLY: name 2-3 exact phrases or images I used, and how it was built (what opened it, what closed it). All of it is BANNED for this turn. (1 line)\n2. OPENING: what happens FIRST that {{user}} does not already know? Never a retelling, paraphrase or mirror of their move — start where the world ANSWERS. (1 line)\n3. SHAPE: how is this turn built differently from the last one — what opens it, what closes it? (1 line)\n4. BAN LIST: is anything from the banned words and phrases about to slip in? Name it and what replaces it, or \"clean\". (1 line)\n5. SCENE: where, when, who is physically here, what each is doing and wearing — carried over; name only what CHANGES now. (1 line)\n6. SAID vs THOUGHT: what did {{user}} actually say or do OUT LOUD this turn, and what was only a thought or an unstated intention? Thoughts are NOT audible — nobody may react to them. (1 line)\n7. WHO KNOWS WHAT: for every character about to speak or act, name the fact they are about to use and WHERE THEY GOT IT — saw it themselves / were told it in a played scene / it is in their tags / common knowledge. Anything not on that list they DO NOT KNOW: say so and change what they do. (1-2 lines)\n8. WHO ACTS: who moves or speaks on their own initiative this turn, and what do they want? (1 line)\n9. FRICTION: who here does not simply go along with {{user}}, and why? (\"nobody, and here is why that is earned\" is a valid answer — but it has to be earned.) (1 line)\n10. THE TURN: the first beat, the turn it takes, and where it STOPS — and it stops where it is {{user}}'s move. (1-2 lines)\n11. FORMAT: speech in one kind of quotation marks, a quote inside speech in 'single' ones, {{user}} in the second person, italics only for an unspoken thought, no dash opening a line of speech, nothing written for {{user}}. (\"ok\", or name what you are fixing.)",
+
   // Чек-листы до пошагового разбора: информационная гигиена была ОДНОЙ строкой
   // «is anyone about to act on something they were never told?», и модель отвечала
   // на неё «clean», ничего не проверив — проверять было нечего, вопрос не просил
@@ -923,7 +928,47 @@ export interface ImageGenConfig {
   gallery: string[]; // сохранённые в галерею CG (assetId), новые в конце
 }
 
-export const DEFAULT_IMAGE_SYSTEM_PROMPT = `You turn the CURRENT visual-novel scene into ONE prompt for a text-to-image model.
+export const DEFAULT_IMAGE_SYSTEM_PROMPT = `Turn the CURRENT visual-novel scene into ONE text-to-image prompt.
+Output ONLY the prompt: one English paragraph, 100+ words. No quotes, headings, markdown or commentary.
+
+Order:
+1. CAMERA — shot type, angle, lens (e.g. "Medium shot, 85mm, f/2.0, slight low angle").
+2. SUBJECT — each person in frame: FIRST NAME exactly as given, then hair, eyes, build, current outfit. Match supplied references.
+3. POSE AND COMPOSITION (most important) — per person: a pose a real body can hold, its contact points (planted foot, what the hand grips or leans on, what the body rests against), where BOTH hands are, where the eyes look. Then placement: left/centre/right, foreground/behind.
+4. ENVIRONMENT — location, props, depth, time of day, weather.
+5. LIGHTING AND ATMOSPHERE — light quality and mood (golden hour, backlight, soft diffused, harsh contrast, practicals, haze, rim light).
+
+Rules:
+- Frame a charged moment, telling detail or unusual angle; never a flat centred headshot.
+- Anatomy over drama: simple, physically possible poses. No twisted torsos, arms behind bodies, floating limbs. If the moment is awkward, crop tighter (hands, faces) or pick the instant before/after.
+- Max THREE people in frame; leave the rest off-screen.
+- Cramped spaces (car, doorway, stairwell, bed): state how bodies fit — who sits, who leans, what knees and elbows touch.
+- References define FACE, HAIR, OUTFIT only; never copy their pose or framing.
+- No nudity or explicit parts; imply via framing and cropping.
+- Never name an art style or medium; the engine appends the style.
+- Available ≠ in frame. Include only people the moment is about; omit bystanders from both text and CAST.
+
+End with two lines, each on its own line:
+CAST: <first names visible in the image, comma-separated, or NONE>
+ASPECT: <1:1 | 2:3 | 3:2 | 3:4 | 4:3 | 9:16 | 16:9 | 21:9>
+CAST controls which reference photos are attached — never list someone out of frame. Wide ratios: landscapes, interiors, groups. Tall: portraits, single figures.`;
+
+// Стиль по умолчанию — дописывается к промпту воркера отдельной строкой.
+// Ориентир — кат-сцены романтических новелл: полуреализм с живыми цветами,
+// правильная анатомия, аккуратная живописная отделка (не аниме-плоскость).
+export const DEFAULT_IMAGE_STYLE =
+  'masterpiece, best quality, 8k, semi-realistic digital painting in the style of a modern romance visual novel cut-scene, realistic human proportions and anatomy, lifelike faces with subtle expressions, rich saturated colors, warm natural skin tones, soft volumetric cinematic lighting, glossy polished rendering with fine painterly detail, shallow depth of field';
+
+// Чего в кадре быть НЕ должно. Отдельным полем: у Gemini и роутеров нет параметра
+// negative prompt, поэтому движок дописывает это строкой «Avoid: …» — модели
+// такую формулировку понимают, а пользователь может править список под себя.
+export const DEFAULT_IMAGE_NEGATIVE =
+  'distorted anatomy, deformed or fused hands, extra fingers, extra limbs, broken joints, twisted spine, impossible or contorted pose, floating limbs, disproportionate body, stiff mannequin posing, melted faces, duplicated characters, cluttered composition, blurry, lowres, watermark, text, signature';
+
+// Обрывок ПРЕЖНЕГО дефолтного воркер-промпта: если в проекте лежит он (значит,
+// пользователь его не правил) — подменяем на актуальный, как с блоками пресета.
+// Прежний дефолт целиком: совпал слово в слово — пользователь не правил, обновляем.
+const IMAGE_PROMPT_V1 = `You turn the CURRENT visual-novel scene into ONE prompt for a text-to-image model.
 Output ONLY the prompt text: a single English paragraph of 100+ words. No quotes, no headings, no markdown, no explanations.
 
 Write it in this exact order:
@@ -947,21 +992,6 @@ FINISH with two control lines, each alone on its own line:
 CAST: <first names of the people visible in the image, comma-separated — or NONE for a shot without people>
 ASPECT: <1:1 | 2:3 | 3:2 | 3:4 | 4:3 | 9:16 | 16:9 | 21:9>
 CAST decides whose reference photos get attached, so never name someone who is not in the frame. Wide ratios suit landscapes, interiors and group scenes; tall ones suit portraits and single figures.`;
-
-// Стиль по умолчанию — дописывается к промпту воркера отдельной строкой.
-// Ориентир — кат-сцены романтических новелл: полуреализм с живыми цветами,
-// правильная анатомия, аккуратная живописная отделка (не аниме-плоскость).
-export const DEFAULT_IMAGE_STYLE =
-  'masterpiece, best quality, 8k, semi-realistic digital painting in the style of a modern romance visual novel cut-scene, realistic human proportions and anatomy, lifelike faces with subtle expressions, rich saturated colors, warm natural skin tones, soft volumetric cinematic lighting, glossy polished rendering with fine painterly detail, shallow depth of field';
-
-// Чего в кадре быть НЕ должно. Отдельным полем: у Gemini и роутеров нет параметра
-// negative prompt, поэтому движок дописывает это строкой «Avoid: …» — модели
-// такую формулировку понимают, а пользователь может править список под себя.
-export const DEFAULT_IMAGE_NEGATIVE =
-  'distorted anatomy, deformed or fused hands, extra fingers, extra limbs, broken joints, twisted spine, impossible or contorted pose, floating limbs, disproportionate body, stiff mannequin posing, melted faces, duplicated characters, cluttered composition, blurry, lowres, watermark, text, signature';
-
-// Обрывок ПРЕЖНЕГО дефолтного воркер-промпта: если в проекте лежит он (значит,
-// пользователь его не правил) — подменяем на актуальный, как с блоками пресета.
 const OUTDATED_IMAGE_PROMPT_MARKS = [
   'Do NOT add an art-style tag', // самый первый дефолт
   'The engine uses this only when the aspect ratio is set to "auto"', // дефолт без строки CAST
@@ -1017,7 +1047,8 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     systemPrompt:
       typeof o.systemPrompt === 'string' &&
       o.systemPrompt.trim() &&
-      !OUTDATED_IMAGE_PROMPT_MARKS.some((mark) => (o.systemPrompt as string).includes(mark))
+      !OUTDATED_IMAGE_PROMPT_MARKS.some((mark) => (o.systemPrompt as string).includes(mark)) &&
+      o.systemPrompt.trim() !== IMAGE_PROMPT_V1.trim()
         ? o.systemPrompt
         : d.systemPrompt,
     // Пустой стиль неотличим от «ни разу не задавали» — подставляем дефолтный.

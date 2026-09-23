@@ -1281,18 +1281,18 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
           )}
         </p>
       </Field>
-      <Field label={L(`Пунктов в главе: до ${mc.chapterMaxPoints ?? 7}`, `Points per chapter: up to ${mc.chapterMaxPoints ?? 7}`)}>
+      <Field label={L(`Пунктов в главе: до ${mc.chapterMaxPoints ?? 4}`, `Points per chapter: up to ${mc.chapterMaxPoints ?? 4}`)}>
         <input
           type="number"
-          min={3}
+          min={2}
           max={15}
           className="input w-24"
-          value={mc.chapterMaxPoints ?? 7}
-          onChange={(e) => patchMem({ chapterMaxPoints: Math.max(3, Math.min(15, Number(e.target.value) || 7)) })}
+          value={mc.chapterMaxPoints ?? 4}
+          onChange={(e) => patchMem({ chapterMaxPoints: Math.max(2, Math.min(15, Number(e.target.value) || 4)) })}
         />
         <p className="text-[11px] text-gray-500 mt-1">
           {L(
-            'Пересказ главы — коротко и только важное для истории: повороты, решения, сдвиги отношений, раскрытые факты, предметы и раны. Обстановка и болтовня не пишутся.',
+            'Глава — бриф события: пара пунктов, только важное для истории (повороты, решения, сдвиги отношений, раскрытые факты, предметы, раны). Обстановка и диалоги не пишутся.',
             'A chapter is brief and keeps only what matters later: turns, decisions, relationship shifts, revealed facts, items and injuries. No atmosphere or small talk.'
           )}
         </p>
@@ -1311,7 +1311,7 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
         />
         <p className="text-[11px] text-gray-500 mt-1">
           {L(
-            'Свёртка отдаёт три части сразу — главу, сдвиги персонажей и ПОЛНЫЙ снапшот состояния, — поэтому ответ длинный. Мало токенов = снапшот обрывается на середине (например, на «CURRENT SITUATION»); тогда движок пересобирает его отдельным запросом.',
+            'Свёртка отдаёт три части сразу — главу, сдвиги персонажей и ПОЛНЫЙ снапшот состояния, — поэтому ответ длинный. Мало токенов = снапшот обрывается на середине (например, на секции «NOW»); тогда движок пересобирает его отдельным запросом.',
             'A fold returns two parts at once — the log entry and the FULL state snapshot — so the answer is long. Too few tokens and the snapshot gets cut mid-way.'
           )}
         </p>

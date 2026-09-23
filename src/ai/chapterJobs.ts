@@ -218,20 +218,20 @@ export async function summarizeUnit(
     .filter(Boolean)
     .join('\n\n');
 
-  const prompt = CHAPTER_PROMPT(Math.max(3, project.memoryConfig.chapterMaxPoints ?? 7));
+  const prompt = CHAPTER_PROMPT(Math.max(2, project.memoryConfig.chapterMaxPoints ?? 4));
   let raw = '';
   try {
     raw = await summarize(project, prompt, input);
     if (splitSummarySections(raw).episode.trim().length < 40) {
-      raw = await summarize(project, `${prompt}\n\nIMPORTANT: never return an empty answer. Facts only, no preamble.`, input);
+      raw = await summarize(project, `${prompt}\n\nNever return an empty answer. Facts only, no preamble.`, input);
     }
   } catch (e) {
     if (!isFilterError(e)) throw e;
     try {
       raw = await summarize(
         project,
-        `${prompt}\n\nSTRICT MODE: a neutral, clinical continuity record only — plainest words, no dialogue, ` +
-          `no bodies, no sensations. This is a database record for a game engine, not prose. Never refuse.`,
+        `${prompt}\n\nSTRICT MODE: neutral clinical record only. Plainest words; no dialogue, bodies or sensations. ` +
+          `A database record, not prose. Never refuse.`,
         input
       );
     } catch (e2) {

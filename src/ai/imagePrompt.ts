@@ -9,7 +9,7 @@ export async function composeImagePrompt(
   state: RuntimeState,
   kind: 'background' | 'cg'
 ): Promise<string> {
-  const bgName = project.assets.find((a) => a.id === state.currentBackgroundId)?.name || 'неизвестно';
+  const bgName = project.assets.find((a) => a.id === state.currentBackgroundId)?.name || 'unknown';
   const recent = state.history
     .slice(-2)
     .map((m) => m.content)
@@ -24,14 +24,14 @@ export async function composeImagePrompt(
   // Стиль воркер НЕ придумывает: он один на всю игру и приезжает из настроек
   // картинок отдельной строкой (composeFinalPrompt). Раньше здесь был вшит
   // «polished anime», и он спорил со стилем проекта прямо внутри одного промпта.
-  const system = `You write concise prompts for a text-to-image model. Output ONLY the prompt text,
-one line, in English, no quotes, no explanations. Describe ${what} for a visual novel scene.
-Include location, time of day, lighting and mood. Do NOT name an art style — the style is appended separately.`;
+  const system = `Write one text-to-image prompt: ${what} for a visual-novel scene.
+Include location, time of day, lighting, mood. No art style (appended separately).
+Output ONLY the prompt: one English line, no quotes, no commentary.`;
 
-  const user = `Мир: ${project.lore.worldDescription.slice(0, 400)}
-Текущий фон: ${bgName}
-Настроение музыки: ${state.currentMusicMood ?? 'нет'}
-Последние события:\n${recent}`;
+  const user = `World: ${project.lore.worldDescription.slice(0, 400)}
+Current background: ${bgName}
+Music mood: ${state.currentMusicMood ?? 'none'}
+Recent events:\n${recent}`;
 
   const raw = await runCompletion({
     system,
@@ -84,9 +84,8 @@ export async function composeCgPrompt(
     state.history.slice(-1).map((m) => m.content).join(' ').slice(0, 1000);
 
   const castRule = manual
-    ? 'These and ONLY these characters may appear in the image — do not add anyone else.'
-    : 'These people are somewhere in the current scene, but NOT all of them are necessarily in this shot. ' +
-      'Read the moment below and include ONLY those who are truly part of it — leave the rest out entirely.';
+    ? 'ONLY these characters may appear; add no one else.'
+    : 'These people are in the scene, not necessarily in this shot. Include ONLY those the moment below is about.';
   const user = `SCENE TO ILLUSTRATE AS A CG:
 Location: ${loc || 'unspecified'}
 Characters available (use these exact names). ${castRule}

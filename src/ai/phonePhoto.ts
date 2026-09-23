@@ -47,8 +47,8 @@ export async function generateAvatarImage(
     const basePrompt = [
       `Messenger profile picture (avatar) of ${name}.`,
       own ? `${name}: ${own}.` : '',
-      'Head-and-shoulders portrait, square 1:1 crop, face clearly visible and centred, relaxed natural expression, simple uncluttered background.',
-      'It is a picture this person chose for their own profile — not a story illustration, no scene action, no other people in frame, no text or watermarks.',
+      'Head-and-shoulders portrait, square 1:1, face visible and centred, relaxed natural expression, plain background.',
+      'Self-chosen profile photo, not a story illustration: no action, no other people, no text or watermarks.',
     ]
       .filter(Boolean)
       .join(' ');
@@ -94,7 +94,7 @@ export async function generateGroupAvatarImage(
     const basePrompt = [
       `Group-chat avatar icon for a messenger group called "${title.trim() || 'группа'}".`,
       topic?.trim() ? `The group is about: ${topic.trim()}.` : '',
-      'Simple square 1:1 image, one clear central subject or symbol, uncluttered background, no text, no letters, no watermarks, no people posing.',
+      'Square 1:1, one clear central subject or symbol, plain background. No text, letters, watermarks or posing people.',
     ]
       .filter(Boolean)
       .join(' ');
@@ -134,7 +134,7 @@ export async function generateContactPhoto(
     // Кадр «как с телефона»: снимал живой человек, а не фотограф.
     const basePrompt = [
       `A photo taken on a smartphone by ${who} and sent to a friend in a messenger: ${trimmed}.`,
-      `Casual amateur phone photography, natural available light, realistic colours, slight handheld imperfection.`,
+      `Casual amateur phone shot: natural light, realistic colours, slight handheld imperfection.`,
     ].join(' ');
 
     // Кто в кадре. Отправителя добавляем, только если он снял сам себя: иначе
