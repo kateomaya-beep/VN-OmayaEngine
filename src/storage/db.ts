@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { Project, SaveSlot, Character, AssetMeta, NarrativeMode } from '../shared/types';
+import type { Project, SaveSlot, Character, AssetMeta, NarrativeMode, RuntimeState } from '../shared/types';
 import { normalizeProject, normalizeRuntimeState } from '../shared/factory';
 import { uid } from '../shared/utils';
 import {
@@ -28,18 +28,30 @@ interface NovelForgeDB extends DBSchema {
     value: SaveSlot & { key: string };
     indexes: { byProject: string };
   };
+  // Снимки мира по сообщениям ленты (см. turnLedger.ts).
+  turnStates: {
+    key: string; // `${projectId}:${messageId}`
+    value: { key: string; projectId: string; messageId: string; savedAt: number; state: RuntimeState };
+    indexes: { byProject: string };
+  };
 }
 
 let dbPromise: Promise<IDBPDatabase<NovelForgeDB>> | null = null;
 
 export function getDB(): Promise<IDBPDatabase<NovelForgeDB>> {
   if (!dbPromise) {
-    dbPromise = openDB<NovelForgeDB>('novel-forge', 1, {
-      upgrade(db) {
-        db.createObjectStore('projects', { keyPath: 'id' });
-        db.createObjectStore('assets', { keyPath: 'key' });
-        const saves = db.createObjectStore('saves', { keyPath: 'key' });
-        saves.createIndex('byProject', 'projectId');
+    dbPromise = openDB<NovelForgeDB>('novel-forge', 2, {
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) {
+          db.createObjectStore('projects', { keyPath: 'id' });
+          db.createObjectStore('assets', { keyPath: 'key' });
+          const saves = db.createObjectStore('saves', { keyPath: 'key' });
+          saves.createIndex('byProject', 'projectId');
+        }
+        if (oldVersion < 2) {
+          const turns = db.createObjectStore('turnStates', { keyPath: 'key' });
+          turns.createIndex('byProject', 'projectId');
+        }
       },
     });
   }
@@ -339,6 +351,8 @@ export async function deleteProject(id: string): Promise<void> {
   }
   const saveKeys = await db.getAllKeysFromIndex('saves', 'byProject', id);
   for (const k of saveKeys) await db.delete('saves', k);
+  const turnKeys = await db.getAllKeysFromIndex('turnStates', 'byProject', id);
+  for (const k of turnKeys) await db.delete('turnStates', k);
   await db.delete('projects', id);
   if (await mirrorOn()) void deleteProjectFromDisk(id);
 }

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { Project, RuntimeState, Beat, Choice, SaveSlot, GameMasterState, MemoryState, AuthorNote, PhoneState, PhoneContact, PhoneChat, AssetMeta, InventoryItem, CharacterRole, RelationshipStats, RandomEventType } from '../../shared/types';
 import { initialPhoneState, PHONE_BALANCE_STAT, defaultImageGenConfig, emptyRelationship, normalizeNarrativeMode } from '../../shared/types';
 import type { GeneratedSheet } from '../../ai/gmScan';
-import { initialRuntimeState } from '../../shared/factory';
+import { initialRuntimeState, normalizeRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood, applyTurn } from '../../ai/gameEngine';
 import { parseRpResponse, rpTurn } from '../../ai/rpResponse';
 import { protagonistName } from '../../ai/macros';
@@ -32,6 +32,8 @@ import { pushToast } from '../../shared/toast';
 import { parseArchivedTranscript, maybeCompress, applyFold } from '../../ai/memoryEngine';
 import { archiveRanges } from '../../ai/chapters';
 import { uid } from '../../shared/utils';
+import { branchState, withMessageIds, type BranchResult } from '../../ai/branching';
+import { getTurnState, putTurnState } from '../../storage/turnLedger';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -208,6 +210,9 @@ interface PlayerStore {
   // битами. Обе операции меняют state.history и сразу автосохраняются.
   editHistoryMessage: (index: number, text: string) => void;
   deleteHistoryMessage: (index: number) => void;
+  // Ветка от сообщения: прежняя линия уходит в чекпоинт, а игра продолжается так,
+  // будто это сообщение последнее, — мир на тот момент, память без «будущего».
+  branchFromMessage: (index: number) => Promise<void>;
   // Свайпы: сгенерировать ЕЩЁ один вариант последнего ответа, не выбрасывая
   // предыдущие, и переключаться между уже сгенерированными.
   addSwipe: () => Promise<void>;
@@ -303,6 +308,38 @@ function carryEngineMemory(next: RuntimeState, base: RuntimeState, live: Runtime
 
 let preTurnState: { move: string; state: RuntimeState } | null = null;
 
+// Счётчик линий: растёт при откате хвоста и ветке. Фоновая свёртка, начатая на
+// прежней линии, сворачивала сообщения, которых в новой уже нет, — её результат
+// по этому счётчику отбрасывается.
+let lineEpoch = 0;
+
+// Состояние, в котором сообщение anchor последнее. Мир — из снимка этого
+// сообщения; нет его — из ближайшего более раннего; нет и того — текущий с
+// подчисткой (см. branchState). Ответ модели снимка не имеет только у хода,
+// сыгранного до появления снимков.
+async function rebuildAt(project: Project, live: RuntimeState, anchor: number): Promise<BranchResult> {
+  let precision: 'exact' | 'earlier' = 'exact';
+  for (let i = anchor; i >= 0 && i >= anchor - 80; i--) {
+    const m = live.history[i];
+    // Реплика игрока мир не меняет: снимок ответа перед ней — всё ещё точный.
+    if (m.role !== 'assistant') continue;
+    const snap = await getTurnState(project.id, m.id);
+    if (snap) return branchState(live, anchor, { state: normalizeRuntimeState(snap, project), precision });
+    precision = 'earlier';
+  }
+  return branchState(live, anchor, null);
+}
+
+// Состояние ровно перед ходом, ответ на который стоит последним, — для реролла и
+// вариантов, когда снимка в памяти вкладки нет (перезагрузка, откат хвоста).
+// null — снимков нет и честно откатить мир нечем.
+async function preTurnFromLedger(project: Project, state: RuntimeState): Promise<RuntimeState | null> {
+  const anchor = state.history.length - 3; // ответ перед репликой игрока
+  if (anchor < 0) return null;
+  const res = await rebuildAt(project, state, anchor);
+  return res.precision === 'none' ? null : res.state;
+}
+
 // Текущая генерация в полёте (для «Отменить»/регенерации). Модульная переменная, а не
 // поле стора — чтобы не гонять ре-рендеры и не сериализовать в сейв.
 // `prevView` держим здесь же, чтобы cancel() мог откатить UI МГНОВЕННО, не дожидаясь,
@@ -333,9 +370,14 @@ async function compressInBackground(
   if (!project || !snapshot) return;
   compressing = true;
   const t0 = Date.now();
+  const epoch = lineEpoch;
   try {
     const before = snapshot.history.length;
     const result = await maybeCompress(project, snapshot, force);
+    if (epoch !== lineEpoch) {
+      logEvent('info', 'memory', 'Свёртка с прежней линии отброшена: был откат или ветка');
+      return;
+    }
     const folded = before - result.history.length;
     if (!folded && result.memory === snapshot.memory) return; // свёртка не потребовалась
     // Пока шла свёртка, игрок мог сделать ещё ход. Сворачивание УДАЛЯЕТ сообщения
@@ -667,12 +709,15 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // отклонённого варианта (статы, деньги, инвентарь, часы/локация GM, реестр,
     // память, счётчик свёртки). Снимка нет (перезагрузили вкладку) — откатываем
     // хотя бы историю, как раньше, и предупреждаем в логе.
-    const snap = preTurnState && preTurnState.move === lastMove.content ? preTurnState.state : null;
+    const snap =
+      preTurnState && preTurnState.move === lastMove.content
+        ? preTurnState.state
+        : await preTurnFromLedger(project, state);
     if (!snap) {
       logEvent(
         'warn',
         'turn',
-        'Реролл без снимка состояния (вкладку перезагружали): откатываю только историю — ' +
+        'Реролл без снимка состояния (ход сыгран до обновления): откатываю только историю — ' +
           'статы/инвентарь/часы от прошлой версии хода могли остаться применёнными.'
       );
     }
@@ -692,8 +737,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   deleteHistoryMessage(index) {
+    const { project } = get();
     const st = get().state;
     if (!st || index < 0 || index >= st.history.length) return;
+    const isTail = index === st.history.length - 1;
     const history = st.history.filter((_, i) => i !== index);
     // Счётчик «сколько сообщений накопилось с прошлой свёртки» считает ровно эти
     // сообщения. Не уменьшить его — и свёртка сработает раньше срока, на воздухе.
@@ -701,8 +748,85 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       ...st.memory,
       messagesSinceSummary: Math.max(0, st.memory.messagesSinceSummary - 1),
     };
-    set({ state: { ...st, history, memory } });
-    void get().autosave();
+    const trimmed: RuntimeState = { ...st, history, memory };
+    set({ state: trimmed });
+    if (!isTail || !project || !history.length) {
+      void get().autosave();
+      return;
+    }
+    // Удалён ПОСЛЕДНИЙ: мир откатываем к новому последнему сообщению — иначе часы,
+    // досье и статы остаются от вырезанного хода. Автосейв — только ПОСЛЕ отката:
+    // он перезаписывает снимок последнего сообщения, и мир «из будущего» лёг бы
+    // в снимок как настоящий.
+    lineEpoch++;
+    preTurnState = null;
+    void (async () => {
+      const res = await rebuildAt(project, trimmed, history.length - 1);
+      // Пока искали снимок, удалили ещё одно — тот вызов откатит сам.
+      if (get().state !== trimmed) return;
+      set({ state: carryPlayerEdits(res.state, get().state) });
+      if (res.precision === 'none') {
+        logEvent('warn', 'turn', 'Откат без снимка мира (ход сыгран до обновления): главы и телефон подчищены, часы/досье/статы проверьте в Game Master');
+      } else {
+        logEvent('info', 'turn', `Мир откатан к сообщению ${history.length} (ход ${res.cutTurn})`);
+      }
+      await get().autosave();
+    })();
+  },
+
+  async branchFromMessage(index) {
+    const { project } = get();
+    let live = get().state;
+    if (!project || !live || index < 0 || index >= live.history.length) return;
+    const msg = live.history[index];
+    // От реплики игрока: мир — на ответе перед ней, а сама реплика уходит в строку
+    // ввода, чтобы её можно было отправить заново или переписать.
+    const anchor = msg.role === 'user' ? index - 1 : index;
+    const draft = msg.role === 'user' ? msg.content : '';
+    if (anchor < 0) {
+      pushToast('info', 'Перед этой репликой нет ни одного ответа — начните новое прохождение.');
+      return;
+    }
+    if (anchor === live.history.length - 1 && !draft) {
+      pushToast('info', 'Это и так последнее сообщение — играйте дальше.');
+      return;
+    }
+    if (inFlight) get().cancel();
+    // Сборка глав могла описывать вырезаемый кусок — останавливаем и отменяем.
+    const cj = await import('./chapterJob');
+    const job = cj.useChapterJob.getState();
+    if (job.running && job.jobId) cj.cancelChapterJob(job.jobId);
+    lineEpoch++;
+    live = get().state!;
+    const cpName = `До ветки от сообщения ${index + 1} · ход ${live.turnCount}`;
+    await get().createCheckpoint(cpName);
+    const res = await rebuildAt(project, live, anchor);
+    set({
+      state: carryPlayerEdits(res.state, get().state),
+      draft,
+      visibleBeats: [],
+      queue: [],
+      phase: 'choices',
+      choices: [],
+      cg: null,
+      pendingMove: null,
+      error: null,
+      streamingText: null,
+      thinkingText: null,
+      statFlash: [],
+    });
+    preTurnState = null;
+    await get().autosave(`Ветка от сообщения ${index + 1}`);
+    const where =
+      res.precision === 'exact'
+        ? 'мир восстановлен на момент этого сообщения'
+        : res.precision === 'earlier'
+          ? 'точного снимка нет — мир взят с чуть более раннего сообщения'
+          : 'снимка мира нет (ход сыгран до обновления): главы и телефон подчищены, часы, досье и статы проверьте в Game Master';
+    pushToast(
+      res.precision === 'none' ? 'info' : 'success',
+      `⑂ Ветка от сообщения ${index + 1}: ${where}. Прежняя линия — в чекпоинте «${cpName}».`
+    );
   },
 
   // ЕЩЁ ОДИН ВАРИАНТ последнего ответа. От реролла отличается ровно тем, что
@@ -737,12 +861,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // Копим варианты. У ответа, сгенерированного до появления свайпов, списка нет —
     // тогда первым вариантом считаем его самого.
     const keep = last.swipes?.length ? [...last.swipes] : [last.content];
-    const snap = preTurnState && preTurnState.move === lastMove ? preTurnState.state : null;
+    const snap =
+      preTurnState && preTurnState.move === lastMove ? preTurnState.state : await preTurnFromLedger(project, state);
     if (!snap) {
       logEvent(
         'warn',
         'turn',
-        'Новый вариант без снимка состояния (вкладку перезагружали): откатываю только историю — ' +
+        'Новый вариант без снимка состояния (ход сыгран до обновления): откатываю только историю — ' +
           'часы и досье от прошлого варианта могли остаться применёнными.'
       );
     }
@@ -775,7 +900,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // У стартовой сцены вариантов нет по построению (см. addSwipe), так что
     // li === 0 сюда не доходит; берём ход, стоящий перед ответом.
     const move = hist[li - 1]?.content ?? '';
-    const snap = preTurnState && preTurnState.move === move ? preTurnState.state : null;
+    const snap = preTurnState && preTurnState.move === move ? preTurnState.state : await preTurnFromLedger(project, state);
 
     if (!snap) {
       // Снимка нет (перезагружали вкладку) — честно меняем только текст и говорим
@@ -816,8 +941,18 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   async autosave(title) {
+    // id сообщениям — до всего остального: по ним лежат снимки мира для отката.
+    const raw = get().state;
+    if (raw) {
+      const withIds = withMessageIds(raw);
+      if (withIds !== raw) set({ state: withIds });
+    }
     const { project, state, autosaveSlot, playthroughId, playthroughLabel, playthroughCreatedAt, currentCheckpointId, autosnapRing } = get();
     if (!project || !state) return;
+    // Снимок мира под последним ответом: пока он последний, каждый автосейв его
+    // обновляет (ход, правки Game Master, телефон между ходами).
+    const lastMsg = state.history[state.history.length - 1];
+    if (lastMsg?.role === 'assistant' && lastMsg.id) void putTurnState(project.id, lastMsg.id, state);
     // Глубокий снимок на момент сохранения — чтобы последующие мутации живого
     // состояния (напр. списание стоимости выбора) не могли задним числом исказить
     // уже отданный на запись сейв.

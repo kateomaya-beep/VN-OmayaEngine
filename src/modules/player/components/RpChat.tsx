@@ -181,12 +181,29 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
                 onCommitEdit={commitEdit}
                 onCancelEdit={() => setEditing(null)}
                 onDelete={() => {
-                  if (confirm('Удалить это сообщение из истории? Модель перестанет его помнить.'))
-                    s.deleteHistoryMessage(i);
+                  const ask = isLast
+                    ? 'Удалить последнее сообщение? Мир (часы, досье, статы, телефон) откатится к предыдущему.'
+                    : 'Удалить это сообщение из истории? Модель перестанет его помнить. ' +
+                      'Чтобы играть с этого места, будто дальше ничего не было, — «⑂ Играть отсюда».';
+                  if (confirm(ask)) s.deleteHistoryMessage(i);
                 }}
+                // У последнего ответа ветка бессмысленна — дальше и так ничего нет.
+                onBranch={
+                  isLast && !mine
+                    ? undefined
+                    : () => {
+                        const after = history.length - 1 - i;
+                        const ask = mine
+                          ? `Играть заново с этой реплики? Сообщения после неё (${after + 1} вместе с ней) уйдут в чекпоинт, ` +
+                            'мир вернётся к ответу перед ней, а сама реплика встанет в строку ввода.'
+                          : `Играть с этого сообщения? ${after} сообщ. после него уйдут в чекпоинт, ` +
+                            'а мир, память и телефон вернутся к этому моменту.';
+                        if (confirm(ask)) void s.branchFromMessage(i);
+                      }
+                }
                 onCopy={() => copyToClipboard(r?.text ?? '')}
-                // Варианты — только у последнего ответа: откат состояния движок
-                // умеет ровно на один ход назад, для середины ленты снимка нет.
+                // Варианты — только у последнего ответа. Вернуться к сообщению в
+                // середине ленты — «⑂ Играть отсюда».
                 swipes={canSwipe ? { count: Math.max(1, swipeCount), at: swipeAt } : undefined}
                 onSwipe={(dir) => {
                   if (dir === 1 && swipeAt >= swipeCount - 1) void s.addSwipe();
@@ -312,6 +329,7 @@ function Message({
   onCommitEdit,
   onCancelEdit,
   onDelete,
+  onBranch,
   onCopy,
   swipes,
   onSwipe,
@@ -333,6 +351,7 @@ function Message({
   onCommitEdit?: () => void;
   onCancelEdit?: () => void;
   onDelete?: () => void;
+  onBranch?: () => void;
   onCopy?: () => void;
   swipes?: { count: number; at: number };
   onSwipe?: (dir: -1 | 1) => void;
@@ -342,6 +361,7 @@ function Message({
   if (onStartEdit) menuItems.push({ icon: '✎', label: 'Редактировать', onClick: onStartEdit });
   if (onCopy) menuItems.push({ icon: '⧉', label: 'Копировать', onClick: onCopy });
   if (onNewSwipe) menuItems.push({ icon: '↻', label: 'Другой вариант', onClick: onNewSwipe });
+  if (onBranch && !busy) menuItems.push({ icon: '⑂', label: 'Играть отсюда', onClick: onBranch });
   if (onDelete) menuItems.push({ icon: '✕', label: 'Удалить', onClick: onDelete, danger: true });
 
   return (

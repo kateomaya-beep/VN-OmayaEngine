@@ -540,9 +540,12 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
         // Свайпы приходят из сейва как есть — валидируем, иначе битая запись
         // отправила бы переключатель вариантов в несуществующий индекс.
         const swipes = arr<any>(m.swipes).filter((x: any): x is string => typeof x === 'string');
-        if (!swipes.length) return { role: m.role, content: m.content };
+        // id — по нему ищется снимок мира на момент сообщения (ветка, откат).
+        const id = typeof m.id === 'string' && m.id ? { id: m.id } : {};
+        if (!swipes.length) return { role: m.role, content: m.content, ...id };
         const idx = num(m.swipe, 0);
         return {
+          ...id,
           role: m.role,
           content: m.content,
           swipes,
