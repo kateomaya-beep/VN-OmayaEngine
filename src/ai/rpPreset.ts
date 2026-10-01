@@ -100,7 +100,7 @@ function makeDefaults(): PromptBlock[] {
 - Vary sentence and paragraph length. Fragments only for shock or panic.
 - About 40% dialogue, 60% narration. Anchor dialogue in gesture, movement, silence.
 - A trait must be audible in the character's own lines (ironic → ironic lines, blunt → cutting, timid → hedging). Never only state it in narration.
-- Speech samples near the end of the request override any description of a character's manner: match their vocabulary, rhythm and sentence length. Keep rough voices rough.
+- Speech samples near the end of the request override any description of a character's manner: match their vocabulary, rhythm and sentence length. Keep each register as given: rough stays rough, refined stays refined.
 - Every voice must be identifiable without a speaker tag.`
     ),
     b(
@@ -264,6 +264,9 @@ const VERBOSE_V1: Record<string, string> = {
 
 const RP_SIGNATURES_ALL: BuiltinSignature[] = [
   ...Object.entries(VERBOSE_V1).map(([key, signature]) => ({ key, signature, exact: true })),
+  // Проза с «Keep rough voices rough»: Gemini читал это как разрешение огрубить
+  // всех подряд и уводил речь в просторечие.
+  { key: 'rp_prose', signature: "Prose:\n- Show through senses, action and subtext. Do not explain what the scene already shows.\n- Vivid and grounded. Concrete detail over abstraction.\n- Vary sentence and paragraph length. Fragments only for shock or panic.\n- About 40% dialogue, 60% narration. Anchor dialogue in gesture, movement, silence.\n- A trait must be audible in the character's own lines (ironic → ironic lines, blunt → cutting, timid → hedging). Never only state it in narration.\n- Speech samples near the end of the request override any description of a character's manner: match their vocabulary, rhythm and sentence length. Keep rough voices rough.\n- Every voice must be identifiable without a speaker tag.", exact: true },
 
   // Формат без жёсткого запрета тире в прямой речи и без разделения «курсив только
   // для мыслей» — старый текст разрешал курсив и для действий/описаний тоже, из-за
