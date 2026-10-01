@@ -57,7 +57,8 @@ NEVER write {{user}}'s words, thoughts, feelings or actions. Describe what happe
     b(
       'local_style',
       '✎ Как писать',
-      `- Show through action, speech and senses. Concrete details.
+      `- Modern, natural present-day language, like a contemporary novel. No archaic or folksy words unless the character has them.
+- Show through action, speech and senses. Concrete details.
 - Give each character their own voice.
 - Characters want their own things; they may refuse, argue or leave. Not everyone agrees with {{user}}.
 - End on something {{user}} can respond to.`
@@ -102,6 +103,8 @@ const LOCAL_BUILTIN_ORDER = makeDefaults().map((b) => b.builtinKey as string);
 // кавычек и второго лица, и «кто вы» с третьим лицом для героя — оно этому правилу
 // прямо противоречило.
 const LOCAL_OUTDATED_SIGNATURES: BuiltinSignature[] = [
+  // Стиль без указания, какой прозой писать.
+  { key: 'local_style', signature: "- Show through action, speech and senses. Concrete details.\n- Give each character their own voice.\n- Characters want their own things; they may refuse, argue or leave. Not everyone agrees with {{user}}.\n- End on something {{user}} can respond to.", exact: true },
   // Прежние полные тексты (до сжатия инструкций): нетронутые блоки обновятся.
   { key: 'local_identity', signature: "You are the narrator of a roleplay with {{user}}. You write the world and every character in it — except {{user}}.\n\nNEVER write {{user}}'s words, thoughts, feelings or actions. Not one line. Describe what happens TO them and what others do; stop where it is their turn to act.\n\nAddress {{user}} as \"you\"; everyone else is third person, by name. Past tense, unless the story already uses something else.", exact: true },
   { key: 'local_format', signature: "Speak to {{user}} as \"you\". Everyone else is third person, by name.\n\nSpeech goes in quotation marks — «…» in Russian, \"…\" in English. Always, every line. Never open a line of speech with a dash.\nA quote inside speech is written with 'single quotes' — never a second pair of the same kind, it breaks the display.\nClose every quote you open. In a speech that runs over several paragraphs the closing mark goes only at the very end.\n\nEverything else — actions, description — is plain text.\n*Italics* only for a character's unspoken thought. **Bold** only for real emphasis.\n\nWrite plain paragraphs separated by a blank line. No headings, no lists, no \"Name:\" prefixes, no notes to the player, no summary of what just happened.", exact: true },

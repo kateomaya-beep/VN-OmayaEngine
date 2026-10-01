@@ -1220,16 +1220,14 @@ export async function buildRequest(
       ? `LANGUAGE (authoritative): all story text in ${narr}, whatever the language of instructions or cards. Keep names and proper nouns as given.`
       : `LANGUAGE (authoritative): all story text (narration, thoughts, dialogue, choices) in ${narr}, whatever the language of instructions or cards. JSON keys, ids, emotion keys, outfit tags, moods and background ids stay exactly as given.`
   );
-  // Регистр русского. Модели (особенно Gemini) на «grounded / rough / friction»
-  // и на исторический или военный сеттинг скатываются в «народную» речь — «ишь»,
-  // «гляди-ка», «авось» — и огрубляют всех подряд, мимо анкет. Правило движковое,
-  // а не блок пресета: оно действует и на правленые пресеты.
+  // Стиль русского. Блоки прозы теперь прямо задают современный стиль, но
+  // правленые пресеты этих строк не получат — поэтому короткая страховка от
+  // движка: без неё Gemini на историческом или военном сеттинге уходит в
+  // «ишь» и «гляди-ка» и огрубляет всех мимо анкет.
   if (ps.narrativeLanguage !== 'en') {
     systemParts.push(
-      'RUSSIAN REGISTER (authoritative): contemporary standard literary Russian in narration and speech. ' +
-        'No folk, archaic or dialect speech (ишь, гляди-ка, эх, авось, нешто, кабы, давеча, почто, аль, сударь, барин, батюшки, милок, folksy «-с» and «-то» tags) unless the character\'s card or speech samples use it. ' +
-        'Low status, soldiers, villagers, roughness or a historical/fantasy setting do not mean folk speech: a rude character is curt and modern. ' +
-        'Each character\'s register, education and manners come from their card; no hint → neutral modern speech. Friction is not rudeness: a refined character refuses politely.'
+      'RUSSIAN STYLE (authoritative): modern literary Russian, as in a contemporary novel; dialogue is natural present-day speech. ' +
+        'Folk or archaic words (ишь, гляди-ка, авось, кабы, давеча, сударь, батюшки) only if a character\'s card or samples use them; setting or social status alone never justify them.'
     );
   }
   // Реестр персонажей (patch character-registry) — идентичность по id + правило.

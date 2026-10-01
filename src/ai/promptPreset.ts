@@ -121,6 +121,8 @@ function makeDefaults(): PromptBlock[] {
       'prose',
       '✦ Prose Engine',
       `Prose:
+- Modern style, like a contemporary novel: clear, precise, natural present-day language. No archaic, folksy or ornate wording.
+- Dialogue sounds like real people today. Each character's register (education, manners, roughness) comes from their card and samples; with no hint, neutral modern speech. Rough means curt, not folksy.
 - Show through senses, action and subtext. Do not explain what the scene already shows.
 - Vivid and grounded. Concrete detail over abstraction.
 - Vary sentence length. Fragments only for shock or panic.
@@ -455,6 +457,8 @@ const OUTDATED_SIGNATURES_ALL: BuiltinSignature[] = [
 const OUTDATED_SIGNATURES: BuiltinSignature[] = [
   ...OUTDATED_SIGNATURES_ALL.filter((s) => !(VN_VERBOSE_V1[s.key] ?? '').includes(s.signature)),
   ...Object.entries(VN_VERBOSE_V1).map(([key, signature]) => ({ key, signature, exact: true })),
+  // Проза без указания стиля: модель сама выбирала регистр и уходила в просторечие.
+  { key: 'prose', signature: "Prose:\n- Show through senses, action and subtext. Do not explain what the scene already shows.\n- Vivid and grounded. Concrete detail over abstraction.\n- Vary sentence length. Fragments only for shock or panic.\n- About 40% dialogue, 60% narration. Anchor dialogue in gesture, movement, silence.\n- A trait must be audible in the character's own lines (ironic → ironic, blunt → cutting, timid → hedging). Never only state it in narration.\n- Every voice must be identifiable without a speaker tag.", exact: true },
 ];
 
 function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
