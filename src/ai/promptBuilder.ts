@@ -6,7 +6,7 @@ import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { stripStateBlock } from './rpResponse';
 import { applyRegexRules } from './regexRules';
 import { getPresetSettings, presetForMode } from './presetSettings';
-import { modelAlwaysThinks } from './providers';
+import { modelAlwaysThinks, modelIsVerboseThinker } from './providers';
 import { DEEPSEEK_THINKING_PLAN } from './deepseekPreset';
 import { matchLorebook } from './lorebookEngine';
 import { logEvent } from '../shared/logStore';
@@ -1535,7 +1535,10 @@ export async function buildRequest(
         : ps.modelProfile === 'deepseek'
           ? DEEPSEEK_THINKING_PLAN
           : DEFAULT_RP_THINKING_PLAN;
-    let plan = ps.thinkingPlan?.trim() || planDefault;
+    // Многословным семействам (Kimi, GLM) — короткий чек-лист и в своём <thinking>:
+    // полный они расписывают на тысячи символов, и ход пишется минутами.
+    const verbose = modelIsVerboseThinker();
+    let plan = ps.thinkingPlan?.trim() || (verbose ? (mode === 'rp' ? NATIVE_RP_THINKING_PLAN : NATIVE_VN_THINKING_PLAN) : planDefault);
     // Пункт про стоп-слова осмыслен, только если список есть. С пустым списком он
     // просил бы сверяться с пустотой — модель отвечала бы «clean», не проверив
     // ничего, и приучалась бы отвечать так же на соседние пункты.
@@ -1547,14 +1550,15 @@ export async function buildRequest(
       // и полторы минуты ожидания. Но сами проверки нужны ей ровно так же, поэтому
       // отдаём чек-лист без тегов и без префилла: пусть пройдёт его в своём
       // размышлении, а в ответ напишет только сцену.
-      // Свой план автора уважаем; дефолтный — короткий, под родную думалку.
-      const nativePlan = ps.thinkingPlan?.trim() || (mode === 'rp' ? NATIVE_RP_THINKING_PLAN : NATIVE_VN_THINKING_PLAN);
       tail.push(
-        // Лимит и запрет черновика — главное. Без них родная думалка разворачивала
-        // каждый пункт в абзац, писала сцену начерно и только потом отвечала.
-        'REASONING BUDGET: keep your private reasoning under ~100 words. Answer only these checks, one short line each, ' +
-          'then stop reasoning at once and write the reply. Do not draft, outline or rehearse the scene in reasoning; ' +
-          'no second pass, no analysis beyond the list.\n' +
+        // Многословным (Kimi, GLM) — лимит и запрет черновика: без них родная думалка
+        // разворачивала каждый пункт в абзац, писала сцену начерно и только потом
+        // отвечала. Gemini 3 с этим справлялась сама — ей прежняя формулировка.
+        (verbose
+          ? 'REASONING BUDGET: keep your private reasoning under ~100 words. Answer only these checks, one short line each, ' +
+            'then stop reasoning at once and write the reply. Do not draft, outline or rehearse the scene in reasoning; ' +
+            'no second pass, no analysis beyond the list.\n'
+          : 'SELF-CHECK: before writing, go through this checklist in your own reasoning, in order; let the answers shape the turn.\n') +
           // Просьбы «не пиши это в ответ» мало: список с заголовками выглядит как
           // форма, и модель её заполняет. Gemini 3.x делает это особенно охотно и
           // особенно неудобно — JSON-объектом с нашими же ключами прямо перед
@@ -1562,7 +1566,7 @@ export async function buildRequest(
           // выход: если удержаться невозможно — в теги, откуда движок это вырежет.
           'The reply contains only the story: never write these steps or their answers, and never a JSON object with these labels as keys. ' +
           'If reasoning must appear, put it in <thinking></thinking> before the prose:\n' +
-          nativePlan
+          plan
       );
       tail.push(`${formatReminder}\n${lengthReminder}`);
       logEvent(
@@ -1577,8 +1581,8 @@ export async function buildRequest(
           ? 'Then close </thinking> and write the scene only.'
           : 'Then close </thinking> and output the one JSON object, nothing after it.';
       tail.push(
-        'REASONING: start the reply with one <thinking></thinking> block. One short line per step, in order, in the story language. ' +
-          'Checklist, not prose: no drafting, no second pass. Clean step → "clean"/"ok"; otherwise name the fix.\n' +
+        'REASONING: start the reply with one <thinking></thinking> block, under ~100 words. One short line per step, in order, in the story language. ' +
+          'Checklist, not prose: no drafting or rehearsing the scene, no second pass. Clean step → "clean"/"ok"; otherwise name the fix.\n' +
           `${plan}\n${after}\n${lengthReminder}\n${formatReminder}`
       );
       prefill = '<thinking>\n';

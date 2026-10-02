@@ -929,9 +929,18 @@ export async function runTurn(
       }
     }
 
-    if (rp.plan) logEvent('info', 'think', `План хода ${state.turnCount + 1}`, rp.plan);
+    if (rp.plan) logEvent('info', 'think', `План хода ${state.turnCount + 1} (${rp.plan.length} симв.)`, rp.plan);
     if (lastReasoning.trim())
-      logEvent('info', 'think', `Размышление модели, ход ${state.turnCount + 1}`, lastReasoning.trim());
+      logEvent('info', 'think', `Размышление модели, ход ${state.turnCount + 1} (${lastReasoning.trim().length} симв.)`, lastReasoning.trim());
+    // Куда ушло время: «долго» бывает от размышления, от плана в тексте или от
+    // самой прозы — по одному времени ответа их не различить.
+    logEvent(
+      'info',
+      'turn',
+      `Состав ответа: проза ${rp.prose.length} симв.` +
+        (rp.plan ? `, план ${rp.plan.length}` : '') +
+        (lastReasoning.trim() ? `, родное размышление ${lastReasoning.trim().length}` : '')
+    );
 
     const turn = rpTurn(state, rp.prose, rp.worldState);
     // В историю кладём СЫРОЙ ответ, вместе со служебной сводкой. В контекст она не
@@ -997,7 +1006,7 @@ export async function runTurn(
   // План хода — в лог (раскрывается по клику). Без этого управляемое размышление
   // было ящиком без окна: шаблон правишь, а что модель по нему думает — не видно.
   const plan = extractThinking(raw);
-  if (plan) logEvent('info', 'think', `План хода ${state.turnCount + 1}`, plan);
+  if (plan) logEvent('info', 'think', `План хода ${state.turnCount + 1} (${plan.length} симв.)`, plan);
 
   // Разделение ролей ИИ (Batch 5.4): если настроен отдельный Селектор ассетов
   // ('custom'/'local'), он переопределяет emotion/наряд/музыку из закрытых списков.

@@ -721,6 +721,16 @@ export function modelTakesPrefill(model?: string): boolean {
   return !name || !noPrefillTargets.has(targetKey(base, name));
 }
 
+// Семейство «многословно думающих» (GLM-5.x, Kimi, R1…), даже если родную
+// думалку провайдер выключил: свой план они тоже расписывают пространно, поэтому
+// им — короткий чек-лист.
+export function modelIsVerboseThinker(model?: string): boolean {
+  const conn = getConnection();
+  const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
+  const name = model || conn.model || '';
+  return name ? alwaysThinks(targetKey(base, name)) && !GEMINI3_RE.test(name) : false;
+}
+
 export function modelAlwaysThinks(model?: string): boolean {
   const conn = getConnection();
   const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
@@ -1093,6 +1103,15 @@ const openAiCompatible: Provider = {
       logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти: ' + (e as Error).message);
     }
     if (!started) throw new StreamNotStarted('Поток закрылся, не прислав ни одного куска текста');
+    // Ожидание до первого слова — это обработка запроса у провайдера плюс скрытое
+    // размышление; дальше идёт уже сама генерация текста.
+    logEvent(
+      'info',
+      'llm',
+      `Первое слово через ${Math.round((firstTextAt - openedAt) / 1000)} с, ` +
+        `текст шёл ещё ${Math.round((Date.now() - firstTextAt) / 1000)} с` +
+        (thought ? ' (было размышление отдельным полем)' : '')
+    );
     if (hasOffFields(off)) {
       // Прокси может прятать размышление: тогда его не видно, но модель молчит
       // перед ответом. Долгая пауза до первого слова — тоже «думала».
