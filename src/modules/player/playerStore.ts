@@ -632,6 +632,12 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   async continueStory() {
     const { state, project } = get();
     if (!state || !project) return;
+    // Последней стоит реплика игрока без ответа (ответ удалили) — ▶ отвечает на
+    // неё, а не добавляет «[CONTINUE]» второй репликой подряд.
+    if (state.history[state.history.length - 1]?.role === 'user') {
+      await answerDanglingMove(set, get, project, state);
+      return;
+    }
     // Игрок продвигает историю без реплики (Блок I.1) — мир движется сам.
     await runAndApply(set, get, project, state, '[CONTINUE]');
   },
@@ -698,13 +704,21 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const { project } = get();
     const state = get().state;
     if (!project || !state) return;
-    // Roll back the last exchange from history and replay the same player move.
     const hist = state.history;
+    // Последней стоит реплика игрока (ответ на неё удалили) — отвечаем на неё.
+    if (hist[hist.length - 1]?.role === 'user') {
+      await answerDanglingMove(set, get, project, state);
+      return;
+    }
+    // Roll back the last exchange from history and replay the same player move.
     if (hist.length < 2) return;
     const lastMove = hist[hist.length - 2];
     // Отклонённый вариант передаём движку: без него реролл возвращал то же самое
     // (контекст не изменился), и «нежелательное событие» повторялось раз за разом.
-    const rejected = hist[hist.length - 1]?.content;
+    // Но если реплику игрока переписали, это уже ответ на другой ход: старый текст
+    // тянул бы модель к уже отменённым событиям.
+    const lastReply = hist[hist.length - 1];
+    const rejected = lastReply?.moveEdited ? undefined : lastReply?.content;
     // ПОЛНЫЙ откат хода. Снимок есть — берём его: он снимает ВСЕ последствия
     // отклонённого варианта (статы, деньги, инвентарь, часы/локация GM, реестр,
     // память, счётчик свёртки). Снимка нет (перезагрузили вкладку) — откатываем
@@ -731,7 +745,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   editHistoryMessage(index, text) {
     const st = get().state;
     if (!st || index < 0 || index >= st.history.length) return;
-    const history = st.history.map((m, i) => (i === index ? { ...m, content: text } : m));
+    const edited = st.history[index];
+    const history = st.history.map((m, i) => {
+      if (i === index) return { ...m, content: text };
+      // Переписали реплику игрока — ответ после неё отвечал на старый текст.
+      if (i === index + 1 && edited.role === 'user' && m.role === 'assistant' && text !== edited.content)
+        return { ...m, moveEdited: true };
+      return m;
+    });
     set({ state: { ...st, history } });
     void get().autosave();
   },
@@ -858,6 +879,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
     const lastMove = hist[hist.length - 2]?.content;
     if (lastMove === undefined) return;
+    // Реплику игрока переписали: прежние варианты отвечали на старый текст. Это
+    // новый ответ, а не ещё один вариант — без старого текста и без старых свайпов.
+    if (last.moveEdited) {
+      const snapE = await preTurnFromLedger(project, state);
+      const baseE: RuntimeState = carryPlayerEdits(
+        snapE ? JSON.parse(JSON.stringify(snapE)) : { ...state, history: hist.slice(0, -2) },
+        state
+      );
+      await runAndApply(set, get, project, baseE, lastMove);
+      return;
+    }
     // Копим варианты. У ответа, сгенерированного до появления свайпов, списка нет —
     // тогда первым вариантом считаем его самого.
     const keep = last.swipes?.length ? [...last.swipes] : [last.content];
@@ -1881,6 +1913,27 @@ function applyLoadedState(
 // Core: run a turn against the LLM and apply its result to the store.
 // Возвращает true при успехе; false при ошибке или отмене (тогда прошлый вид сцены
 // восстанавливается, а черновик ввода вызывающий сохраняет).
+// Ответ на реплику игрока, стоящую последней без ответа. Реплику снимаем с ленты
+// и отправляем заново как ход: мир — на ответе перед ней (из снимка), иначе
+// реплика ушла бы в запрос дважды, а реролл принимал бы за ход чужое сообщение.
+async function answerDanglingMove(
+  set: (partial: Partial<PlayerStore>) => void,
+  get: () => PlayerStore,
+  project: Project,
+  state: RuntimeState
+): Promise<boolean> {
+  const hist = state.history;
+  const move = hist[hist.length - 1];
+  if (!move || move.role !== 'user') return false;
+  const anchor = hist.length - 2;
+  let base: RuntimeState = { ...state, history: hist.slice(0, -1) };
+  if (anchor >= 0) {
+    const res = await rebuildAt(project, state, anchor);
+    if (res.precision !== 'none') base = carryPlayerEdits(res.state, state);
+  }
+  return runAndApply(set, get, project, base, move.content);
+}
+
 async function runAndApply(
   set: (partial: Partial<PlayerStore>) => void,
   get: () => PlayerStore,
@@ -1913,8 +1966,23 @@ async function runAndApply(
   const controller = new AbortController();
   const self: InFlight = { controller, prevView, handled: false };
   inFlight = self;
+  // Ход из живого состояния (обычная реплика), а не собранный откат для реролла.
+  const fromLive = get().state === baseState;
+  // id сообщениям — чтобы снимок мира ниже лёг под тот же id, что и в живой ленте.
+  const withIds = withMessageIds(baseState);
+  if (withIds !== baseState) {
+    if (fromLive) set({ state: withIds });
+    baseState = withIds;
+  }
   // База для будущего реролла: состояние ровно перед этим ходом.
   const turnBase: RuntimeState = JSON.parse(JSON.stringify(baseState));
+  // Снимок мира под ответом, на который сейчас отвечают. Автосейв пишет его, пока
+  // ответ последний, но после загрузки игры автосейва могло ещё не быть — тогда
+  // удалить новый ответ было бы не к чему откатиться, и мир оставался «из будущего».
+  const baseLast = baseState.history[baseState.history.length - 1];
+  // Только для хода из живого состояния: собранный для реролла мир без снимка мог
+  // остаться «из будущего», и записать его как точный значило бы закрепить ошибку.
+  if (fromLive && baseLast?.role === 'assistant' && baseLast.id) void putTurnState(project.id, baseLast.id, turnBase);
   set({
     thinking: true,
     error: null,

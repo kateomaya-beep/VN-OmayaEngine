@@ -541,7 +541,10 @@ export function normalizeRuntimeState(raw: any, project: Project): RuntimeState 
         // отправила бы переключатель вариантов в несуществующий индекс.
         const swipes = arr<any>(m.swipes).filter((x: any): x is string => typeof x === 'string');
         // id — по нему ищется снимок мира на момент сообщения (ветка, откат).
-        const id = typeof m.id === 'string' && m.id ? { id: m.id } : {};
+        const id = {
+          ...(typeof m.id === 'string' && m.id ? { id: m.id } : {}),
+          ...(m.moveEdited === true ? { moveEdited: true } : {}),
+        };
         if (!swipes.length) return { role: m.role, content: m.content, ...id };
         const idx = num(m.swipe, 0);
         return {

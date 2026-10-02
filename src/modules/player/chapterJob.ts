@@ -100,6 +100,13 @@ export async function runChapterJob(
         const cur = usePlayerStore.getState();
         if (cancelled.has(jobId)) break;
         if (!cur.project || !cur.state || cur.project.id !== projectId || cur.playthroughId !== playthrough) break;
+        // Пока глава собиралась, хвост ленты удалили или откатили: она описывала бы
+        // сообщения, которых больше нет, — и модель «помнила» бы удалённое.
+        const total = cur.state.memory.foldedMsgCount + cur.state.history.length;
+        if (unit.toMsg > total) {
+          logEvent('info', 'memory', `Глава о сообщениях ${unit.fromMsg}–${unit.toMsg} отброшена: их удалили, пока она собиралась`);
+          continue;
+        }
         const project = cur.project;
         cur.patchMemory((m) => {
           Object.assign(m, applyUnitResult(project, m, unit, r));
