@@ -402,6 +402,23 @@ export const DEFAULT_RP_THINKING_PLAN = `1. SCENE: place, time, who is here, wha
 9. TURN: first beat, the shift, where it stops (at {{user}}'s move).
 10. FORMAT: one quote style; 'single' inside speech; {{user}} = "you"; italics only for thoughts; no dash before speech; nothing written for {{user}}. "ok" or the fix.`;
 
+// КОРОТКИЙ ЧЕК-ЛИСТ для моделей, которые думают всегда (GLM-5.x, Kimi, R1).
+// Полный план они проходят в родной думалке, а она многословна по натуре: каждый
+// пункт разворачивается в абзац, следом идёт черновик сцены — и ход ждётся минуты.
+// Здесь только то, без чего ход ломается; остальное (стоп-слова, эхо, трения)
+// держат блоки пресета.
+export const NATIVE_RP_THINKING_PLAN = `1. SCENE: who is here now; what changes.
+2. SAID vs THOUGHT: what {{user}} said aloud vs only thought (thoughts are not heard).
+3. KNOWLEDGE: anyone about to use a fact they could not know → fix.
+4. TURN: first beat (not a retelling of {{user}}'s move) → shift → stop at {{user}}'s move.
+5. FORMAT: «» quotes, {{user}} = "you", nothing written for {{user}}.`;
+
+export const NATIVE_VN_THINKING_PLAN = `1. SCENE: who is here now; what changes.
+2. SAID vs THOUGHT: what the hero said aloud vs only thought.
+3. KNOWLEDGE: anyone about to use a fact they could not know → fix.
+4. TURN: first beat → shift → where it stops.
+5. OUTPUT: one valid JSON object per the schema, nothing outside it.`;
+
 // СТОП-СЛОВА по умолчанию. Не «плохие слова», а обороты, которые модели тянут в
 // каждый второй ход независимо от сцены: они не режут глаз поодиночке, но на
 // двадцатом ходу читаются как подпись генератора. Список правится и чистится в

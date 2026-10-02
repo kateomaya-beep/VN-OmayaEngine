@@ -1,5 +1,5 @@
 import type { NarrativeMode, Project, RuntimeState, LlmMessage, MemoryBookEntry } from '../shared/types';
-import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, DEFAULT_BAN_WORDS, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
+import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, NATIVE_RP_THINKING_PLAN, NATIVE_VN_THINKING_PLAN, DEFAULT_BAN_WORDS, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
@@ -1547,8 +1547,14 @@ export async function buildRequest(
       // и полторы минуты ожидания. Но сами проверки нужны ей ровно так же, поэтому
       // отдаём чек-лист без тегов и без префилла: пусть пройдёт его в своём
       // размышлении, а в ответ напишет только сцену.
+      // Свой план автора уважаем; дефолтный — короткий, под родную думалку.
+      const nativePlan = ps.thinkingPlan?.trim() || (mode === 'rp' ? NATIVE_RP_THINKING_PLAN : NATIVE_VN_THINKING_PLAN);
       tail.push(
-        'SELF-CHECK: before writing, go through this checklist in your own reasoning, in order; let the answers shape the turn.\n' +
+        // Лимит и запрет черновика — главное. Без них родная думалка разворачивала
+        // каждый пункт в абзац, писала сцену начерно и только потом отвечала.
+        'REASONING BUDGET: keep your private reasoning under ~100 words. Answer only these checks, one short line each, ' +
+          'then stop reasoning at once and write the reply. Do not draft, outline or rehearse the scene in reasoning; ' +
+          'no second pass, no analysis beyond the list.\n' +
           // Просьбы «не пиши это в ответ» мало: список с заголовками выглядит как
           // форма, и модель её заполняет. Gemini 3.x делает это особенно охотно и
           // особенно неудобно — JSON-объектом с нашими же ключами прямо перед
@@ -1556,14 +1562,14 @@ export async function buildRequest(
           // выход: если удержаться невозможно — в теги, откуда движок это вырежет.
           'The reply contains only the story: never write these steps or their answers, and never a JSON object with these labels as keys. ' +
           'If reasoning must appear, put it in <thinking></thinking> before the prose:\n' +
-          plan
+          nativePlan
       );
       tail.push(`${formatReminder}\n${lengthReminder}`);
       logEvent(
         'info',
         'prompt',
         'Своё размышление в <thinking> для этой модели отключено: она думает всегда, и наш план лёг бы ' +
-          'поверх её собственного. Чек-лист ушёл к ней как SELF-CHECK — проверки те же, но в её родной думалке.'
+          'поверх её собственного. К ней ушёл короткий чек-лист с лимитом ~100 слов — проходится в её родной думалке.'
       );
     } else {
       const after =
