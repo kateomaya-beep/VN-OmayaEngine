@@ -7,7 +7,7 @@ import { parseDate, addDays, diffDays, formatDate } from '../shared/gameDate';
 import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson, nameHit } from './characterRegistry';
 import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
-import { runCompletion, modelAlwaysThinks, modelTakesPrefill } from './providers';
+import { runCompletion, modelTakesPrefill } from './providers';
 import { getPresetSettings, presetForMode, type PresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
@@ -791,11 +791,9 @@ export async function runTurn(
   // просим САМУЮ НИЗКУЮ. Намерение то же — «не трать время на обдумывание», — но
   // «выкл» такая модель не примет, а промолчать нельзя: без параметра она берёт
   // свой дефолт, максимальную глубину, и ход думается минуты.
-  const reasoningEffort = ps.guidedThinking
-    ? modelAlwaysThinks()
-      ? 'low'
-      : 'none'
-    : ps.reasoningEffort;
+  // 'none' — намерение «без родной думалки». Провайдер сам переводит его для
+  // «всегда думающих»: пробует выключить, а не выйдет — шлёт самую низкую ступень.
+  const reasoningEffort = ps.guidedThinking ? 'none' : ps.reasoningEffort;
 
   // Имена — для метода обработки промпта «одним сообщением» (там реплики надо
   // подписывать).

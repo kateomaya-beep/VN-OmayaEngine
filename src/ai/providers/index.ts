@@ -477,15 +477,17 @@ function loadLsSet(key: string): Set<string> {
 // ход брала свой дефолт (medium) и думала подолгу молча. Обновление кода само по
 // себе такую запись не лечит: она уже лежит в браузере. Поэтому — разовая чистка.
 const LEARNED_V_KEY = 'nf_learned_targets_v';
-const LEARNED_V = 2;
+const LEARNED_V = 3;
 
 function forgetStaleLearned(): void {
   try {
     if (Number(localStorage.getItem(LEARNED_V_KEY) || 0) >= LEARNED_V) return;
     const raw = localStorage.getItem(NO_EFFORT_LS_KEY);
     if (raw) {
+      // v2: Gemini. v3: GLM-5 и Kimi — «не шлём ступень» для них значило дефолт max,
+      // самую долгую думалку; теперь им шлётся low (или выше, если low не примут).
       const kept = (JSON.parse(raw) as unknown[]).filter(
-        (x) => typeof x === 'string' && !/gemini/i.test(x)
+        (x) => typeof x === 'string' && !/gemini|glm|kimi/i.test(x)
       );
       localStorage.setItem(NO_EFFORT_LS_KEY, JSON.stringify(kept));
     }
@@ -498,7 +500,15 @@ function forgetStaleLearned(): void {
 // Полный сброс выученного — руками из «Подключение к ИИ». Нужен, когда провайдер
 // сменил поведение (или мы починили распознавание) и залипшая догадка мешает.
 export function forgetLearnedModelQuirks(): void {
-  for (const k of [NO_EFFORT_LS_KEY, ALWAYS_THINK_LS_KEY, NO_THINKING_FIELD_LS_KEY, NO_PREFILL_LS_KEY]) {
+  for (const k of [
+    NO_EFFORT_LS_KEY,
+    ALWAYS_THINK_LS_KEY,
+    NO_THINKING_FIELD_LS_KEY,
+    NO_PREFILL_LS_KEY,
+    THINK_OFF_OK_LS_KEY,
+    THINK_OFF_NO_LS_KEY,
+    EFFORT_FLOOR_LS_KEY,
+  ]) {
     try {
       localStorage.removeItem(k);
     } catch {
@@ -509,6 +519,9 @@ export function forgetLearnedModelQuirks(): void {
   }
   noEffortTargets.clear();
   alwaysThinkTargets.clear();
+  thinkOffOk.clear();
+  thinkOffNo.clear();
+  effortFloor.clear();
   noThinkingField.clear();
   noPrefillTargets.clear();
   logEvent('info', 'llm', 'Выученные особенности моделей сброшены — движок определит их заново.');
@@ -591,16 +604,101 @@ function isThinkingRequiredError(text: string): boolean {
 // none/medium недопустимы: none → low (ближайшее по смыслу «думай поменьше»),
 // medium → high (из доступных ступеней это следующая вверх).
 function effortFor(target: string, effort: string | undefined): string | undefined {
-  if (noEffortTargets.has(target)) return undefined;
+  // «Всегда думающей» ступень не слать нельзя: без неё она берёт дефолт — max.
+  if (noEffortTargets.has(target) && !alwaysThinks(target)) return undefined;
   if (!effort || !alwaysThinks(target)) return effort;
   // 'none' такая модель всё равно не примет, а МОЛЧАТЬ нельзя: без параметра она
   // берёт свой дефолт, который заведомо глубже. Берём самую низкую ступень.
-  const e = effort === 'none' ? 'low' : effort;
+  let e = effort === 'none' ? 'low' : effort;
   // У Gemini 3 ступени low/medium/high: medium допустим (и это её дефолт), а 'max'
   // не существует — потолок high.
   if (GEMINI3_RE.test(target)) return e === 'max' ? 'high' : e;
   // GLM-5.x, Kimi и прочие: только low / high / max, medium они не понимают.
-  return e === 'medium' ? 'high' : e;
+  if (e === 'medium') e = 'high';
+  // Шлюз уже отказал в low — шлём самую низкую из принятых им.
+  const floor = effortFloor.get(target);
+  if (floor && EFFORT_ORDER.indexOf(floor) > EFFORT_ORDER.indexOf(e)) e = floor;
+  return e;
+}
+
+// ВЫКЛЮЧИТЬ РОДНУЮ ДУМАЛКУ У «ВСЕГДА ДУМАЮЩИХ». На официальных API GLM-5.3 и
+// Kimi K3 она обязательна, но игрок часто ходит через прокси и не знает, к кому:
+// часть провайдеров (Together, сборки на vLLM/SGLang) открытые веса умеет
+// запускать без размышления. Поэтому просим выключить всеми известными полями
+// сразу и смотрим на ответ: размышления в нём нет — выключилась, запоминаем и
+// отдаём ход нашему короткому плану; отказ или модель всё равно думала —
+// запоминаем и дальше шлём только самую низкую ступень.
+const THINK_OFF_OK_LS_KEY = 'nf_think_off_ok';
+const THINK_OFF_NO_LS_KEY = 'nf_think_off_no';
+const thinkOffOk = loadLsSet(THINK_OFF_OK_LS_KEY);
+const thinkOffNo = loadLsSet(THINK_OFF_NO_LS_KEY);
+const OFF_FIELD_KEYS = ['reasoning', 'thinking', 'chat_template_kwargs'] as const;
+
+function offFields(target: string, effort: string | undefined): Record<string, unknown> {
+  if (effort !== 'none' || !ALWAYS_THINK_PATTERNS.test(target) && !alwaysThinkTargets.has(target)) return {};
+  if (thinkOffNo.has(target) || GEMINI3_RE.test(target)) return {};
+  return {
+    reasoning: { enabled: false }, // OpenRouter, Together
+    thinking: { type: 'disabled' }, // Z.ai, Moonshot, DeepSeek
+    chat_template_kwargs: { thinking: false, enable_thinking: false }, // vLLM / SGLang
+  };
+}
+function hasOffFields(b: Record<string, unknown>): boolean {
+  return OFF_FIELD_KEYS.some((k) => k in b);
+}
+function dropOffFields(b: Record<string, unknown>): void {
+  for (const k of OFF_FIELD_KEYS) delete b[k];
+}
+
+// Итог попытки выключить: thought — пришло ли размышление в ответе.
+function settleThinkOff(target: string, model: string, thought: boolean): void {
+  if (!thought) {
+    if (thinkOffOk.has(target)) return;
+    thinkOffOk.add(target);
+    saveLsSet(THINK_OFF_OK_LS_KEY, thinkOffOk);
+    logEvent('info', 'llm', `«${model}»: родная думалка выключилась через провайдера — дальше работает короткий план движка.`);
+    pushToast('success', `«${model}»: думалку удалось выключить — ходы пойдут быстрее.`);
+    return;
+  }
+  const wasOk = thinkOffOk.delete(target);
+  if (wasOk) saveLsSet(THINK_OFF_OK_LS_KEY, thinkOffOk);
+  if (thinkOffNo.has(target)) return;
+  thinkOffNo.add(target);
+  saveLsSet(THINK_OFF_NO_LS_KEY, thinkOffNo);
+  logEvent(
+    'info',
+    'llm',
+    `«${model}»: провайдер не выключает думалку — шлём самую низкую ступень (${effortFor(target, 'none') ?? 'low'}).`
+  );
+}
+function rejectThinkOff(target: string, model: string): void {
+  thinkOffNo.add(target);
+  saveLsSet(THINK_OFF_NO_LS_KEY, thinkOffNo);
+  logEvent('info', 'llm', `«${model}»: провайдер не принял выключение думалки — шлём самую низкую ступень.`);
+}
+
+// Самая низкая ступень, которую шлюз принял: low → high → max. «Не слать вовсе»
+// для такой модели — это max, поэтому лестница, а не отказ от параметра.
+const EFFORT_ORDER = ['low', 'high', 'max'];
+const EFFORT_FLOOR_LS_KEY = 'nf_effort_floor';
+const effortFloor: Map<string, string> = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem(EFFORT_FLOOR_LS_KEY) || '{}');
+    return new Map(Object.entries(v).filter((x): x is [string, string] => typeof x[1] === 'string'));
+  } catch {
+    return new Map();
+  }
+})();
+function raiseEffortFloor(target: string, rejected: string | undefined): string | undefined {
+  const next = EFFORT_ORDER[EFFORT_ORDER.indexOf(rejected ?? 'low') + 1];
+  if (!next) return undefined;
+  effortFloor.set(target, next);
+  try {
+    localStorage.setItem(EFFORT_FLOOR_LS_KEY, JSON.stringify(Object.fromEntries(effortFloor)));
+  } catch {
+    /* ignore */
+  }
+  return next;
 }
 
 function alwaysThinks(target: string): boolean {
@@ -627,7 +725,10 @@ export function modelAlwaysThinks(model?: string): boolean {
   const conn = getConnection();
   const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
   const name = model || conn.model || '';
-  return name ? alwaysThinks(targetKey(base, name)) : false;
+  if (!name) return false;
+  const t = targetKey(base, name);
+  // Провайдер умеет выключать её думалку — для движка она больше не «всегда думающая».
+  return alwaysThinks(t) && !thinkOffOk.has(t);
 }
 
 const noPrefillTargets = loadLsSet(NO_PREFILL_LS_KEY);
@@ -668,8 +769,10 @@ const openAiCompatible: Provider = {
       ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
       ...(effort ? { reasoning_effort: effort } : {}),
       ...samplingFields(req, target),
+      ...offFields(target, req.reasoningEffort),
       ...(req.stop?.length ? { stop: req.stop } : {}),
     };
+    let offSent = hasOffFields(body);
     const post = (b: Record<string, unknown>) =>
       apiFetch(`${base}/chat/completions`, {
         method: 'POST',
@@ -696,6 +799,14 @@ const openAiCompatible: Provider = {
       );
       const b2 = { ...body };
       let fixes: string[] = [];
+      // Отказ мог быть из-за полей выключения думалки: убираем все разом (какое из
+      // них не понравилось, по тексту не понять) и запоминаем — ступень остаётся.
+      if (hasOffFields(b2)) {
+        dropOffFields(b2);
+        offSent = false;
+        rejectThinkOff(target, model);
+        fixes.push('без выключения думалки');
+      }
       // «Модель думает всегда» — ОТДЕЛЬНАЯ ветка, ДО общей починки ниже. Убрать
       // reasoning_effort здесь было бы худшим из возможных решений: без него такая
       // модель берёт свой дефолт — самую глубокую ступень (max), то есть ровно
@@ -728,10 +839,23 @@ const openAiCompatible: Provider = {
         );
       } else if (
         'reasoning_effort' in b2 &&
+        !fixes.includes('без выключения думалки') &&
         (/reason/i.test(errText) || !/max_tokens|max_completion|temperature|context|token/i.test(errText))
       ) {
-        delete b2.reasoning_effort;
-        fixes.push('без reasoning_effort');
+        if (alwaysThinks(target)) {
+          // Убрать ступень у «всегда думающей» — значит отдать её дефолту max.
+          const up = raiseEffortFloor(target, b2.reasoning_effort as string);
+          if (up) {
+            b2.reasoning_effort = up;
+            fixes.push(`reasoning_effort → ${up}`);
+          } else {
+            delete b2.reasoning_effort;
+            fixes.push('без reasoning_effort');
+          }
+        } else {
+          delete b2.reasoning_effort;
+          fixes.push('без reasoning_effort');
+        }
       }
       if (/max_completion_tokens/i.test(errText) && 'max_tokens' in b2) {
         b2.max_completion_tokens = b2.max_tokens;
@@ -810,6 +934,11 @@ const openAiCompatible: Provider = {
     const choice = data?.choices?.[0];
     const content = normalizeContent(choice?.message?.content);
     if (content === null) throw new Error('Пустой ответ провайдера');
+    if (offSent) {
+      const r = normalizeContent(choice?.message?.reasoning_content ?? choice?.message?.reasoning) || '';
+      const rTok = Number(data?.usage?.completion_tokens_details?.reasoning_tokens ?? 0);
+      settleThinkOff(target, model, !!r.trim() || rTok > 0 || /<think>/i.test(content));
+    }
     // Пустая строка при finish_reason=length — модель израсходовала бюджет на скрытое
     // «размышление» и до видимого текста не дошла. Логируем причину: иначе наверху
     // виден лишь пустой ответ (в мессенджере это выглядело как «три точки»).
@@ -845,6 +974,7 @@ const openAiCompatible: Provider = {
     // отвергла бы 'none'/'medium', а откат на обычный запрос стоил бы лишнего
     // круга. Один раз узнав про модель (в complete), дальше шлём сразу верное.
     const effort = effortFor(target, req.reasoningEffort);
+    let off = offFields(target, req.reasoningEffort);
     const postStream = (e: string | undefined) =>
       withRetry(() =>
         apiFetch(`${base}/chat/completions`, {
@@ -863,11 +993,19 @@ const openAiCompatible: Provider = {
             ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
             ...(e ? { reasoning_effort: e } : {}),
             ...samplingFields(req, target),
+            ...off,
             ...(req.stop?.length ? { stop: req.stop } : {}),
           }),
         })
       );
     let res = await postStream(effort);
+    // Не принял выключение думалки — убираем его и переспрашиваем потоком же.
+    if (res.status === 400 && hasOffFields(off)) {
+      await res.text().catch(() => '');
+      off = {};
+      rejectThinkOff(target, model);
+      res = await postStream(effort);
+    }
     // Ступень размышления чиним ПРЯМО ЗДЕСЬ и переспрашиваем снова потоком.
     //
     // Раньше любая ошибка отправляла ход на обычный (нестриминговый) путь: мол,
@@ -881,6 +1019,12 @@ const openAiCompatible: Provider = {
       if (isThinkingRequiredError(errText)) {
         rememberAlwaysThink(target);
         res = await postStream(effortFor(target, req.reasoningEffort) ?? 'low');
+      } else if (/reason/i.test(errText) && alwaysThinks(target)) {
+        // Ступень не принята (Kimi K3 на старте понимал только max). Не убираем её,
+        // а поднимаем: без параметра модель всё равно уйдёт в max.
+        const up = raiseEffortFloor(target, effort);
+        logEvent('warn', 'llm', `Модель «${model}» не приняла reasoning_effort=${effort} — шлём ${up ?? 'без ступени'}.`);
+        res = await postStream(up);
       } else if (/reason/i.test(errText)) {
         // Параметр не понят или понята не эта ступень (Kimi K3 принимал только
         // "max"). Отличить нельзя — перестаём его слать этой модели вовсе.
@@ -901,6 +1045,9 @@ const openAiCompatible: Provider = {
     }
     let out = '';
     let started = false;
+    let thought = false;
+    let firstTextAt = 0;
+    const openedAt = Date.now();
     let finishReason: string | undefined;
     try {
       await readSse(res, (data) => {
@@ -924,9 +1071,13 @@ const openAiCompatible: Provider = {
         // дело у перепродавцов), должен провалиться в этот откат и там ожить, а не
         // упереться в «пустой ответ» навсегда.
         const rPiece = normalizeContent(delta?.reasoning_content ?? delta?.reasoning);
-        if (rPiece) req.onReasoning?.(rPiece);
+        if (rPiece) {
+          thought = true;
+          req.onReasoning?.(rPiece);
+        }
         const piece = normalizeContent(delta?.content);
         if (!piece) return;
+        if (!started) firstTextAt = Date.now();
         started = true;
         out += piece;
         onDelta(piece);
@@ -942,6 +1093,12 @@ const openAiCompatible: Provider = {
       logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти: ' + (e as Error).message);
     }
     if (!started) throw new StreamNotStarted('Поток закрылся, не прислав ни одного куска текста');
+    if (hasOffFields(off)) {
+      // Прокси может прятать размышление: тогда его не видно, но модель молчит
+      // перед ответом. Долгая пауза до первого слова — тоже «думала».
+      const silentMs = firstTextAt - openedAt;
+      settleThinkOff(target, model, thought || /<think>/i.test(out) || silentMs > 25000);
+    }
     // Диагностика для «модель обрывает ответ»: finish_reason из последнего кадра
     // прямо называет причину, а не оставляет гадать. length/max_tokens — упёрлись
     // в потолок ответа (лечится длиной хода в пресете), остальное — как есть.
