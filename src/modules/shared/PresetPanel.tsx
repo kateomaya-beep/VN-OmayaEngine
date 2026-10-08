@@ -13,8 +13,8 @@ import { defaultLocalPreset, defaultLocalBlockContent } from '../../ai/localPres
 import {
   defaultDeepseekPreset,
   defaultDeepseekBlockContent,
-  DEEPSEEK_THINKING_PLAN,
 } from '../../ai/deepseekPreset';
+import { composeThinkingPlan } from '../../ai/thinkingPlan';
 import { PROMPT_PROCESSING_LABELS, type PromptProcessing } from '../../ai/promptPostProcess';
 import { MACRO_HELP } from '../../ai/macros';
 import { RegexRulesEditor } from './RegexRulesEditor';
@@ -24,7 +24,7 @@ import { TokenCounter } from '../player/components/TokenCounter';
 import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
 import type { AdvancedPromptBlock, LlmRole } from '../../shared/types';
-import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, TURN_LENGTH_PRESETS, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, DEFAULT_BAN_WORDS, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
+import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, TURN_LENGTH_PRESETS, DEFAULT_BAN_WORDS, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
 // отделён от настроек API. Каждый блок: порядок (drag&drop), роль system/user/assistant
@@ -594,7 +594,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
               модели» в «Подключении к ИИ».
             </p>
           </div>
-          <GuidedThinkingField cfg={cfg} patch={patch} isRp={isRp} />
+          <GuidedThinkingField cfg={cfg} patch={patch} isRp={isRp} preset={preset} />
           <BanWordsField cfg={cfg} patch={patch} />
           <Field label="Язык повествования (язык текста истории, не интерфейса)">
             <div className="flex gap-2">
@@ -803,21 +803,25 @@ function GuidedThinkingField({
   cfg,
   patch,
   isRp,
+  preset,
 }: {
   cfg: PresetSettings;
   patch: (p: Partial<PresetSettings>) => void;
-  /** План размышления один на все режимы (глобальная настройка), но дефолт и кнопка
-   * сброса должны предлагать вариант БЕЗ пункта про выбор — его в РП не существует. */
   isRp: boolean;
+  /** Пресет текущего режима: из его включённых блоков собирается план. */
+  preset: PromptPreset;
 }) {
   const on = !!cfg.guidedThinking;
-  // Дефолт совпадает с тем, что реально уйдёт в запрос (см. promptBuilder): в РП
-  // под профилем DeepSeek это его собственный чек-лист, а не общий.
-  const modeDefault = !isRp
-    ? DEFAULT_THINKING_PLAN
-    : cfg.modelProfile === 'deepseek'
-      ? DEEPSEEK_THINKING_PLAN
-      : DEFAULT_RP_THINKING_PLAN;
+  // План по умолчанию собирается из тумблеров пресета (см. thinkingPlan.ts) — ровно
+  // так же, как его соберёт promptBuilder. Пока поле не правили, он подстраивается
+  // под каждый включённый или выключенный блок.
+  const auto = composeThinkingPlan({
+    mode: isRp ? 'rp' : 'vn',
+    profile: cfg.modelProfile,
+    blocks: preset.blocks,
+    banWords: !!(cfg.banWords ?? DEFAULT_BAN_WORDS).trim(),
+  });
+  const custom = cfg.thinkingPlan !== undefined;
   return (
     <div className="sm:col-span-2 rounded-lg border border-white/10 p-3">
       <label className="flex items-center gap-2 cursor-pointer">
@@ -833,16 +837,25 @@ function GuidedThinkingField({
         затем сразу пишет сцену. Родной reasoning при этом принудительно выключается — обычно так
         заметно быстрее «думающих» моделей. У GLM-5.x, Kimi и R1 движок сперва пробует выключить
         думалку через провайдера; получилось — работает этот план. Если провайдер не даёт (официальные
-        API GLM-5.3 и Kimi K3), тегов и префилла не будет: в их собственное размышление уйдёт
-        <b>короткий</b> чек-лист из 5 пунктов с лимитом ~100 слов и запретом писать черновик сцены —
-        полный план они расписывали бы минутами. Свой план, если вы его задали, уходит вместо
-        короткого — с тем же лимитом.
+        API GLM-5.3 и Kimi K3), тегов и префилла не будет: в их собственное размышление уйдёт{' '}
+        <b>короткая</b> версия плана с лимитом слов и запретом писать черновик сцены — полный они
+        расписывали бы минутами. Свой план, если вы его задали, уходит вместо короткого — с тем же
+        лимитом.
       </p>
       {on && (
         <>
+          <p className="text-xs mt-2 text-gray-300">
+            {custom ? (
+              <>✎ <b>Свой план</b> — уходит как написан и не подстраивается под тумблеры.</>
+            ) : (
+              <>⚙ <b>Собирается из тумблеров</b>: у каждого блока пресета свой шаг. Выключили
+              «Конфликты» — пропал шаг про трения; включили жанр или автора — они появились в
+              плане по имени. Начнёте править текст — он станет вашим.</>
+            )}
+          </p>
           <textarea
             className="input h-40 mt-2 text-sm font-mono"
-            value={cfg.thinkingPlan ?? modeDefault}
+            value={cfg.thinkingPlan ?? auto}
             onChange={(e) => patch({ thinkingPlan: e.target.value })}
           />
           <p className="text-xs text-gray-500 mt-1">
@@ -864,10 +877,10 @@ function GuidedThinkingField({
           </p>
           <button
             className="btn-ghost !px-3 !py-1 text-xs mt-2"
-            onClick={() => patch({ thinkingPlan: modeDefault })}
-            disabled={(cfg.thinkingPlan ?? modeDefault) === modeDefault}
+            onClick={() => patch({ thinkingPlan: undefined })}
+            disabled={!custom}
           >
-            Вернуть стандартный план
+            Вернуть план из тумблеров
           </button>
         </>
       )}

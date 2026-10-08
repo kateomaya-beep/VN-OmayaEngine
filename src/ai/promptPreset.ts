@@ -1,4 +1,29 @@
 import { EMOTIONS, AUDIO_MOODS, type LlmRole } from '../shared/types';
+import {
+  arsenalModule,
+  authorModules,
+  charactersModule,
+  conflictsModule,
+  darkCardsModule,
+  dramaModule,
+  genreModules,
+  genreRuleModule,
+  insertMissingByOrder,
+  languageModule,
+  livingNpcsModule,
+  loreModule,
+  migrateToModular,
+  moduleBlock,
+  naturalModule,
+  newFacesModule,
+  plotModule,
+  proseModule,
+  pulseModule,
+  twistsModule,
+  type ModuleDef,
+} from './storyModules';
+
+const HERO = 'the hero' as const;
 import { uid } from '../shared/utils';
 
 // Полностью редактируемый пресет промпта в стиле SillyTavern (см. Batch 3 §8):
@@ -98,6 +123,7 @@ Delete facts that stopped being true (healed wound, ended pregnancy, quit job). 
 
 // Дефолтные блоки Omaya-пресета. Каждый — редактируемый; порядок можно менять.
 function makeDefaults(): PromptBlock[] {
+  const m = (d: ModuleDef) => moduleBlock(d, '');
   const b = (
     builtinKey: string,
     name: string,
@@ -108,38 +134,17 @@ function makeDefaults(): PromptBlock[] {
   return [
     b(
       'identity',
-      '✦ Identity',
+      '✦ Роль',
       `You are the narrative engine of a visual novel. You run the story: plot, the player's hero's voice, every NPC, the world.
 - No persona of your own: no narrator commentary.
 - The player controls only the hero. Never write the hero's words, thoughts or choices beyond their move.
 - POV: third person for the world and NPCs; second person ("you") for the hero. Past tense by default.
 - Keep continuity: place, time, weather, who is present, positions, clothing, injuries, who knows what.
-- The world runs on its own: actions have consequences, characters pursue their own goals.
 - No moralizing, disclaimers or check-ins unless in character.`
     ),
-    b(
-      'prose',
-      '✦ Prose Engine',
-      `Prose:
-- Modern style, like a contemporary novel: clear, precise, natural present-day language. No archaic, folksy or ornate wording.
-- Dialogue sounds like real people today. Each character's register (education, manners, roughness) comes from their card and samples; with no hint, neutral modern speech. Rough means curt, not folksy.
-- Show through senses, action and subtext. Do not explain what the scene already shows.
-- Vivid and grounded. Concrete detail over abstraction.
-- Vary sentence length. Fragments only for shock or panic.
-- About 40% dialogue, 60% narration. Anchor dialogue in gesture, movement, silence.
-- A trait must be audible in the character's own lines (ironic → ironic, blunt → cutting, timid → hedging). Never only state it in narration.
-- Every voice must be identifiable without a speaker tag.`
-    ),
-    b(
-      'plot',
-      '✦ Plot & World',
-      `Plot:
-- The world moves while the player decides: time passes, characters act, consequences land.
-- Threads: SEED → DEVELOP → ESCALATE → CLIMAX → RESOLVE. Max 2–3 active; close or merge before opening new ones.
-- No change for ~5 exchanges → add ONE fitting hook (arrival, discovery, consequence). No deus ex machina.
-- Alternate calm, tension, release.
-- Reveal lore through action and consequence, not exposition.`
-    ),
+    m(languageModule()),
+    m(proseModule()),
+    m(naturalModule()),
     b(
       'anti_slop',
       '✦ Anti-Slop',
@@ -151,23 +156,9 @@ function makeDefaults(): PromptBlock[] {
 - Litotes and negative parallelism ("not unkind").
 - Ending on a summary of the player's feelings or a moral.`
     ),
-    b(
-      'characters',
-      '✦ Characters',
-      `Characters:
-- Play each character from their card: voice (vocabulary, rhythm, tics), values, history, attitude to the hero.
-- Use names; do not repeat titles, rank or reputation as a refrain.
-- Drive behavior from inside, unnarrated: current vs long-term wants and their conflict; what they protect and how they hide it; how they bond or push away.
-- State shows: fatigue, pain and fear change behavior. Characters lie, misread each other, hold grudges, change slowly.
-- Play dark cards (cruel, obsessive, possessive, yandere) fully, without softening.`
-    ),
-    b(
-      'living_npcs',
-      '✦ Living NPCs',
-      `NPCs:
-- Have names, routines, opinions and memory of past interactions. They initiate, refuse, lie, gossip, hold grudges.
-- Distinct voices. Not every interaction is about the hero.`
-    ),
+    m(charactersModule(HERO)),
+    m(darkCardsModule()),
+    m(livingNpcsModule(HERO)),
     b(
       'info_hygiene',
       '✦ Информационная гигиена',
@@ -182,20 +173,16 @@ Otherwise they do not know it: they ask, assume the old version, or do not react
 - Play ignorance as drama (wrong questions, old beliefs, bad timing); do not smooth it over.
 - Unsure whether someone knows: they don't.`
     ),
-    b(
-      'realistic_conduct',
-      '✦ Реалистичность поступков',
-      `Realism:
-- Nobody exists to please the hero. Characters agree when their own reasons match, refuse when they don't.
-- Love interests are not rewards and not easy. Interest starts low, grows only on evidence over many scenes, and can fall.
-- Characters can refuse, be busy, hurt or jealous, take another side, end a conversation, want different things.
-- Good relationships still have everyday friction (fatigue, money, plans, chores, being taken for granted).
-- Behavior stays consistent with the card and with what happened. Deep traits (e.g. distrust) change only with time and proof.
-- Damage lasts. An apology is not an undo. Some things are not forgiven.
-- The hero can fail: plans collapse, charm misses, the answer is no.
-- Do not resolve a conflict in the turn it starts.
-- This is not hostility: warm characters stay warm; someone with good reason to say yes says yes. Every reaction is the character's own.`
-    ),
+    m(conflictsModule(HERO)),
+    m(plotModule(HERO)),
+    m(dramaModule()),
+    m(twistsModule(HERO)),
+    m(loreModule()),
+    m(newFacesModule()),
+    m(arsenalModule()),
+    m(genreRuleModule()),
+    ...genreModules().map(m),
+    ...authorModules().map(m),
     b(
       'roles',
       '⚙ Roles & Rendering',
@@ -255,8 +242,8 @@ Change only when the scene earns it; never leave a stat frozen after a clear shi
     b('json_contract', '🔒 Output JSON Contract', JSON_CONTRACT, { flagged: true }),
     b(
       'style',
-      '✎ Style / Tone',
-      `Second person for the hero, in the project's genre tone: emotional interactive romance — drama, flirtation, intrigue. Sensory, alive prose. Stay inside the engine's turn length.`
+      '✎ Тон и длина',
+      `Second person for the hero; keep the story's established tone. Sensory, alive prose. Stay inside the engine's turn length.`
     ),
     // Пустые слоты под усмотрение пользователя (джейлбрейк / NSFW). Пусто = ничего
     // не отправляется; юзер вписывает свой текст или отключает тумблер.
@@ -275,6 +262,7 @@ Change only when the scene earns it; never leave a stat frozen after a clear shi
     // Живая переписка. Всё, что стоит НИЖЕ этого блока, модель читает как более
     // свежее — держите здесь только то, что должно перебивать историю.
     b('chat_history', '💬 История переписки', '', { dynamic: 'history' }),
+    m(pulseModule()),
     // НИЖЕ ИСТОРИИ — то, что должно звучать в ушах у модели прямо перед ходом.
     b('voice_samples', '↳ Примеры реплик (ниже истории)', '', { dynamic: 'voice' }),
   ];
@@ -371,31 +359,6 @@ function ensurePlaceholders(preset: PromptPreset): PromptPreset {
   return { ...preset, blocks: [...preset.blocks, ...added] };
 }
 
-// Встроенные блоки, ДОБАВЛЕННЫЕ после того, как пресеты уже разошлись по
-// проектам. Вставляем с дефолтным текстом сразу за якорным блоком, чтобы порядок
-// был осмысленным, а не «в конец списка». Уже правленный пользователем пресет
-// получает блок так же — но только если такого ключа у него ещё нет.
-const ADDED_BUILTINS: { key: string; after: string }[] = [
-  { key: 'info_hygiene', after: 'living_npcs' },
-  { key: 'realistic_conduct', after: 'info_hygiene' },
-  { key: 'memorybook', after: 'memory' },
-];
-function ensureNewBuiltins(preset: PromptPreset): PromptPreset {
-  const have = new Set(preset.blocks.map((b) => b.builtinKey).filter(Boolean));
-  const missing = ADDED_BUILTINS.filter((a) => !have.has(a.key));
-  if (!missing.length) return preset;
-  const blocks = [...preset.blocks];
-  for (const a of missing) {
-    const fresh = makeDefaults().find((b) => b.builtinKey === a.key);
-    if (!fresh) continue;
-    const at = blocks.findIndex((b) => b.builtinKey === a.after);
-    const block = { ...fresh, id: uid('blk') };
-    if (at === -1) blocks.push(block);
-    else blocks.splice(at + 1, 0, block);
-  }
-  return { ...preset, blocks };
-}
-
 // Сигнатуры УСТАРЕВШИХ дефолтов встроенных блоков. Если блок всё ещё содержит
 // старый дефолтный текст (значит, пользователь его не редактировал), обновляем на
 // актуальный. Так правки движка (длинный ход, редкие выборы, лёгкий worldState,
@@ -457,34 +420,24 @@ const OUTDATED_SIGNATURES_ALL: BuiltinSignature[] = [
 const OUTDATED_SIGNATURES: BuiltinSignature[] = [
   ...OUTDATED_SIGNATURES_ALL.filter((s) => !(VN_VERBOSE_V1[s.key] ?? '').includes(s.signature)),
   ...Object.entries(VN_VERBOSE_V1).map(([key, signature]) => ({ key, signature, exact: true })),
+  // Сжатые тексты ДО модульного пресета: один блок держал несколько наборов правил.
+  { key: "identity", signature: "You are the narrative engine of a visual novel. You run the story: plot, the player's hero's voice, every NPC, the world.\n- No persona of your own: no narrator commentary.\n- The player controls only the hero. Never write the hero's words, thoughts or choices beyond their move.\n- POV: third person for the world and NPCs; second person (\"you\") for the hero. Past tense by default.\n- Keep continuity: place, time, weather, who is present, positions, clothing, injuries, who knows what.\n- The world runs on its own: actions have consequences, characters pursue their own goals.\n- No moralizing, disclaimers or check-ins unless in character.", exact: true },
+  { key: "prose", signature: "Prose:\n- Modern style, like a contemporary novel: clear, precise, natural present-day language. No archaic, folksy or ornate wording.\n- Dialogue sounds like real people today. Each character's register (education, manners, roughness) comes from their card and samples; with no hint, neutral modern speech. Rough means curt, not folksy.\n- Show through senses, action and subtext. Do not explain what the scene already shows.\n- Vivid and grounded. Concrete detail over abstraction.\n- Vary sentence length. Fragments only for shock or panic.\n- About 40% dialogue, 60% narration. Anchor dialogue in gesture, movement, silence.\n- A trait must be audible in the character's own lines (ironic → ironic, blunt → cutting, timid → hedging). Never only state it in narration.\n- Every voice must be identifiable without a speaker tag.", exact: true },
+  { key: "plot", signature: "Plot:\n- The world moves while the player decides: time passes, characters act, consequences land.\n- Threads: SEED → DEVELOP → ESCALATE → CLIMAX → RESOLVE. Max 2–3 active; close or merge before opening new ones.\n- No change for ~5 exchanges → add ONE fitting hook (arrival, discovery, consequence). No deus ex machina.\n- Alternate calm, tension, release.\n- Reveal lore through action and consequence, not exposition.", exact: true },
+  { key: "characters", signature: "Characters:\n- Play each character from their card: voice (vocabulary, rhythm, tics), values, history, attitude to the hero.\n- Use names; do not repeat titles, rank or reputation as a refrain.\n- Drive behavior from inside, unnarrated: current vs long-term wants and their conflict; what they protect and how they hide it; how they bond or push away.\n- State shows: fatigue, pain and fear change behavior. Characters lie, misread each other, hold grudges, change slowly.\n- Play dark cards (cruel, obsessive, possessive, yandere) fully, without softening.", exact: true },
+  { key: "living_npcs", signature: "NPCs:\n- Have names, routines, opinions and memory of past interactions. They initiate, refuse, lie, gossip, hold grudges.\n- Distinct voices. Not every interaction is about the hero.", exact: true },
+  { key: "realistic_conduct", signature: "Realism:\n- Nobody exists to please the hero. Characters agree when their own reasons match, refuse when they don't.\n- Love interests are not rewards and not easy. Interest starts low, grows only on evidence over many scenes, and can fall.\n- Characters can refuse, be busy, hurt or jealous, take another side, end a conversation, want different things.\n- Good relationships still have everyday friction (fatigue, money, plans, chores, being taken for granted).\n- Behavior stays consistent with the card and with what happened. Deep traits (e.g. distrust) change only with time and proof.\n- Damage lasts. An apology is not an undo. Some things are not forgiven.\n- The hero can fail: plans collapse, charm misses, the answer is no.\n- Do not resolve a conflict in the turn it starts.\n- This is not hostility: warm characters stay warm; someone with good reason to say yes says yes. Every reaction is the character's own.", exact: true },
+  { key: "style", signature: "Second person for the hero, in the project's genre tone: emotional interactive romance — drama, flirtation, intrigue. Sensory, alive prose. Stay inside the engine's turn length.", exact: true },
   // Проза без указания стиля: модель сама выбирала регистр и уходила в просторечие.
   { key: 'prose', signature: "Prose:\n- Show through senses, action and subtext. Do not explain what the scene already shows.\n- Vivid and grounded. Concrete detail over abstraction.\n- Vary sentence length. Fragments only for shock or panic.\n- About 40% dialogue, 60% narration. Anchor dialogue in gesture, movement, silence.\n- A trait must be audible in the character's own lines (ironic → ironic, blunt → cutting, timid → hedging). Never only state it in narration.\n- Every voice must be identifiable without a speaker tag.", exact: true },
 ];
 
-function refreshOutdatedBuiltins(preset: PromptPreset): PromptPreset {
-  let changed = false;
-  const blocks = preset.blocks.map((b) => {
-    if (!b.builtinKey || b.dynamic) return b;
-    // Проверяем ВСЕ сигнатуры этого ключа (у блока может быть несколько прошлых версий).
-    const outdated = OUTDATED_SIGNATURES.some(
-      (s) =>
-        s.key === b.builtinKey &&
-        (s.exact ? b.content.trim() === s.signature.trim() : b.content.includes(s.signature))
-    );
-    if (outdated) {
-      const fresh = defaultBlockContent(b.builtinKey);
-      if (fresh !== null && fresh !== b.content) {
-        changed = true;
-        return { ...b, content: fresh };
-      }
-    }
-    return b;
-  });
-  return changed ? { ...preset, blocks } : preset;
-}
 
 // Нормализация пресета из сохранённого проекта (миграция/страховка).
 export function normalizePreset(raw: any): PromptPreset {
   const parsed = raw && Array.isArray(raw.blocks) ? parsePresetJson(raw) : null;
-  return refreshOutdatedBuiltins(ensureNewBuiltins(ensurePlaceholders(parsed || defaultPreset())));
+  if (!parsed) return defaultPreset();
+  const defaults = makeDefaults();
+  const modular = migrateToModular(ensurePlaceholders(parsed), defaults, '');
+  return refreshBuiltins(insertMissingByOrder(modular, defaults), defaults, OUTDATED_SIGNATURES);
 }

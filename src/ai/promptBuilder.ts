@@ -1,5 +1,5 @@
 import type { NarrativeMode, Project, RuntimeState, LlmMessage, MemoryBookEntry } from '../shared/types';
-import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, NATIVE_RP_THINKING_PLAN, NATIVE_VN_THINKING_PLAN, DEFAULT_BAN_WORDS, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
+import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_BAN_WORDS, PHONE_BALANCE_STAT, normalizeNarrativeMode } from '../shared/types';
 import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
@@ -7,7 +7,7 @@ import { stripStateBlock } from './rpResponse';
 import { applyRegexRules } from './regexRules';
 import { getPresetSettings, presetForMode } from './presetSettings';
 import { modelAlwaysThinks, modelIsVerboseThinker } from './providers';
-import { DEEPSEEK_THINKING_PLAN } from './deepseekPreset';
+import { composeThinkingPlan, planSteps } from './thinkingPlan';
 import { matchLorebook } from './lorebookEngine';
 import { logEvent } from '../shared/logStore';
 import { getGlobalNotes } from '../shared/globalNotes';
@@ -1224,7 +1224,10 @@ export async function buildRequest(
   // правленые пресеты этих строк не получат — поэтому короткая страховка от
   // движка: без неё Gemini на историческом или военном сеттинге уходит в
   // «ишь» и «гляди-ка» и огрубляет всех мимо анкет.
-  if (ps.narrativeLanguage !== 'en') {
+  // Страховка только для пресетов без своего тумблера «Язык» (свои и старые): где
+  // он есть, автор решает сам — выключил, значит, так и задумано.
+  const hasLanguageToggle = preset.blocks.some((b) => b.builtinKey === 'language' || b.builtinKey === 'rp_language');
+  if (ps.narrativeLanguage !== 'en' && !hasLanguageToggle) {
     systemParts.push(
       'RUSSIAN STYLE (authoritative): modern literary Russian, as in a contemporary novel; dialogue is natural present-day speech. ' +
         'Folk or archaic words (ишь, гляди-ка, авось, кабы, давеча, сударь, батюшки) only if a character\'s card or samples use them; setting or social status alone never justify them.'
@@ -1525,23 +1528,14 @@ export async function buildRequest(
   // управляемого плана (видеть, что модель планирует) там и так закрыт.
   const nativeThinker = modelAlwaysThinks();
   if (ps.guidedThinking) {
-    // Чек-лист по умолчанию зависит и от режима, и от ПРОФИЛЯ модели: под DeepSeek он
-    // начинается с разбора собственного прошлого ответа, и без этого пункта запрет
-    // «не повторяйся» повисает в воздухе — модель не считает, что повторяется.
-    // Берём профильный именно как ДЕФОЛТ: свой текст автора всегда важнее.
-    const planDefault =
-      mode !== 'rp'
-        ? DEFAULT_THINKING_PLAN
-        : ps.modelProfile === 'deepseek'
-          ? DEEPSEEK_THINKING_PLAN
-          : DEFAULT_RP_THINKING_PLAN;
-    // Многословным семействам (Kimi, GLM) — короткий чек-лист и в своём <thinking>:
-    // полный они расписывают на тысячи символов, и ход пишется минутами.
+    // План собирается из включённых блоков пресета (см. thinkingPlan.ts): каждый
+    // шаг принадлежит своему тумблеру. Многословным семействам (Kimi, GLM) — его
+    // короткая версия: полную они расписывают на тысячи символов. Свой план автора
+    // важнее любого дефолта и уходит как написан.
     const verbose = modelIsVerboseThinker();
-    let plan = ps.thinkingPlan?.trim() || (verbose ? (mode === 'rp' ? NATIVE_RP_THINKING_PLAN : NATIVE_VN_THINKING_PLAN) : planDefault);
-    // Пункт про стоп-слова осмыслен, только если список есть. С пустым списком он
-    // просил бы сверяться с пустотой — модель отвечала бы «clean», не проверив
-    // ничего, и приучалась бы отвечать так же на соседние пункты.
+    let plan =
+      ps.thinkingPlan?.trim() ||
+      composeThinkingPlan({ mode: mode === 'rp' ? 'rp' : 'vn', profile: ps.modelProfile, blocks: preset.blocks, banWords: !!banWords, compact: verbose });
     if (!banWords) plan = plan.split('\n').filter((l) => !/^\s*\d+\.\s*BAN LIST/i.test(l)).join('\n');
 
     if (nativeThinker) {
@@ -1555,7 +1549,7 @@ export async function buildRequest(
         // разворачивала каждый пункт в абзац, писала сцену начерно и только потом
         // отвечала. Gemini 3 с этим справлялась сама — ей прежняя формулировка.
         (verbose
-          ? 'REASONING BUDGET: keep your private reasoning under ~100 words. Answer only these checks, one short line each, ' +
+          ? `REASONING BUDGET: keep your private reasoning under ~${Math.max(60, planSteps(plan) * 12)} words. Answer only these checks, one short line each, ` +
             'then stop reasoning at once and write the reply. Do not draft, outline or rehearse the scene in reasoning; ' +
             'no second pass, no analysis beyond the list.\n'
           : 'SELF-CHECK: before writing, go through this checklist in your own reasoning, in order; let the answers shape the turn.\n') +
@@ -1581,7 +1575,7 @@ export async function buildRequest(
           ? 'Then close </thinking> and write the scene only.'
           : 'Then close </thinking> and output the one JSON object, nothing after it.';
       tail.push(
-        'REASONING: start the reply with one <thinking></thinking> block, under ~100 words. One short line per step, in order, in the story language. ' +
+        `REASONING: start the reply with one <thinking></thinking> block, under ~${Math.max(60, planSteps(plan) * 10)} words. One short line per step, in order, in the story language. ` +
           'Checklist, not prose: no drafting or rehearsing the scene, no second pass. Clean step → "clean"/"ok"; otherwise name the fix.\n' +
           `${plan}\n${after}\n${lengthReminder}\n${formatReminder}`
       );

@@ -2,11 +2,11 @@ import { create } from 'zustand';
 import { defaultPreset, normalizePreset, type PromptPreset } from './promptPreset';
 import { defaultRpPreset, normalizeRpPreset } from './rpPreset';
 import { defaultLocalPreset, normalizeLocalPreset } from './localPreset';
-import { defaultDeepseekPreset, normalizeDeepseekPreset } from './deepseekPreset';
+import { defaultDeepseekPreset, normalizeDeepseekPreset, DEEPSEEK_THINKING_PLAN } from './deepseekPreset';
 import { isPromptProcessing, type PromptProcessing } from './promptPostProcess';
 import { normalizeRegexRules, type RegexRule } from './regexRules';
 import type { AdvancedPromptBlock, NarrativeMode } from '../shared/types';
-import { DEFAULT_TURN_LENGTH, normalizeTurnLength, LEGACY_THINKING_PLANS } from '../shared/types';
+import { DEFAULT_TURN_LENGTH, normalizeTurnLength, LEGACY_THINKING_PLANS, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, NATIVE_RP_THINKING_PLAN, NATIVE_VN_THINKING_PLAN } from '../shared/types';
 
 // Семейство модели, под которое подогнан пресет и параметры.
 export type ModelProfile = 'universal' | 'deepseek' | 'local';
@@ -165,9 +165,27 @@ function defaults(): PresetSettings {
 // при первом открытии панели. Стираем такой в undefined, а не подменяем текстом:
 // дефолт зависит и от режима, и от профиля модели (см. promptBuilder), и записать
 // сюда один конкретный вариант значило бы навязать РП-игроку план новеллы.
+// Прежние зашитые планы — тоже «старый дефолт»: теперь план собирается из
+// тумблеров пресета, и застывшая копия перестала бы подстраиваться под них.
+// Последний — план, который раздавался текстом вместе с пресетом «Сюжет и
+// драматургия» до того, как план научился собираться сам.
+const FIXED_PLANS = [
+  DEFAULT_THINKING_PLAN,
+  DEFAULT_RP_THINKING_PLAN,
+  NATIVE_RP_THINKING_PLAN,
+  NATIVE_VN_THINKING_PLAN,
+  DEEPSEEK_THINKING_PLAN,
+  `1. SCENE: who is here, what changes now.
+2. SAID vs THOUGHT: what {{user}} said aloud vs only thought.
+3. KNOWLEDGE: anyone about to use a fact they could not know → fix.
+4. STORY: what changes this reply (fact, shift, stake, hook)? Is it the obvious option → take the stronger one.
+5. GENRE: fits the genre and author voice?
+6. TURN: first beat (not a retelling of {{user}}'s move) → turn → stop at {{user}}'s move.
+7. FORMAT: «» quotes, {{user}} = "you", nothing written for {{user}}.`,
+];
 function refreshThinkingPlan(v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined;
-  return LEGACY_THINKING_PLANS.some((old) => old.trim() === v.trim()) ? undefined : v;
+  return [...LEGACY_THINKING_PLANS, ...FIXED_PLANS].some((old) => old.trim() === v.trim()) ? undefined : v;
 }
 
 function load(): PresetSettings {

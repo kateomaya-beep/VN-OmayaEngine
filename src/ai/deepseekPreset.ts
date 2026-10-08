@@ -6,6 +6,7 @@ import {
   type PromptPreset,
 } from './promptPreset';
 import { defaultRpPreset, RP_OUTDATED_SIGNATURES } from './rpPreset';
+import { insertMissingByOrder, migrateToModular } from './storyModules';
 
 // ПРЕСЕТ ПОД DEEPSEEK.
 //
@@ -113,7 +114,6 @@ const DS_VERBOSE_V1 = [
   { key: 'ds_anti_template', signature: "Vary the SHAPE of the turn, not just its words. Your default composition — react, describe the room, hold a meaningful pause, ask {{user}} a question — must not repeat two turns running.\n\nOther ways to build a turn, all legitimate: open on dialogue with no lead-in; open mid-action; give the beat to a character who is not talking to {{user}} at all; end on someone leaving; end flatly with no invitation. A turn does NOT have to end with a question or an offer to act — the scene can simply continue and leave the move to {{user}} without asking for it.", exact: true },
 ];
 
-const DS_ORDER = makeDefaults().map((b) => b.builtinKey as string);
 
 export function normalizeDeepseekPreset(raw: unknown): PromptPreset {
   const parsed =
@@ -121,23 +121,7 @@ export function normalizeDeepseekPreset(raw: unknown): PromptPreset {
   if (!parsed) return defaultDeepseekPreset();
   // Блоки здесь — копии РП-шных (те же builtinKey), поэтому и устаревают они по тем
   // же сигнатурам: правка общего блока должна доезжать и до этого пресета.
-  const fresh = (pr: PromptPreset) =>
-    refreshBuiltins(pr, makeDefaults(), [...RP_OUTDATED_SIGNATURES, ...DS_VERBOSE_V1]);
-  const have = new Set(parsed.blocks.map((b) => b.builtinKey).filter(Boolean) as string[]);
-  const missing = makeDefaults().filter((b) => b.builtinKey && !have.has(b.builtinKey));
-  if (!missing.length) return fresh(parsed);
-  const blocks = [...parsed.blocks];
-  for (const block of missing) {
-    const want = DS_ORDER.indexOf(block.builtinKey as string);
-    let at = blocks.length;
-    for (let i = 0; i < blocks.length; i++) {
-      const idx = blocks[i].builtinKey ? DS_ORDER.indexOf(blocks[i].builtinKey as string) : -1;
-      if (idx > want) {
-        at = i;
-        break;
-      }
-    }
-    blocks.splice(at, 0, { ...block, id: uid('blk') });
-  }
-  return fresh({ ...parsed, blocks });
+  const defaults = makeDefaults();
+  const modular = migrateToModular(parsed, defaults, 'rp_');
+  return refreshBuiltins(insertMissingByOrder(modular, defaults), defaults, [...RP_OUTDATED_SIGNATURES, ...DS_VERBOSE_V1]);
 }

@@ -1,5 +1,30 @@
 import { uid } from '../shared/utils';
 import {
+  arsenalModule,
+  authorModules,
+  charactersModule,
+  conflictsModule,
+  darkCardsModule,
+  dramaModule,
+  genreModules,
+  genreRuleModule,
+  insertMissingByOrder,
+  languageModule,
+  livingNpcsModule,
+  loreModule,
+  migrateToModular,
+  moduleBlock,
+  naturalModule,
+  newFacesModule,
+  plotModule,
+  proseModule,
+  pulseModule,
+  twistsModule,
+  type ModuleDef,
+} from './storyModules';
+
+const HERO = '{{user}}' as const;
+import {
   parsePresetJson,
   refreshBuiltins,
   type BuiltinSignature,
@@ -51,6 +76,7 @@ Delete facts that stopped being true (healed wound, quit job). Omit absent chara
 
 // Дефолтные блоки РП-пресета. Каждый редактируется и переставляется.
 function makeDefaults(): PromptBlock[] {
+  const m = (d: ModuleDef) => moduleBlock(d, 'rp_');
   const b = (
     builtinKey: string,
     name: string,
@@ -61,13 +87,12 @@ function makeDefaults(): PromptBlock[] {
   return [
     b(
       'rp_identity',
-      '✦ Identity',
+      '✦ Роль',
       `You are the narrator of a roleplay with {{user}}. You write the world and every character except {{user}}.
 - No persona of your own: no narrator commentary, never address the player as a player.
 - {{user}} is the player's character. Their words, thoughts, decisions and actions belong to the player.
 - POV: {{user}} in second person ("you"); everyone else in third person. Keep the established tense; default past.
 - Keep continuity: place, time, weather, who is present, positions, clothing, injuries, who knows what.
-- The world runs on its own: actions have consequences, characters pursue their own goals.
 - No moralizing, disclaimers or check-ins unless in character.`
     ),
     b(
@@ -91,30 +116,9 @@ function makeDefaults(): PromptBlock[] {
 - [AUTHOR NOTE] … — standing instruction for this and later turns.
 - [GAME START] … — open the story from this description.`
     ),
-    b(
-      'rp_prose',
-      '✦ Prose Engine',
-      `Prose:
-- Modern style, like a contemporary novel: clear, precise, natural present-day language. No archaic, folksy or ornate wording.
-- Dialogue sounds like real people today. Each character's register (education, manners, roughness) comes from their card and samples; with no hint, neutral modern speech. Rough means curt, not folksy.
-- Show through senses, action and subtext. Do not explain what the scene already shows.
-- Vivid and grounded. Concrete detail over abstraction.
-- Vary sentence and paragraph length. Fragments only for shock or panic.
-- About 40% dialogue, 60% narration. Anchor dialogue in gesture, movement, silence.
-- A trait must be audible in the character's own lines (ironic → ironic lines, blunt → cutting, timid → hedging). Never only state it in narration.
-- Speech samples near the end of the request override any description of a character's manner: match their vocabulary, rhythm and sentence length. Keep each register as given: rough stays rough, refined stays refined.
-- Every voice must be identifiable without a speaker tag.`
-    ),
-    b(
-      'rp_plot',
-      '✦ Plot & World',
-      `Plot:
-- The world moves while {{user}} decides: time passes, characters act, consequences land.
-- Threads: SEED → DEVELOP → ESCALATE → CLIMAX → RESOLVE. Max 2–3 active; close or merge before opening new ones.
-- No change for ~5 exchanges → add ONE fitting hook (arrival, discovery, consequence). No deus ex machina.
-- Alternate calm, tension, release.
-- Reveal lore through action and consequence, not exposition.`
-    ),
+    m(languageModule()),
+    m(proseModule()),
+    m(naturalModule()),
     b(
       'rp_anti_slop',
       '✦ Anti-Slop',
@@ -126,25 +130,9 @@ function makeDefaults(): PromptBlock[] {
 - Litotes and negative parallelism ("not unkind").
 - Ending on a summary of {{user}}'s feelings, a moral, or a question to the player.`
     ),
-    b(
-      'rp_characters',
-      '✦ Characters',
-      `Characters:
-- Play each character from their card: voice (vocabulary, rhythm, tics), values, history, attitude to {{user}}.
-- The card overrides canon. If a character shares a name with one from a book, anime, film or game, ignore the original. Where the card is silent, invent to fit the card, never the source. Never state biographical facts (family, origin, death, rank) the card does not give.
-- Use names; do not repeat titles, rank or reputation as a refrain.
-- Drive behavior from inside, unnarrated: current vs long-term wants and their conflict; what they protect and how they hide it; how they bond or push away.
-- State shows: fatigue, pain and fear change behavior. Characters lie, misread each other, hold grudges, change slowly.
-- Play dark cards (cruel, obsessive, possessive, yandere) fully, without softening.`
-    ),
-    b(
-      'rp_living_npcs',
-      '✦ Living NPCs',
-      `NPCs:
-- Have names, routines, opinions and memory of past interactions. They initiate, refuse, lie, gossip, hold grudges.
-- Distinct voices. Not every interaction is about {{user}}.
-- With several characters present, they also talk to each other, not only to {{user}}.`
-    ),
+    m(charactersModule(HERO)),
+    m(darkCardsModule()),
+    m(livingNpcsModule(HERO)),
     b(
       'rp_info_hygiene',
       '✦ Информационная гигиена',
@@ -159,20 +147,16 @@ Otherwise they do not know it: they ask, assume the old version, or do not react
 - Play ignorance as drama (wrong questions, old beliefs, bad timing); do not smooth it over.
 - Unsure whether someone knows: they don't.`
     ),
-    b(
-      'rp_realistic_conduct',
-      '✦ Реалистичность поступков',
-      `Realism:
-- Nobody exists to please {{user}}. Characters agree when their own reasons match, refuse when they don't.
-- Love interests are not rewards and not easy. Interest starts low, grows only on evidence over many scenes, and can fall.
-- Characters can refuse, be busy, hurt or jealous, take another side, end a conversation, want different things.
-- Good relationships still have everyday friction (fatigue, money, plans, being taken for granted).
-- Behavior stays consistent with the card and with what happened. Deep traits (e.g. distrust) change only with time and proof.
-- Damage lasts. An apology is not an undo. Some things are not forgiven.
-- {{user}} can fail: plans collapse, charm misses, the answer is no.
-- Do not resolve a conflict in the turn it starts.
-- This is not hostility: warm characters stay warm; someone with good reason to say yes says yes. Every reaction is the character's own.`
-    ),
+    m(conflictsModule(HERO)),
+    m(plotModule(HERO)),
+    m(dramaModule()),
+    m(twistsModule(HERO)),
+    m(loreModule()),
+    m(newFacesModule()),
+    m(arsenalModule()),
+    m(genreRuleModule()),
+    ...genreModules().map(m),
+    ...authorModules().map(m),
     b(
       'rp_format',
       '⚙ Правила форматирования',
@@ -199,8 +183,8 @@ OUTPUT
     b('rp_state', '🗂 Служебная сводка состояния', STATE_CONTRACT, { flagged: true }),
     b(
       'rp_style',
-      '✎ Style / Tone',
-      `Match the project's genre and tone. Stay inside the engine's turn length: near the top when the scene has room, near the bottom for fast exchanges. Never outside the range.`
+      '✎ Тон и длина',
+      `Tone: keep the story's established tone. Stay inside the engine's turn length: near the top when the scene has room, near the bottom for fast exchanges. Never outside the range.`
     ),
     // Пустые слоты под усмотрение пользователя. Пусто = ничего не отправляется.
     b('jailbreak', '🔓 Jailbreak (свой)', ''),
@@ -215,6 +199,7 @@ OUTPUT
     b('memory', '↳ Memory', '', { dynamic: 'memory' }),
     b('memorybook', '↳ Меморибук (сработавшие записи)', '', { dynamic: 'memorybook' }),
     b('chat_history', '💬 История переписки', '', { dynamic: 'history' }),
+    m(pulseModule()),
     // НИЖЕ ИСТОРИИ. Всё, что стоит здесь, модель читает последним — перед самым
     // ходом. Образцы речи именно поэтому тут: в анкете наверху они читаются как
     // описание, а рядом с ходом — слышатся как голос.
@@ -236,10 +221,6 @@ export function defaultRpBlockContent(builtinKey: string): string | null {
 // пользователь выключил блок, движок не ждёт <state> и не тратит на него разбор.
 export const RP_STATE_BLOCK_KEY = 'rp_state';
 
-// Нормализация РП-пресета из localStorage: разбор общим парсером, откат на дефолт
-// при мусоре и доливка встроенных блоков, появившихся после того, как пресет уже
-// был сохранён (иначе новый блок никогда бы не доехал до существующих установок).
-const RP_BUILTIN_ORDER = makeDefaults().map((b) => b.builtinKey as string);
 
 // Сигнатуры УСТАРЕВШИХ дефолтов встроенных блоков РП-пресета (см. тот же приём в
 // promptPreset.ts): если блок всё ещё содержит старый дефолтный текст (значит,
@@ -266,6 +247,21 @@ const VERBOSE_V1: Record<string, string> = {
 
 const RP_SIGNATURES_ALL: BuiltinSignature[] = [
   ...Object.entries(VERBOSE_V1).map(([key, signature]) => ({ key, signature, exact: true })),
+  // Сжатые тексты ДО модульного пресета (один блок держал несколько наборов правил)
+  // и тексты пресета «Сюжет и драматургия», который раздавался файлом.
+  { key: "rp_identity", signature: "You are the narrator of a roleplay with {{user}}. You write the world and every character except {{user}}.\n- No persona of your own: no narrator commentary, never address the player as a player.\n- {{user}} is the player's character. Their words, thoughts, decisions and actions belong to the player.\n- POV: {{user}} in second person (\"you\"); everyone else in third person. Keep the established tense; default past.\n- Keep continuity: place, time, weather, who is present, positions, clothing, injuries, who knows what.\n- The world runs on its own: actions have consequences, characters pursue their own goals.\n- No moralizing, disclaimers or check-ins unless in character.", exact: true },
+  { key: "rp_prose", signature: "Prose:\n- Modern style, like a contemporary novel: clear, precise, natural present-day language. No archaic, folksy or ornate wording.\n- Dialogue sounds like real people today. Each character's register (education, manners, roughness) comes from their card and samples; with no hint, neutral modern speech. Rough means curt, not folksy.\n- Show through senses, action and subtext. Do not explain what the scene already shows.\n- Vivid and grounded. Concrete detail over abstraction.\n- Vary sentence and paragraph length. Fragments only for shock or panic.\n- About 40% dialogue, 60% narration. Anchor dialogue in gesture, movement, silence.\n- A trait must be audible in the character's own lines (ironic → ironic lines, blunt → cutting, timid → hedging). Never only state it in narration.\n- Speech samples near the end of the request override any description of a character's manner: match their vocabulary, rhythm and sentence length. Keep each register as given: rough stays rough, refined stays refined.\n- Every voice must be identifiable without a speaker tag.", exact: true },
+  { key: "rp_plot", signature: "Plot:\n- The world moves while {{user}} decides: time passes, characters act, consequences land.\n- Threads: SEED → DEVELOP → ESCALATE → CLIMAX → RESOLVE. Max 2–3 active; close or merge before opening new ones.\n- No change for ~5 exchanges → add ONE fitting hook (arrival, discovery, consequence). No deus ex machina.\n- Alternate calm, tension, release.\n- Reveal lore through action and consequence, not exposition.", exact: true },
+  { key: "rp_characters", signature: "Characters:\n- Play each character from their card: voice (vocabulary, rhythm, tics), values, history, attitude to {{user}}.\n- The card overrides canon. If a character shares a name with one from a book, anime, film or game, ignore the original. Where the card is silent, invent to fit the card, never the source. Never state biographical facts (family, origin, death, rank) the card does not give.\n- Use names; do not repeat titles, rank or reputation as a refrain.\n- Drive behavior from inside, unnarrated: current vs long-term wants and their conflict; what they protect and how they hide it; how they bond or push away.\n- State shows: fatigue, pain and fear change behavior. Characters lie, misread each other, hold grudges, change slowly.\n- Play dark cards (cruel, obsessive, possessive, yandere) fully, without softening.", exact: true },
+  { key: "rp_living_npcs", signature: "NPCs:\n- Have names, routines, opinions and memory of past interactions. They initiate, refuse, lie, gossip, hold grudges.\n- Distinct voices. Not every interaction is about {{user}}.\n- With several characters present, they also talk to each other, not only to {{user}}.", exact: true },
+  { key: "rp_realistic_conduct", signature: "Realism:\n- Nobody exists to please {{user}}. Characters agree when their own reasons match, refuse when they don't.\n- Love interests are not rewards and not easy. Interest starts low, grows only on evidence over many scenes, and can fall.\n- Characters can refuse, be busy, hurt or jealous, take another side, end a conversation, want different things.\n- Good relationships still have everyday friction (fatigue, money, plans, being taken for granted).\n- Behavior stays consistent with the card and with what happened. Deep traits (e.g. distrust) change only with time and proof.\n- Damage lasts. An apology is not an undo. Some things are not forgiven.\n- {{user}} can fail: plans collapse, charm misses, the answer is no.\n- Do not resolve a conflict in the turn it starts.\n- This is not hostility: warm characters stay warm; someone with good reason to say yes says yes. Every reaction is the character's own.", exact: true },
+  { key: "rp_style", signature: "Match the project's genre and tone. Stay inside the engine's turn length: near the top when the scene has room, near the bottom for fast exchanges. Never outside the range.", exact: true },
+  { key: "rp_identity", signature: "You are the author and narrator of an interactive novel with {{user}}. You write the world and every character except {{user}}.\n- Your job is the story: a plot that moves, scenes with stakes, a world that keeps surprising. Dialogue serves the story, not the other way round.\n- No persona of your own: no narrator commentary, never address the player as a player.\n- {{user}} is the player's character. Their words, thoughts, decisions and actions belong to the player.\n- POV: {{user}} in second person (\"you\"); everyone else in third person. Keep the established tense; default past.\n- Keep continuity: place, time, who is present, positions, clothing, injuries, who knows what.\n- No moralizing, disclaimers or check-ins.\n- Natural narration: everything grows out of what already happened — motivated transitions, believable reactions, no events from nowhere.", exact: true },
+  { key: "rp_prose", signature: "Prose:\n- Language: modern literary Russian, like a contemporary bestselling novel. Clear, precise, natural present-day words. No archaic, folksy or ornate wording unless a character's card has it.\n- Narrate like a novelist telling a story, not a game master listing outcomes: scene, motion, sensory detail, subtext.\n- Show through senses, action and consequence. Do not explain what the scene already shows.\n- Concrete over abstract. One precise detail beats three adjectives.\n- Vary sentence and paragraph length. Fragments only for shock.\n- Narration carries the story; dialogue is sharp and purposeful. About 60% narration, 40% dialogue.\n- Dialogue sounds like real people today; each character's register comes from their card and speech samples. Every voice recognizable without a tag.\n- Natural narration: everything grows out of what already happened — motivated transitions, believable reactions, no events from nowhere.", exact: true },
+  { key: "rp_plot", signature: "STORY FIRST. This is a novel the player lives in, not a chat. Plot and drama are your top priority.\n- Every reply moves the story: something changes — a fact comes out, the situation shifts, stakes rise, danger nears, a relationship turns. A reply where nothing changes is a failure.\n- Write with an author's agenda: keep 1–2 active storylines plus one hidden thread brewing off-screen. Plant setups now that pay off later; pay off old setups.\n- Dramaturgy: every scene has a want, an obstacle and a turn. Build tension, release it, build it higher. End on a hook: a reveal, an arrival, a choice, a ticking clock.\n- Be unpredictable. Discard the first, obvious continuation and take the stronger, less expected one the genre allows. Do not be afraid to surprise or shock {{user}}.\n- Anything can happen if the story earns it: death, betrayal, crime, violence, disaster, loss, dark secrets, moral catastrophe. No plot armor for anyone but no cruelty for its own sake.\n- Invent lore freely and boldly: history, factions, rumors, places, legends, family secrets, hidden rules of the world. Keep it consistent with what is established and reuse it later.\n- New NPCs are story fuel: introduce them with a name, a goal and a secret; let them change the situation.\n- Conflict comes from the plot — events, outside forces, secrets, circumstances — not from characters bickering with {{user}}. Characters treat {{user}} as their card and shared history say; drama is what happens to them.\n- Twists must feel surprising and inevitable at once: set them up with small clues. No deus ex machina, no random noise.\n- Pacing: alternate action and quiet; a quiet scene still deepens a character or plants a seed.\n- Natural narration: everything grows out of what already happened — motivated transitions, believable reactions, no events from nowhere.", exact: true },
+  { key: "rp_characters", signature: "Characters:\n- Play each character from their card: voice, values, history, attitude to {{user}}. The card overrides canon: if a name matches a book, anime, film or game character, ignore the original.\n- Where the card is silent, invent to fit the card. Never state biographical facts the card does not give.\n- Characters have inner lives and goals of their own; they act, not only react.\n- They treat {{user}} as their card and shared history say: warm stays warm, cold stays cold, change comes from events.\n- Play dark cards (cruel, obsessive, possessive) fully.\n- Natural narration: everything grows out of what already happened — motivated transitions, believable reactions, no events from nowhere.", exact: true },
+  { key: "rp_info_hygiene", signature: "Knowledge:\n- A character knows only what they witnessed, were told, or is common knowledge.\n- {{user}}'s unspoken thoughts (*italics*) are never heard.\n- Your author's knowledge (other scenes, the hidden thread, future plot) is not theirs. Unsure → they don't know.", exact: true },
+  { key: "rp_style", signature: "Tone: follow the active genre and author voice. Natural narration first — the story reads as one flowing novel.\nStay inside the engine's turn length: near the top when the scene has room, near the bottom for fast exchanges. Never outside the range.", exact: true },
   // Проза с «Keep rough voices rough»: Gemini читал это как разрешение огрубить
   // всех подряд и уводил речь в просторечие.
   { key: 'rp_prose', signature: "Prose:\n- Show through senses, action and subtext. Do not explain what the scene already shows.\n- Vivid and grounded. Concrete detail over abstraction.\n- Vary sentence and paragraph length. Fragments only for shock or panic.\n- About 40% dialogue, 60% narration. Anchor dialogue in gesture, movement, silence.\n- A trait must be audible in the character's own lines (ironic → ironic lines, blunt → cutting, timid → hedging). Never only state it in narration.\n- Speech samples near the end of the request override any description of a character's manner: match their vocabulary, rhythm and sentence length. Keep each register as given: rough stays rough, refined stays refined.\n- Every voice must be identifiable without a speaker tag.", exact: true },
@@ -315,27 +311,9 @@ export function normalizeRpPreset(raw: unknown): PromptPreset {
     ? parsePresetJson(raw)
     : null;
   if (!parsed) return defaultRpPreset();
-  const have = new Set(parsed.blocks.map((b) => b.builtinKey).filter(Boolean) as string[]);
-  const missing = makeDefaults().filter((b) => b.builtinKey && !have.has(b.builtinKey));
-  let withMissing = parsed;
-  if (missing.length) {
-    // Вставляем каждый недостающий блок на его штатное место по порядку дефолта, а
-    // не в конец: блок, оказавшийся ниже истории переписки, читается моделью как
-    // более свежий, и «формат ответа» внизу вёл бы себя иначе, чем задумано.
-    const blocks = [...parsed.blocks];
-    for (const block of missing) {
-      const want = RP_BUILTIN_ORDER.indexOf(block.builtinKey as string);
-      let at = blocks.length;
-      for (let i = 0; i < blocks.length; i++) {
-        const idx = blocks[i].builtinKey ? RP_BUILTIN_ORDER.indexOf(blocks[i].builtinKey as string) : -1;
-        if (idx > want) {
-          at = i;
-          break;
-        }
-      }
-      blocks.splice(at, 0, { ...block, id: uid('blk') });
-    }
-    withMissing = { ...parsed, blocks };
-  }
-  return refreshOutdatedRpBuiltins(withMissing);
+  const defaults = makeDefaults();
+  // Сначала разовый переход на модульный пресет, потом — недостающие блоки на их
+  // штатные места (см. insertMissingByOrder), потом — обновление нетронутых.
+  const modular = migrateToModular(parsed, defaults, 'rp_');
+  return refreshOutdatedRpBuiltins(insertMissingByOrder(modular, defaults));
 }
