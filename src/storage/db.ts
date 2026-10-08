@@ -12,7 +12,14 @@ import {
   readSavesFromDisk,
   deleteSaveFromDisk,
   logDisk,
+  statTree,
+  ledgerMatches,
+  ledgerSet,
+  readSaveFile,
+  warmProjectAssets,
+  flushLedger,
 } from './fileStore';
+import { pushToast, updateToast } from '../shared/toast';
 
 interface NovelForgeDB extends DBSchema {
   projects: {
@@ -28,6 +35,11 @@ interface NovelForgeDB extends DBSchema {
     value: SaveSlot & { key: string };
     indexes: { byProject: string };
   };
+  // Архив проектов, когда лаунчера нет: проект целиком одним zip (см. archive.ts).
+  archive: {
+    key: string; // projectId
+    value: { id: string; title: string; mode: string; archivedAt: number; size: number; blob: Blob };
+  };
   // Снимки мира по сообщениям ленты (см. turnLedger.ts).
   turnStates: {
     key: string; // `${projectId}:${messageId}`
@@ -40,7 +52,7 @@ let dbPromise: Promise<IDBPDatabase<NovelForgeDB>> | null = null;
 
 export function getDB(): Promise<IDBPDatabase<NovelForgeDB>> {
   if (!dbPromise) {
-    dbPromise = openDB<NovelForgeDB>('novel-forge', 2, {
+    dbPromise = openDB<NovelForgeDB>('novel-forge', 3, {
       upgrade(db, oldVersion) {
         if (oldVersion < 1) {
           db.createObjectStore('projects', { keyPath: 'id' });
@@ -52,6 +64,7 @@ export function getDB(): Promise<IDBPDatabase<NovelForgeDB>> {
           const turns = db.createObjectStore('turnStates', { keyPath: 'key' });
           turns.createIndex('byProject', 'projectId');
         }
+        if (oldVersion < 3) db.createObjectStore('archive', { keyPath: 'id' });
       },
     });
   }
@@ -83,6 +96,15 @@ function diskDebounce(key: string, task: () => Promise<void>, ms: number): void 
   else r.timer = setTimeout(fire, ms - elapsed);
 }
 
+/** Отменить отложенные записи проекта на диск (перед переносом в архив). */
+export function cancelDiskWrites(projectId: string): void {
+  for (const [k, r] of debouncers) {
+    if (!k.includes(`:${projectId}`) && !k.endsWith(projectId)) continue;
+    if (r.timer) clearTimeout(r.timer);
+    debouncers.delete(k);
+  }
+}
+
 let mirrorEnabled: boolean | null = null;
 async function mirrorOn(): Promise<boolean> {
   if (mirrorEnabled === null) mirrorEnabled = await dataApiAvailable();
@@ -98,6 +120,9 @@ export async function listProjects(): Promise<Project[]> {
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
+  // Сейвы и ассеты проекта подтягиваются с диска при первом обращении к нему, а не
+  // на старте (см. ensureProjectSynced).
+  await ensureProjectSynced(id);
   const db = await getDB();
   const raw = await db.get('projects', id);
   return raw ? normalizeProject(raw) : undefined;
@@ -357,6 +382,34 @@ export async function deleteProject(id: string): Promise<void> {
   if (await mirrorOn()) void deleteProjectFromDisk(id);
 }
 
+/**
+ * Убрать проект из браузера, НЕ трогая диск (архив): сейвы, снимки мира, сам проект
+ * и блобы ассетов, на которые не ссылается ни один другой проект.
+ */
+export async function removeProjectFromIdb(id: string): Promise<void> {
+  const db = await getDB();
+  const project = await db.get('projects', id);
+  for (const k of await db.getAllKeysFromIndex('saves', 'byProject', id)) await db.delete('saves', k);
+  for (const k of await db.getAllKeysFromIndex('turnStates', 'byProject', id)) await db.delete('turnStates', k);
+  await db.delete('projects', id);
+  if (project) {
+    const used = new Set<string>();
+    for (const other of await db.getAll('projects')) for (const a of other.assets || []) used.add(a.blobKey);
+    for (const a of project.assets) if (!used.has(a.blobKey)) await db.delete('assets', a.blobKey).catch(() => {});
+  }
+  projectSync.delete(id);
+}
+
+/** Положить проект только в браузерную базу (возврат из архива с диска). */
+export async function putProjectLocal(project: Project): Promise<void> {
+  await putProjectIdb(project);
+}
+
+/** Включено ли зеркало на диск (есть лаунчер). */
+export async function diskMirrorOn(): Promise<boolean> {
+  return mirrorOn();
+}
+
 // ---- Assets (blobs) ----
 
 export async function putAsset(key: string, blob: Blob): Promise<void> {
@@ -392,6 +445,7 @@ export async function putSave(save: SaveSlot): Promise<void> {
 }
 
 export async function listSaves(projectId: string): Promise<SaveSlot[]> {
+  await ensureProjectSynced(projectId);
   const db = await getDB();
   const all = await db.getAllFromIndex('saves', 'byProject', projectId);
   const project = await getProject(projectId);
@@ -401,6 +455,12 @@ export async function listSaves(projectId: string): Promise<SaveSlot[]> {
     .sort((a, b) => a.slot - b.slot);
 }
 
+/** Сейвы проекта как лежат в базе — без нормализации и без синхронизации с диском. */
+export async function listSavesRaw(projectId: string): Promise<SaveSlot[]> {
+  const db = await getDB();
+  return db.getAllFromIndex('saves', 'byProject', projectId);
+}
+
 export async function deleteSave(projectId: string, slot: number): Promise<void> {
   const db = await getDB();
   await db.delete('saves', `${projectId}:${slot}`);
@@ -408,10 +468,25 @@ export async function deleteSave(projectId: string, slot: number): Promise<void>
 }
 
 // ---- Синхронизация с диском (файловый источник истины) ----
-// Вызывается один раз при старте. Аддитивно: IndexedDB остаётся рабочим слоем.
-// 1) Проекты только в IndexedDB → мигрируем на диск (существующие тест-проекты).
-// 2) Проекты с диска → прогреваем IndexedDB (диск переживает очистку браузера).
-// 3) Сейвы сверяем по времени: где новее — то и оставляем (защита от debounce-окна).
+//
+// БЫСТРЫЙ СТАРТ. Раньше при каждом открытии, ДО показа экрана, читались с диска все
+// сейвы всех проектов целиком (у каждого прохождения ещё и 15 автоснимков — полных
+// копий истории) и переписывались в IndexedDB, даже если там лежало то же самое.
+// Чем больше и дольше игры, тем дольше белый экран.
+//
+// Теперь на старте — только карточки проектов (project.json), и то лишь изменившиеся.
+// Сейвы и ассеты проекта подтягиваются, когда к проекту обращаются (ensureProjectSynced),
+// и читаются только файлы, которых нет в журнале (см. fileStore: ledger). Последний
+// проект, в который играли, синхронизируется в фоне сразу после показа экрана.
+
+/** Есть ли в браузере хоть один проект: если нет, старт ждёт диска (иначе пустая библиотека). */
+export async function hasLocalProjects(): Promise<boolean> {
+  const db = await getDB();
+  return (await db.count('projects')) > 0;
+}
+
+let latestDiskProject: string | null = null;
+
 export async function syncStorage(): Promise<void> {
   if (!(await dataApiAvailable())) {
     mirrorEnabled = false;
@@ -419,35 +494,126 @@ export async function syncStorage(): Promise<void> {
     return;
   }
   mirrorEnabled = true;
+  const t0 = Date.now();
   try {
     const diskIds = await listDiskProjectIds();
     const diskSet = new Set(diskIds);
-    const idbProjects = await listProjects();
+    const db = await getDB();
 
     // 1) Миграция IndexedDB → диск (то, чего на диске ещё нет).
-    for (const p of idbProjects) {
-      if (!diskSet.has(p.id)) {
+    for (const raw of await db.getAll('projects')) {
+      if (!diskSet.has(raw.id)) {
+        const p = normalizeProject(raw);
         await saveProjectToDisk(p);
-        for (const s of await listSaves(p.id)) await saveSaveToDisk(s);
+        for (const s of await listSavesRaw(p.id)) await saveSaveToDisk(s);
         logDisk(`Миграция на диск: «${p.meta.title}»`);
       }
     }
 
-    // 2) Загрузка с диска → IndexedDB (диск — источник истины).
-    const db = await getDB();
+    // 2) Карточки проектов с диска — только изменившиеся.
+    let read = 0;
+    let latestAt = 0;
     for (const id of diskIds) {
-      const dp = await loadProjectFromDisk(id);
+      const files = await statTree(id);
+      if (!files) {
+        // Старый лаунчер без размеров и времени — по-старому, целиком.
+        await syncProjectFully(id);
+        read++;
+        continue;
+      }
+      for (const f of files) {
+        if (f.f.startsWith('saves/') && f.mtime > latestAt) {
+          latestAt = f.mtime;
+          latestDiskProject = id;
+        }
+      }
+      const pj = files.find((f) => f.f === 'project.json');
+      if (!pj) continue;
+      const have = await db.getKey('projects', id);
+      if (have && ledgerMatches(id, 'project.json', pj.size, pj.mtime)) continue;
+      const dp = await loadProjectFromDisk(id, { warmAssets: false });
       if (!dp) continue;
       await putProjectIdb(dp);
-      // 3) Сейвы: диск, но если в IndexedDB новее — оставляем новее.
-      const diskSaves = await readSavesFromDisk(id);
-      for (const ds of diskSaves) {
-        const cur = await db.get('saves', `${ds.projectId}:${ds.slot}`);
-        if (!cur || (ds.savedAt || 0) >= ((cur as any).savedAt || 0)) await putSaveIdb(ds);
-      }
+      // Обложку — сразу, чтобы карточка в библиотеке была с картинкой.
+      await warmProjectAssets(dp, (a) => a.id === dp.meta.coverAssetId);
+      ledgerSet(id, 'project.json', pj.size, pj.mtime);
+      read++;
     }
-    logDisk(`Синхронизация с диском завершена (${diskIds.length} проектов на диске).`);
+    flushLedger();
+    logDisk(`Старт: ${diskIds.length} проектов на диске, прочитано карточек: ${read}, за ${Date.now() - t0} мс.`);
   } catch (e) {
     logDisk('Ошибка синхронизации с диском: ' + (e as Error).message);
   }
+}
+
+/** Проект, в который играли последним (по времени сейвов на диске), — для фоновой подгрузки. */
+export function latestProjectOnDisk(): string | null {
+  return latestDiskProject;
+}
+
+// Старое поведение — для лаунчера, который не отдаёт размеры и время файлов.
+async function syncProjectFully(id: string): Promise<void> {
+  const db = await getDB();
+  const dp = await loadProjectFromDisk(id);
+  if (!dp) return;
+  await putProjectIdb(dp);
+  for (const ds of await readSavesFromDisk(id)) {
+    const cur = await db.get('saves', `${ds.projectId}:${ds.slot}`);
+    if (!cur || (ds.savedAt || 0) > ((cur as any).savedAt || 0)) await putSaveIdb(ds);
+  }
+}
+
+const projectSync = new Map<string, Promise<void>>();
+
+/**
+ * Сейвы и ассеты проекта с диска — один раз за сеанс и только изменившиеся файлы.
+ * Новее в браузере (ещё не долетело до диска) — остаётся браузерное.
+ */
+export function ensureProjectSynced(id: string): Promise<void> {
+  const known = projectSync.get(id);
+  if (known) return known;
+  const job = (async () => {
+    if (!(await mirrorOn())) return;
+    const files = await statTree(id);
+    if (!files) return; // старый лаунчер: проект уже прочитан целиком на старте
+    const db = await getDB();
+    const t0 = Date.now();
+    let toastId: string | null = null;
+    const slow = setTimeout(() => {
+      toastId = pushToast('info', 'Загружаю историю с диска…');
+    }, 400);
+    let read = 0;
+    try {
+      for (const f of files) {
+        if (!/^saves\/.+\.jsonl$/.test(f.f)) continue;
+        const slot = Number(f.f.slice('saves/'.length, -'.jsonl'.length));
+        if (!Number.isFinite(slot)) continue;
+        const key = `${id}:${slot}`;
+        if (ledgerMatches(id, f.f, f.size, f.mtime) && (await db.getKey('saves', key))) continue;
+        const ds = await readSaveFile(id, f.f);
+        read++;
+        if (!ds) continue;
+        const cur = await db.get('saves', key);
+        if (!cur || (ds.savedAt || 0) > ((cur as any).savedAt || 0)) await putSaveIdb(ds);
+        ledgerSet(id, f.f, f.size, f.mtime);
+      }
+      const raw = await db.get('projects', id);
+      if (raw) await warmProjectAssets(normalizeProject(raw));
+      if (read) logDisk(`Проект ${id}: с диска прочитано сейвов ${read} за ${Date.now() - t0} мс.`);
+    } finally {
+      flushLedger();
+      clearTimeout(slow);
+      if (toastId) updateToast(toastId, 'success', 'История загружена');
+    }
+  })().catch((e) => {
+    projectSync.delete(id); // в следующий раз попробуем снова
+    logDisk('Не удалось подтянуть проект с диска: ' + (e as Error).message);
+  });
+  projectSync.set(id, job);
+  return job;
+}
+
+/** Забыть, что проект синхронизирован (после возврата из архива). */
+export function forgetProjectSync(id: string): void {
+  projectSync.delete(id);
 }

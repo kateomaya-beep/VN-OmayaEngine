@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { markOpened } from '../../storage/lastOpened';
 import { usePlayerStore } from './playerStore';
 import { isDefaultSpriteDisplay, normalizeNarrativeMode } from '../../shared/types';
 import { LaunchScreen } from './components/LaunchScreen';
@@ -52,6 +53,7 @@ export function PlayerPage() {
   const theme = s.project?.playerTheme ?? loadGlobalTheme();
 
   useEffect(() => {
+    if (projectId) markOpened(projectId);
     return () => stopAllMusic();
   }, [projectId]);
 

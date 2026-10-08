@@ -3,7 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 import { router } from './app/router';
 import { logEvent } from './shared/logStore';
-import { syncStorage } from './storage/db';
+import { syncStorage, hasLocalProjects, latestProjectOnDisk, ensureProjectSynced } from './storage/db';
+import { pruneAllStale } from './storage/maintenance';
 import './index.css';
 
 // Заставка загрузки (index.html) ждёт от нас отметок о реальных шагах. Модуль
@@ -83,16 +84,10 @@ if (import.meta.env.PROD && /^https?:$/.test(location.protocol)) {
   }
 }
 
-// Перед рендером синхронизируемся с файловым хранилищем на диске (если доступен
-// локальный сервер): прогреваем/мигрируем IndexedDB из файлов. Так библиотека сразу
-// показывает актуальный набор, а прогресс переживает очистку данных браузера.
-async function boot() {
-  window.__boot?.stage('storage');
-  try {
-    await syncStorage();
-  } catch (e) {
-    logEvent('warn', 'disk', 'Синхронизация с диском не удалась: ' + (e as Error).message);
-  }
+// Старт. Если в браузере уже есть проекты — экран сразу, сверка с диском в фоне
+// (по её окончании библиотека перечитает список). Пусто — после очистки данных или
+// на новом устройстве — ждём диск, иначе библиотека покажется пустой.
+function render() {
   window.__boot?.stage('ui');
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
@@ -102,5 +97,35 @@ async function boot() {
   // Прячем заставку не по таймеру, а после того, как React отработал первый кадр:
   // иначе она уходила бы за миг до появления интерфейса и открывала пустоту.
   requestAnimationFrame(() => requestAnimationFrame(() => window.__boot?.done()));
+}
+
+async function boot() {
+  window.__boot?.stage('storage');
+  let local = false;
+  try {
+    local = await hasLocalProjects();
+  } catch {
+    /* базы нет — пойдём через диск */
+  }
+  const sync = async () => {
+    try {
+      await syncStorage();
+    } catch (e) {
+      logEvent('warn', 'disk', 'Синхронизация с диском не удалась: ' + (e as Error).message);
+    }
+    window.dispatchEvent(new Event('nf-storage-synced'));
+    // Последний проект, в который играли, — сразу в фоне, чтобы «Продолжить» был
+    // мгновенным; потом — плановая чистка старых автоснимков.
+    const latest = latestProjectOnDisk();
+    if (latest) await ensureProjectSynced(latest);
+    setTimeout(() => void pruneAllStale(), 15000);
+  };
+  if (local) {
+    render();
+    void sync();
+  } else {
+    await sync();
+    render();
+  }
 }
 boot();

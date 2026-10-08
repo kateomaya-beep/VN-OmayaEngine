@@ -54,7 +54,9 @@ function looksLikeProjectJson(raw: unknown): boolean {
 }
 
 // Import: reads zip, re-keys ids to avoid collisions, stores blobs + project.
-export async function importProjectZip(file: File): Promise<ImportResult> {
+// keepId — для возврата из архива: тот же id проекта и те же ключи блобов, чтобы
+// на проект продолжали указывать снимки мира, отметки и прочие ссылки по id.
+export async function importProjectZip(file: File, opts: { keepId?: boolean } = {}): Promise<ImportResult> {
   // Ранняя диагностика частых проблем переноса (пустой/битый файл, не .zip).
   if (!file || file.size === 0) {
     throw new Error(
@@ -116,10 +118,10 @@ export async function importProjectZip(file: File): Promise<ImportResult> {
   const warnings: string[] = [];
 
   // Re-key project id + blobKeys so imports never clobber existing data.
-  const newProjectId = uid('proj');
+  const newProjectId = opts.keepId ? project.id : uid('proj');
   for (const asset of project.assets) {
     const oldKey = asset.blobKey;
-    const newKey = uid('blob');
+    const newKey = opts.keepId ? oldKey : uid('blob');
     const entry = zip.file(`assets/${oldKey}`);
     if (entry) {
       try {
@@ -141,8 +143,10 @@ export async function importProjectZip(file: File): Promise<ImportResult> {
   }
 
   project.id = newProjectId;
-  project.createdAt = Date.now();
-  project.updatedAt = Date.now();
+  if (!opts.keepId) {
+    project.createdAt = Date.now();
+    project.updatedAt = Date.now();
+  }
   await saveProject(project);
 
   // Прогресс (если в архиве есть saves.json). Внутренние ссылки RuntimeState — на

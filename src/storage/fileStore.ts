@@ -43,6 +43,14 @@ function fpath(id: string, rel: string): string {
 async function putBytes(id: string, rel: string, bytes: BlobPart): Promise<void> {
   const r = await fetch(fpath(id, rel), { method: 'PUT', body: bytes as BodyInit });
   if (!r.ok) throw new Error(`disk write failed ${rel}: ${r.status}`);
+  // Свой же файл записываем в журнал как известный: иначе следующий старт
+  // перечитал бы с диска то, что только что туда положили.
+  try {
+    const j = await r.json();
+    if (typeof j?.mtime === 'number') ledgerSet(id, rel, j.size, j.mtime);
+  } catch {
+    /* старый лаунчер без mtime — файл просто перечитается один раз */
+  }
 }
 async function getBytes(id: string, rel: string): Promise<ArrayBuffer | null> {
   const r = await fetch(fpath(id, rel), { method: 'GET' });
@@ -52,6 +60,82 @@ async function getBytes(id: string, rel: string): Promise<ArrayBuffer | null> {
 }
 async function delFile(id: string, rel: string): Promise<void> {
   await fetch(fpath(id, rel), { method: 'DELETE' }).catch(() => {});
+  ledgerDel(id, rel);
+}
+
+// ---- Журнал известных файлов ----
+// Размер и время изменения каждого сейва и project.json на момент, когда браузерная
+// база с ним совпадала. Совпали с тем, что сейчас на диске, — файл не читаем: он уже
+// лежит в IndexedDB. Ассеты сюда не пишем: для них проверка — есть ли блоб в базе.
+const LEDGER_KEY = 'nf_disk_ledger_v1';
+let ledger: Record<string, string> | null = null;
+function loadLedger(): Record<string, string> {
+  if (ledger) return ledger;
+  try {
+    ledger = JSON.parse(localStorage.getItem(LEDGER_KEY) || '{}') || {};
+  } catch {
+    ledger = {};
+  }
+  return ledger!;
+}
+let ledgerTimer: ReturnType<typeof setTimeout> | null = null;
+function saveLedger(): void {
+  if (ledgerTimer) return;
+  ledgerTimer = setTimeout(flushLedger, 300);
+}
+/** Записать журнал сразу (после загрузки проекта и при закрытии страницы). */
+export function flushLedger(): void {
+  if (ledgerTimer) {
+    clearTimeout(ledgerTimer);
+    ledgerTimer = null;
+  }
+  if (!ledger) return;
+  try {
+    localStorage.setItem(LEDGER_KEY, JSON.stringify(ledger));
+  } catch {
+    /* переполнение или приватный режим — журнал просто начнётся заново */
+  }
+}
+// Отложенная запись не должна теряться, если страницу закрыли или перезагрузили
+// раньше, чем сработал таймер: иначе тот же проект перечитывался бы заново.
+if (typeof window !== 'undefined') window.addEventListener('pagehide', flushLedger);
+const tracked = (rel: string) => rel === 'project.json' || rel.startsWith('saves/');
+export function ledgerMatches(id: string, rel: string, size: number, mtime: number): boolean {
+  return loadLedger()[`${id}/${rel}`] === `${size}:${mtime}`;
+}
+export function ledgerSet(id: string, rel: string, size: number, mtime: number): void {
+  if (!tracked(rel)) return;
+  loadLedger()[`${id}/${rel}`] = `${size}:${mtime}`;
+  saveLedger();
+}
+function ledgerDel(id: string, rel: string): void {
+  const l = loadLedger();
+  if (`${id}/${rel}` in l) {
+    delete l[`${id}/${rel}`];
+    saveLedger();
+  }
+}
+export function ledgerDropProject(id: string): void {
+  const l = loadLedger();
+  for (const k of Object.keys(l)) if (k.startsWith(id + '/')) delete l[k];
+  saveLedger();
+}
+
+export interface DiskFile {
+  f: string;
+  size: number;
+  mtime: number;
+}
+/** Файлы проекта с размером и временем. null — старый лаунчер, который так не умеет. */
+export async function statTree(id: string): Promise<DiskFile[] | null> {
+  try {
+    const r = await fetch(`/__data/tree/${encodeURIComponent(id)}?stat=1`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j?.stat && Array.isArray(j.files) ? (j.files as DiskFile[]) : null;
+  } catch {
+    return null;
+  }
 }
 async function tree(id: string): Promise<string[]> {
   const r = await fetch(`/__data/tree/${encodeURIComponent(id)}`);
@@ -65,6 +149,7 @@ export async function listDiskProjectIds(): Promise<string[]> {
 }
 export async function deleteProjectFromDisk(id: string): Promise<void> {
   await fetch(`/__data/p/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+  ledgerDropProject(id);
 }
 
 // ---- asset path derivation ----
@@ -142,7 +227,7 @@ export async function saveProjectToDisk(project: Project): Promise<void> {
   }
 }
 
-export async function loadProjectFromDisk(id: string): Promise<Project | null> {
+export async function loadProjectFromDisk(id: string, opts: { warmAssets?: boolean } = {}): Promise<Project | null> {
   const buf = await getBytes(id, 'project.json');
   if (!buf) return null;
   let raw: any;
@@ -152,10 +237,18 @@ export async function loadProjectFromDisk(id: string): Promise<Project | null> {
     return null;
   }
   const project = normalizeProject(raw);
+  if (opts.warmAssets !== false) await warmProjectAssets(project);
+  return project;
+}
+
+/** Блобы ассетов проекта с диска в IndexedDB — только недостающие. */
+export async function warmProjectAssets(project: Project, only?: (a: AssetMeta) => boolean): Promise<void> {
+  const id = project.id;
   const sprites = spriteMap(project);
   // Прогреваем IndexedDB блобами ассетов из файлов — но только те, которых в кэше
   // ещё нет (тёплый кэш → быстрый старт; читаем файлы только после очистки данных).
   for (const a of project.assets) {
+    if (only && !only(a)) continue;
     try {
       if (await getAssetBlob(a.blobKey)) continue;
       const bytes = await getBytes(id, assetRelPath(a, sprites));
@@ -164,7 +257,6 @@ export async function loadProjectFromDisk(id: string): Promise<Project | null> {
       /* нет файла — ассет просто не отобразится, проект не падает */
     }
   }
-  return project;
 }
 
 // ---- Saves (JSONL) ----
@@ -242,6 +334,42 @@ export async function readSavesFromDisk(id: string): Promise<SaveSlot[]> {
   }
   return out.sort((a, b) => a.slot - b.slot);
 }
+/** Один сейв с диска. */
+export async function readSaveFile(id: string, rel: string): Promise<SaveSlot | null> {
+  const buf = await getBytes(id, rel);
+  return buf ? jsonlToSave(new TextDecoder().decode(buf)) : null;
+}
+
+// ---- Архив проектов (каталог .archive у лаунчера) ----
+export interface ArchivedOnDisk {
+  id: string;
+  title?: string;
+  mode?: string;
+  archivedAt?: number;
+  size: number;
+}
+export async function archiveProjectOnDisk(id: string, meta: Omit<ArchivedOnDisk, 'id' | 'size'>): Promise<void> {
+  const r = await fetch(`/__data/archive/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(meta) });
+  if (!r.ok) throw new Error(`Лаунчер не перенёс проект в архив: ${r.status}`);
+  ledgerDropProject(id);
+}
+export async function unarchiveProjectOnDisk(id: string): Promise<void> {
+  const r = await fetch(`/__data/unarchive/${encodeURIComponent(id)}`, { method: 'POST' });
+  if (!r.ok) throw new Error(`Лаунчер не вернул проект из архива: ${r.status}`);
+}
+export async function deleteArchivedOnDisk(id: string): Promise<void> {
+  await fetch(`/__data/archive/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+export async function listArchivedOnDisk(): Promise<ArchivedOnDisk[] | null> {
+  try {
+    const r = await fetch('/__data/archived');
+    if (!r.ok) return null;
+    return ((await r.json()).items || []) as ArchivedOnDisk[];
+  } catch {
+    return null;
+  }
+}
+
 export async function deleteSaveFromDisk(id: string, slot: number): Promise<void> {
   await delFile(id, `saves/${slot}.jsonl`);
 }

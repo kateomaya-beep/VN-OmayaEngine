@@ -12,7 +12,7 @@
 
 import http from 'node:http';
 import os from 'node:os';
-import { readFile, writeFile, mkdir, rm, readdir, stat } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm, readdir, stat, rename } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -222,6 +222,44 @@ async function listTree(dir, base = '') {
   return out;
 }
 
+// То же дерево, но с размером и временем изменения каждого файла. По ним
+// приложение понимает, что файл не менялся, и не читает его заново: раньше на
+// каждом старте читались ВСЕ сейвы всех проектов целиком.
+async function listTreeStat(dir, base = '') {
+  const out = [];
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    const rel = base ? `${base}/${e.name}` : e.name;
+    const abs = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...(await listTreeStat(abs, rel)));
+    else {
+      try {
+        const st = await stat(abs);
+        out.push({ f: rel, size: st.size, mtime: Math.round(st.mtimeMs) });
+      } catch {
+        /* файл пропал между readdir и stat — пропускаем */
+      }
+    }
+  }
+  return out;
+}
+
+// Архив проектов: каталог .archive рядом с проектами. Точка в начале — чтобы он не
+// попадал в список проектов (там перечисляются все каталоги DATA_ROOT).
+const ARCHIVE_DIR = path.join(DATA_ROOT, '.archive');
+function safeId(id) {
+  const clean = decodeURIComponent(id || '');
+  return clean && /^[^/\\.][^/\\]*$/.test(clean) && !clean.includes('..') ? clean : null;
+}
+async function dirSize(dir) {
+  return (await listTreeStat(dir)).reduce((n, x) => n + x.size, 0);
+}
+
 async function handleData(req, res, url) {
   const p = url.pathname;
   const json = (code, obj, extra = {}) => {
@@ -235,16 +273,70 @@ async function handleData(req, res, url) {
     if (p === '/__data/projects') {
       await mkdir(DATA_ROOT, { recursive: true });
       const entries = await readdir(DATA_ROOT, { withFileTypes: true });
-      const ids = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+      const ids = entries.filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name);
       return json(200, { ids });
     }
 
-    // /__data/tree/<id>
+    // /__data/tree/<id>[?stat=1]
     if (p.startsWith('/__data/tree/')) {
       const id = p.slice('/__data/tree/'.length);
       const dir = safeDataPath(id);
       if (!dir) return json(400, { error: 'bad_path' });
+      if (url.searchParams.get('stat') === '1') return json(200, { files: await listTreeStat(dir), stat: true });
       return json(200, { files: await listTree(dir) });
+    }
+
+    // /__data/archived — список проектов в архиве
+    if (p === '/__data/archived' && req.method === 'GET') {
+      await mkdir(ARCHIVE_DIR, { recursive: true });
+      const entries = await readdir(ARCHIVE_DIR, { withFileTypes: true });
+      const items = [];
+      for (const e of entries.filter((x) => x.isDirectory())) {
+        const dir = path.join(ARCHIVE_DIR, e.name);
+        let meta = {};
+        try {
+          meta = JSON.parse(await readFile(path.join(dir, '.archived.json'), 'utf8'));
+        } catch {
+          /* старый архив без метки — покажем по имени */
+        }
+        items.push({ id: e.name, ...meta, size: await dirSize(dir) });
+      }
+      return json(200, { items });
+    }
+
+    // /__data/archive/<id> (POST) — убрать проект в архив; DELETE — удалить из архива
+    if (p.startsWith('/__data/archive/')) {
+      const id = safeId(p.slice('/__data/archive/'.length));
+      if (!id) return json(400, { error: 'bad_path' });
+      const from = path.join(DATA_ROOT, id);
+      const to = path.join(ARCHIVE_DIR, id);
+      if (req.method === 'POST') {
+        if (!existsSync(from)) return json(404, { error: 'not_found' });
+        if (existsSync(to)) return json(409, { error: 'already_archived' });
+        const body = await readBody(req);
+        await mkdir(ARCHIVE_DIR, { recursive: true });
+        await rename(from, to);
+        // Метка архива: название, режим и время — чтобы список не читал project.json.
+        await writeFile(path.join(to, '.archived.json'), body.length ? body : Buffer.from('{}'));
+        return json(200, { ok: true });
+      }
+      if (req.method === 'DELETE') {
+        await rm(to, { recursive: true, force: true });
+        return json(200, { ok: true });
+      }
+    }
+
+    // /__data/unarchive/<id> (POST) — вернуть проект из архива
+    if (p.startsWith('/__data/unarchive/') && req.method === 'POST') {
+      const id = safeId(p.slice('/__data/unarchive/'.length));
+      if (!id) return json(400, { error: 'bad_path' });
+      const from = path.join(ARCHIVE_DIR, id);
+      const to = path.join(DATA_ROOT, id);
+      if (!existsSync(from)) return json(404, { error: 'not_found' });
+      if (existsSync(to)) return json(409, { error: 'exists' });
+      await rename(from, to);
+      await rm(path.join(to, '.archived.json'), { force: true });
+      return json(200, { ok: true });
     }
 
     // /__data/p/<id>  — удалить весь проект
@@ -273,7 +365,10 @@ async function handleData(req, res, url) {
         const body = await readBody(req);
         await mkdir(path.dirname(abs), { recursive: true });
         await writeFile(abs, body);
-        return json(200, { ok: true, size: body.length });
+        // Время изменения — чтобы приложение записало файл в журнал как «уже
+        // известный» и не перечитывало свой же сейв на следующем старте.
+        const st = await stat(abs);
+        return json(200, { ok: true, size: st.size, mtime: Math.round(st.mtimeMs) });
       }
       if (req.method === 'DELETE') {
         await rm(abs, { force: true });

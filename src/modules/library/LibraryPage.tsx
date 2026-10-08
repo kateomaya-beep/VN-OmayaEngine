@@ -12,6 +12,8 @@ import { AssetImage, Modal } from '../../shared/ui';
 import { formatDate } from '../../shared/utils';
 import { useT, useLang } from '../../shared/i18n';
 import { logEvent } from '../../shared/logStore';
+import { archiveProject, listArchived, restoreArchived, deleteArchived, type ArchivedProject } from '../../storage/archive';
+import { markOpened, staleSince } from '../../storage/lastOpened';
 
 export function LibraryPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -36,7 +38,66 @@ export function LibraryPage() {
   const foreign = projects.length - visible.length;
   useEffect(() => {
     refresh();
+    void refreshArchive();
+    // Старт показывает библиотеку сразу, а сверка с диском идёт в фоне — по её
+    // окончании перечитываем список (могли прийти проекты с диска).
+    const onSynced = () => {
+      refresh();
+      void refreshArchive();
+    };
+    window.addEventListener('nf-storage-synced', onSynced);
+    return () => window.removeEventListener('nf-storage-synced', onSynced);
   }, []);
+
+  // Архив проектов (только вручную, по кнопке на карточке).
+  const [archived, setArchived] = useState<ArchivedProject[]>([]);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  async function refreshArchive() {
+    try {
+      setArchived(await listArchived());
+    } catch {
+      setArchived([]);
+    }
+  }
+  async function onArchive(p: Project) {
+    if (
+      !confirm(
+        `Убрать «${p.meta.title}» в архив?\n\nПроект пропадёт из библиотеки и не будет грузиться на старте. ` +
+          'Ничего не удаляется: вернуть можно в разделе «Архив» внизу библиотеки — со всеми сохранениями.'
+      )
+    )
+      return;
+    setBusy('Убираю в архив…');
+    try {
+      await archiveProject(p.id);
+      await refresh();
+      await refreshArchive();
+      pushToast('success', `«${p.meta.title}» — в архиве`);
+    } catch (e) {
+      alert('Не удалось убрать в архив: ' + (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function onRestore(a: ArchivedProject) {
+    setBusy('Возвращаю из архива…');
+    try {
+      const p = await restoreArchived(a);
+      if (p) markOpened(p.id);
+      await refresh();
+      await refreshArchive();
+      pushToast('success', `«${a.title}» снова в библиотеке`);
+    } catch (e) {
+      alert('Не удалось вернуть из архива: ' + (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function onDeleteArchived(a: ArchivedProject) {
+    if (!confirm(`Удалить «${a.title}» из архива НАВСЕГДА? Вернуть будет нельзя.`)) return;
+    await deleteArchived(a);
+    await refreshArchive();
+  }
 
   // Адаптация — КОПИЯ проекта в другом режиме. Не переключение флажка: копия уходит
   // в чужую библиотеку, оригинал остаётся здесь нетронутым, у каждого свои сейвы.
@@ -292,6 +353,11 @@ export function LibraryPage() {
                   <div className="text-[10.5px] text-[#7a7690] mt-1">
                     {t('library.lastSave')} · {formatDate(p.updatedAt)}
                   </div>
+                  {staleSince(p.id) && (
+                    <div className="text-[10px] text-[#8f86ad] mt-0.5" title={L('Можно убрать в архив кнопкой на карточке', 'You can archive it from the card')}>
+                      {L('давно не открывали', 'not opened for a while')}
+                    </div>
+                  )}
                 </div>
 
                 <div
@@ -304,7 +370,10 @@ export function LibraryPage() {
                             'repeating-linear-gradient(135deg, rgba(180,150,255,0.05) 0px, rgba(180,150,255,0.05) 2px, transparent 2px, transparent 12px)',
                         }
                   }
-                  onClick={() => nav(`/project/${p.id}`)}
+                  onClick={() => {
+                    markOpened(p.id);
+                    nav(`/project/${p.id}`);
+                  }}
                 >
                   {coverKey ? (
                     <AssetImage blobKey={coverKey} className="w-full h-full object-cover" />
@@ -317,14 +386,29 @@ export function LibraryPage() {
 
                 {/* По три иконки по бокам, Play — по центру */}
                 <div className="flex items-center justify-center gap-3.5 pb-5 pt-1">
-                  <CardIconBtn title={t('library.editor')} onClick={() => nav(`/project/${p.id}`)} icon="edit" />
+                  <CardIconBtn
+                    title={t('library.editor')}
+                    onClick={() => {
+                      markOpened(p.id);
+                      nav(`/project/${p.id}`);
+                    }}
+                    icon="edit"
+                  />
                   <CardIconBtn title={t('library.export')} onClick={() => setShareTarget(p)} icon="export" />
                   <CardIconBtn
                     title={L('Копия проекта — отдельная история', 'Copy project — a separate story')}
                     onClick={() => setCopyTarget(p)}
                     icon="copy"
                   />
-                  <CardIconBtn title={t('library.play')} onClick={() => nav(`/play/${p.id}`)} icon="play" primary />
+                  <CardIconBtn
+                    title={t('library.play')}
+                    onClick={() => {
+                      markOpened(p.id);
+                      nav(`/play/${p.id}`);
+                    }}
+                    icon="play"
+                    primary
+                  />
                   <CardIconBtn
                     title={
                       normalizeNarrativeMode(p.mode) === 'rp'
@@ -339,6 +423,7 @@ export function LibraryPage() {
                     onClick={() => setDetailsTarget(p)}
                     icon="info"
                   />
+                  <CardIconBtn title={L('В архив (не грузится, вернуть можно)', 'Archive (not loaded, can be restored)')} onClick={() => onArchive(p)} icon="archive" />
                   <CardIconBtn title={t('library.delete')} onClick={() => onDelete(p)} icon="trash" />
                 </div>
               </div>
@@ -346,6 +431,45 @@ export function LibraryPage() {
           })}
         </div>
       )}
+
+      {archived.length > 0 && (
+        <div className="mt-6 text-center">
+          <button
+            className="text-xs text-[#8f86ad] hover:text-[#d3b8ff] transition"
+            onClick={() => setArchiveOpen(true)}
+          >
+            📦 {L('Архив', 'Archive')} ({archived.length})
+          </button>
+        </div>
+      )}
+
+      <Modal open={archiveOpen} onClose={() => setArchiveOpen(false)} title={L('Архив проектов', 'Project archive')}>
+        <p className="text-xs text-gray-400 mb-3">
+          {L(
+            'Здесь лежат проекты, убранные в архив. Они не показываются в библиотеке и не грузятся на старте. «Вернуть» восстанавливает проект целиком, со всеми сохранениями.',
+            'Archived projects are hidden from the library and not loaded at startup. Restore brings a project back with all its saves.'
+          )}
+        </p>
+        <div className="space-y-2">
+          {archived.map((a) => (
+            <div key={a.id + a.where} className="rounded-lg border border-white/10 p-3 flex items-center gap-3 flex-wrap">
+              <div className="flex-1 min-w-[10rem]">
+                <div className="text-sm font-medium truncate">{a.title}</div>
+                <div className="text-[11px] text-gray-500">
+                  {a.mode === 'rp' ? L('РП', 'RP') : L('Новелла', 'Novel')} · {a.archivedAt ? formatDate(a.archivedAt) : '—'} ·{' '}
+                  {formatSize(a.size)} · {a.where === 'disk' ? L('на диске', 'on disk') : L('в браузере', 'in browser')}
+                </div>
+              </div>
+              <button className="btn-primary !px-3 !py-1 text-xs" onClick={() => onRestore(a)}>
+                {L('Вернуть', 'Restore')}
+              </button>
+              <button className="btn-ghost !px-3 !py-1 text-xs text-red-300" onClick={() => onDeleteArchived(a)}>
+                {L('Удалить навсегда', 'Delete forever')}
+              </button>
+            </div>
+          ))}
+        </div>
+      </Modal>
 
       <Modal open={creating} onClose={() => setCreating(false)} title={t('library.newTitle')}>
         <input
@@ -749,6 +873,18 @@ const CARD_ICONS: Record<string, JSX.Element> = {
       <path d="M8 6.7h2M8 9.7h4M8 12.7h4" stroke="#c8b8ee" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   ),
+  // Архив — коробка с крышкой.
+  archive: (
+    <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M3.5 5.5h13v3h-13zM4.5 8.5v7a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-7M8 11.5h4"
+        stroke="#bfb2e6"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ),
   trash: (
     <svg width="100%" height="100%" viewBox="0 0 20 20" fill="none">
       <path
@@ -770,7 +906,7 @@ function CardIconBtn({
 }: {
   title: string;
   onClick: () => void;
-  icon: 'edit' | 'export' | 'copy' | 'adapt' | 'play' | 'trash' | 'info';
+  icon: 'edit' | 'export' | 'copy' | 'adapt' | 'play' | 'trash' | 'info' | 'archive';
   primary?: boolean;
 }) {
   const size = primary ? 46 : 34;
@@ -797,4 +933,10 @@ function CardIconBtn({
       <span style={{ width: iconSize, height: iconSize, display: 'flex' }}>{CARD_ICONS[icon]}</span>
     </button>
   );
+}
+
+function formatSize(bytes: number): string {
+  if (!bytes) return '—';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
 }
