@@ -17,6 +17,7 @@ import { emptyRelationship } from '../shared/types';
 import { uid } from '../shared/utils';
 import { logEvent } from '../shared/logStore';
 import { stripStateBlock } from './rpResponse';
+import type { UserProfile } from './presetSettings';
 
 // АССИСТЕНТ-СОАВТОР: чат, который видит проект и умеет его править.
 //
@@ -341,13 +342,48 @@ RULES:
 
 // state передаётся, только когда ассистент открыт из игры: в конструкторе
 // прохождения нет, и слепок был бы пустым разделом на пустом месте.
+// ПРОФИЛЬ АВТОРА. Кто перед ассистентом и как с ним говорить — действует всегда.
+// Заметки — справка (своя героиня, заготовки): лежат под рукой, но в дело идут
+// только когда автор сам на них сошлётся. Иначе ассистент тащил бы одну и ту же
+// героиню в каждый новый сеттинг, а она нужна там лишь по просьбе.
+export function userProfileBlock(profile?: UserProfile | null): string {
+  if (!profile) return '';
+  const name = profile.name.trim();
+  const address = profile.address.trim();
+  const about = profile.about.trim();
+  const wishes = profile.wishes.trim();
+  const notes = profile.notes.trim();
+  if (!name && !address && !about && !wishes && !notes) return '';
+  const lines = ['== THE AUTHOR (who you are talking to) =='];
+  if (name) lines.push(`Name: ${name}`);
+  if (address) lines.push(`Address them as: ${address}`);
+  if (about) lines.push(`About them: ${about}`);
+  if (name || address || about) {
+    lines.push("Use their name, form of address and grammatical gender from this profile in every reply (in Russian: the matching verb and adjective endings).");
+  }
+  if (wishes) lines.push(`How they want you to communicate (always follow):\n${wishes}`);
+  if (notes) {
+    lines.push(
+      'REFERENCE NOTES — use ONLY when the author explicitly refers to them ("as in my profile", "like my notes", "remember what I wrote", "my usual heroine"). ' +
+        'Otherwise do not apply, quote or mention them, and do not carry them into the project on your own.\n<<<\n' +
+        notes +
+        '\n>>>'
+    );
+  }
+  return lines.join('\n');
+}
+
 export function buildAssistantSystem(
   project: Project,
   persona: string,
-  state?: RuntimeState | null
+  state?: RuntimeState | null,
+  profile?: UserProfile | null
 ): string {
   const who = persona.trim() || DEFAULT_ASSISTANT_PERSONA;
-  const parts = [who, projectDigest(project)];
+  const parts = [who];
+  const me = userProfileBlock(profile);
+  if (me) parts.push(me);
+  parts.push(projectDigest(project));
   if (state) parts.push(playthroughDigest(project, state));
   parts.push(PROTOCOL);
   if (state) parts.push(IN_GAME_PROTOCOL);

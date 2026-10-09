@@ -9,6 +9,29 @@ import type { AdvancedPromptBlock, NarrativeMode } from '../shared/types';
 import { DEFAULT_TURN_LENGTH, normalizeTurnLength, LEGACY_THINKING_PLANS, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, NATIVE_RP_THINKING_PLAN, NATIVE_VN_THINKING_PLAN } from '../shared/types';
 
 // Семейство модели, под которое подогнан пресет и параметры.
+export interface UserProfile {
+  /** Имя автора. */
+  name: string;
+  /** Как к нему обращаться: «Кейт», «на ты», «мадам»… */
+  address: string;
+  /** О себе: пол, возраст, что важно знать — чтобы ассистент говорил в верном роде. */
+  about: string;
+  /** Пожелания к общению — действуют всегда. */
+  wishes: string;
+  /** Справка (своя героиня, шаблоны и т. п.) — ассистент берёт ТОЛЬКО по просьбе. */
+  notes: string;
+}
+
+export function emptyUserProfile(): UserProfile {
+  return { name: '', address: '', about: '', wishes: '', notes: '' };
+}
+
+function normalizeUserProfile(v: unknown): UserProfile {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const str = (x: unknown) => (typeof x === 'string' ? x : '');
+  return { name: str(o.name), address: str(o.address), about: str(o.about), wishes: str(o.wishes), notes: str(o.notes) };
+}
+
 export type ModelProfile = 'universal' | 'deepseek' | 'local';
 
 export function isModelProfile(v: unknown): v is ModelProfile {
@@ -78,6 +101,10 @@ export interface PresetSettings {
   // Личность ассистента-соавтора — ГЛОБАЛЬНАЯ: это ваш помощник, а не свойство
   // отдельного проекта. Пусто — берётся дефолтная.
   assistantPersona: string;
+  // Профиль автора — для ассистента, и только для него (в ход рассказчика не
+  // уходит). Один на все проекты и чаты: кто ты, как к тебе обращаться, как с
+  // тобой общаться, и справочные заметки, которые ассистент берёт только по просьбе.
+  userProfile: UserProfile;
   // Язык ПОВЕСТВОВАНИЯ (нарратив/реплики/выборы), НЕ язык интерфейса. Влияет на язык,
   // на котором ИИ пишет текст истории. Пока ru/en.
   narrativeLanguage: 'ru' | 'en';
@@ -133,6 +160,7 @@ function defaults(): PresetSettings {
     regexRules: [],
     showStateInfobox: true,
     assistantPersona: '',
+    userProfile: emptyUserProfile(),
     narrativeLanguage: 'ru',
     temperature: 0.9,
     disableNativeThinking: false,
@@ -211,6 +239,7 @@ function load(): PresetSettings {
       regexRules: normalizeRegexRules(v.regexRules),
       showStateInfobox: typeof v.showStateInfobox === 'boolean' ? v.showStateInfobox : true,
       assistantPersona: typeof v.assistantPersona === 'string' ? v.assistantPersona : '',
+      userProfile: normalizeUserProfile(v.userProfile),
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
       topP: typeof v.topP === 'number' ? v.topP : undefined,

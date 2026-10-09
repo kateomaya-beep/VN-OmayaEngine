@@ -4,7 +4,7 @@ import type { MemoryState, Project, RuntimeState } from '../../../shared/types';
 import type { ChapterScope } from '../../../ai/chapterJobs';
 import { Markdown } from '../../../shared/markdown';
 import { runCompletion } from '../../../ai/providers';
-import { usePresetSettings } from '../../../ai/presetSettings';
+import { usePresetSettings, type UserProfile } from '../../../ai/presetSettings';
 import { pushToast } from '../../../shared/toast';
 import { logEvent } from '../../../shared/logStore';
 import { MessageMenu, type MessageMenuItem } from '../../../shared/MessageMenu';
@@ -138,7 +138,7 @@ export function AssistantChat(props?: {
       }));
       let acc = '';
       const raw = await runCompletion({
-        system: buildAssistantSystem(project, cfg.assistantPersona, state),
+        system: buildAssistantSystem(project, cfg.assistantPersona, state, cfg.userProfile),
         messages,
         temperature: Math.min(cfg.temperature, 1),
         maxTokens: 4000,
@@ -400,6 +400,8 @@ export function AssistantChat(props?: {
       </div>
 
       <div className="space-y-3">
+        <UserProfileCard />
+
         <div className="card">
           <button
             className="w-full text-left font-semibold text-sm flex items-center justify-between"
@@ -489,6 +491,79 @@ export function AssistantChat(props?: {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// МОЙ ПРОФИЛЬ. Один на все проекты и чаты, видит его только ассистент (рассказчику
+// в игре он не уходит). Имя, обращение, «о себе» и пожелания действуют всегда;
+// заметки — справка, которую ассистент берёт только когда на неё сослались.
+function UserProfileCard() {
+  const profile = usePresetSettings((s) => s.settings.userProfile);
+  const patch = usePresetSettings((s) => s.patch);
+  const set = (k: keyof UserProfile, v: string) => patch({ userProfile: { ...profile, [k]: v } });
+  const filled = [profile.name, profile.address, profile.about, profile.wishes, profile.notes].some((x) => x.trim());
+  const [open, setOpen] = useState(!filled);
+  return (
+    <div className="card">
+      <button
+        className="w-full text-left font-semibold text-sm flex items-center justify-between"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>👤 Мой профиль{profile.name.trim() ? ` · ${profile.name.trim()}` : ''}</span>
+        <span className="text-gray-500">{open ? '▲' : '▼'}</span>
+      </button>
+      <p className="text-xs text-gray-500 mt-1">
+        Один на все проекты и чаты. Его видит только ассистент — в игру рассказчику не уходит.
+      </p>
+      {open && (
+        <div className="space-y-2 mt-2">
+          <label className="block">
+            <span className="text-xs text-gray-400">Имя</span>
+            <input className="input text-sm" value={profile.name} onChange={(e) => set('name', e.target.value)} placeholder="Кейт" />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-400">Как ко мне обращаться</span>
+            <input
+              className="input text-sm"
+              value={profile.address}
+              onChange={(e) => set('address', e.target.value)}
+              placeholder="По имени, на «ты»"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-400">О себе</span>
+            <textarea
+              className="input text-sm h-16"
+              value={profile.about}
+              onChange={(e) => set('about', e.target.value)}
+              placeholder="Девушка. Пишу ролевые истории, люблю дарк-романс."
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-400">Пожелания к общению — действуют всегда</span>
+            <textarea
+              className="input text-sm h-16"
+              value={profile.wishes}
+              onChange={(e) => set('wishes', e.target.value)}
+              placeholder="Коротко и по делу. Без смайликов. Спорь, если идея слабая."
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-400">Заметки для ассистента — только по просьбе</span>
+            <textarea
+              className="input text-sm h-28"
+              value={profile.notes}
+              onChange={(e) => set('notes', e.target.value)}
+              placeholder="Моя постоянная героиня: имя, внешность, характер, прошлое… Попросишь «сделай как в моих заметках» — ассистент возьмёт отсюда."
+            />
+          </label>
+          <p className="text-[11px] text-gray-500">
+            Заметки ассистент сам не применяет: они лежат под рукой, пока вы не сошлётесь на них —
+            «как в моём профиле», «помнишь, я писала», «возьми мою героиню, но под этот сеттинг».
+          </p>
+        </div>
+      )}
     </div>
   );
 }
