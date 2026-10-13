@@ -9,7 +9,8 @@ import { scanCharacter, scanEvents, scanAgenda, generateCharacterSheet, type Gen
 import { buildRegistryView, findDuplicatePairs } from '../../ai/characterRegistry';
 import { pushToast, updateToast } from '../../shared/toast';
 import { uid } from '../../shared/utils';
-import { DEFAULT_MONTHS, RELATIONSHIP_FIELDS, RELATIONSHIP_META } from '../../shared/types';
+import { DEFAULT_MONTHS, RELATIONSHIP_FIELDS, RELATIONSHIP_META, normalizeNarrativeMode, normalizeChoiceMode } from '../../shared/types';
+import { payableResources } from '../../ai/choiceMode';
 import type {
   Project, MemoryConfig, VectorizationMode, GmCharacter, GameMasterState, RelationshipStats,
   AssetSelectorSource, CharacterRole, MemoryState,
@@ -26,7 +27,7 @@ import { estimateTokens } from '../../shared/utils';
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
 // отношений, календарь (день/месяц/год/время/локация + кастомные месяцы), адженда,
 // список саммари (свёрток) и векторизация. Двуязычно (по глобальному языку UI).
-type Tab = 'characters' | 'inventory' | 'sheets' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'memorybook' | 'arcs' | 'summary' | 'vector' | 'selector';
+type Tab = 'characters' | 'inventory' | 'sheets' | 'events' | 'relations' | 'locations' | 'calendar' | 'agenda' | 'memorybook' | 'arcs' | 'summary' | 'vector' | 'selector' | 'choices';
 type Lf = (ru: string, en: string) => string;
 type GM = GameMasterState;
 type PatchGm = (m: (gm: GM) => void) => void;
@@ -61,6 +62,10 @@ export function GameMasterPanel({
     { id: 'summary', label: L('Саммари', 'Summary'), icon: '🧠' },
     { id: 'vector', label: L('Поиск по прошлому', 'Past recall'), icon: '🔎' },
     { id: 'selector', label: L('Селектор', 'Selector'), icon: '🎨' },
+    // Режим выбора — только текстовый РП: в новелле выборы есть и так.
+    ...(project && normalizeNarrativeMode(project.mode) === 'rp'
+      ? [{ id: 'choices' as Tab, label: L('Выборы', 'Choices'), icon: '🎯' }]
+      : []),
   ];
 
   const noGame = (
@@ -98,6 +103,7 @@ export function GameMasterPanel({
       {tab === 'summary' && <SummaryTab project={project} onPatch={onPatch} L={L} />}
       {tab === 'vector' && <VectorTab project={project} onPatch={onPatch} L={L} />}
       {tab === 'selector' && <SelectorTab project={project} onPatch={onPatch} L={L} />}
+      {tab === 'choices' && <ChoicesTab project={project} onPatch={onPatch} L={L} />}
     </Modal>
   );
 }
@@ -1444,6 +1450,83 @@ function SelectorTab({ project, onPatch, L }: { project?: Project | null; onPatc
           keyRole="assetSelector"
           onChange={(conn) => onPatch((p) => { if (p.aiConfig.assetSelector) p.aiConfig.assetSelector.customApi = conn; })}
         />
+      )}
+    </div>
+  );
+}
+
+// РЕЖИМ ВЫБОРА (текстовый РП). Подключаемый по проекту: в конце ответа модель
+// предлагает варианты, они показываются кнопками; своё можно написать как обычно.
+function ChoicesTab({
+  project,
+  onPatch,
+  L,
+}: {
+  project?: Project | null;
+  onPatch?: (mutator: (p: Project) => void) => void;
+  L: Lf;
+}) {
+  if (!project) return <p className="text-sm text-gray-500">{L('Откройте проект.', 'Open a project.')}</p>;
+  const cfg = normalizeChoiceMode(project.choiceMode) ?? { enabled: false, count: 3, paid: false };
+  const res = payableResources(project);
+  const patch = (p: Partial<typeof cfg>) =>
+    onPatch?.((pr) => {
+      pr.choiceMode = { ...cfg, ...p };
+    });
+  return (
+    <div className="space-y-4">
+      <label className="flex items-start gap-2 cursor-pointer">
+        <input type="checkbox" className="mt-1" checked={cfg.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
+        <span>
+          <span className="font-medium text-sm">{L('Режим выбора', 'Choice mode')}</span>
+          <span className="block text-xs text-gray-500 mt-0.5">
+            {L(
+              'В конце каждого ответа — кнопки с вариантами, что делать дальше. Нажали — модель сама пишет, как герой это делает, и что происходит дальше. Своё можно написать в строке ввода, как обычно. Для тех, кому хочется не писать каждый ход, а отдаться истории.',
+              'Each reply ends with buttons: what to do next. Pick one and the model writes your hero doing it and what follows. You can still type your own move.'
+            )}
+          </span>
+        </span>
+      </label>
+      {cfg.enabled && (
+        <>
+          <div>
+            <div className="text-sm mb-1">{L('Сколько вариантов', 'How many options')}</div>
+            <div className="inline-flex rounded-lg overflow-hidden border border-white/10">
+              {[2, 3, 4].map((n) => (
+                <button
+                  key={n}
+                  className={`px-4 py-1.5 text-sm ${cfg.count === n ? 'bg-accent text-white' : 'bg-panel2 hover:bg-white/10'}`}
+                  onClick={() => patch({ count: n })}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className={`flex items-start gap-2 ${res.length ? 'cursor-pointer' : 'opacity-60'}`}>
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!res.length}
+              checked={cfg.paid && res.length > 0}
+              onChange={(e) => patch({ paid: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium text-sm">{L('Платные выборы', 'Paid choices')}</span>
+              <span className="block text-xs text-gray-500 mt-0.5">
+                {res.length
+                  ? L(
+                      `Изредка один вариант — смелее или выгоднее, но за цену: ${res.map((r) => r.name).join(', ')}. Списывает движок при нажатии; не хватает — кнопка неактивна.`,
+                      `Now and then one option costs: ${res.map((r) => r.name).join(', ')}. The engine charges it on click.`
+                    )
+                  : L(
+                      'Платить нечем: в проекте нет статов, и телефон выключен. Добавьте стат (например, деньги) в конструкторе или включите телефон.',
+                      'Nothing to pay with: the project has no stats and the phone is off.'
+                    )}
+              </span>
+            </span>
+          </label>
+        </>
       )}
     </div>
   );

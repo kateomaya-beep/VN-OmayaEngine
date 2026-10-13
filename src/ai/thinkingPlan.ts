@@ -18,6 +18,8 @@ export interface PlanInput {
   banWords: boolean;
   /** Короткая версия — для многословных «всегда думающих» (Kimi, GLM). */
   compact?: boolean;
+  /** Режим выбора в РП: сколько вариантов предложить в конце (нет — режим выключен). */
+  choices?: number;
 }
 
 export function composeThinkingPlan(inp: PlanInput): string {
@@ -63,6 +65,7 @@ export function composeThinkingPlan(inp: PlanInput): string {
     add(true, rp
       ? `TURN: first beat (not a retelling of ${hero}'s move) → shift → stop at ${hero}'s move.`
       : 'TURN: first beat → shift → where it stops.');
+    add(rp && inp.choices, `CHOICES: ${inp.choices} options that differ in intent.`);
     add(rp ? on.has('format') : on.has('json_contract'), rp
       ? `FORMAT: «» quotes, ${hero} = "you", nothing written for ${hero}.`
       : 'OUTPUT: one valid JSON object per the schema, nothing outside it.');
@@ -96,6 +99,7 @@ export function composeThinkingPlan(inp: PlanInput): string {
     : 'TURN: first beat, the shift, where it stops.');
   add(!rp && on.has('relationships'), 'STATE: stat or relationship changes, or "none".');
   add(!rp && on.has('rules'), 'CHOICE: the choices this turn, per the CHOICES rule.');
+  add(rp && inp.choices, `CHOICES: ${inp.choices} options for ${hero}'s next move — different in intent or tone, one moves the plot; premium one if it fits.`);
   add(rp ? on.has('format') : on.has('json_contract'), rp
     ? `FORMAT: one quote style; 'single' inside speech; ${hero} = "you"; italics only for thoughts; no dash before speech; nothing written for ${hero}. "ok" or the fix.`
     : `FORMAT: one JSON object per schema; every dialogue beat has the speaker's characterId; nothing outside the JSON. "ok" or the fix.`);

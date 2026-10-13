@@ -5,6 +5,7 @@ import type { GeneratedSheet } from '../../ai/gmScan';
 import { initialRuntimeState, normalizeRuntimeState } from '../../shared/factory';
 import { runTurn, pickTrackForMood, applyTurn } from '../../ai/gameEngine';
 import { parseRpResponse, rpTurn } from '../../ai/rpResponse';
+import { choiceModeOf, validateChoices } from '../../ai/choiceMode';
 import { protagonistName } from '../../ai/macros';
 import { getPresetSettings } from '../../ai/presetSettings';
 import { generateChatReplies, findContact, nameOfContact, heroNameOf, alreadyInChat, type ChatTurn } from '../../ai/phoneChat';
@@ -596,13 +597,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // передаём пометку, что списание уже сделано — иначе она нередко списывает его
     // повторно через statChanges (двойная оплата).
     let move = `[CHOICE] ${choice.text}`;
+    // Списание — на КОПИИ состояния, а не в живом. Живое уходит в снимок мира под
+    // прошлым ответом (откат, «Играть отсюда»), и списанные деньги оказались бы там:
+    // удалил платный ход — а деньги не вернулись.
+    let base: RuntimeState = state;
     if (choice.cost) {
       const cur = state.statValues[choice.cost.statId] ?? 0;
       if (cur < choice.cost.amount) {
         set({ error: 'Недостаточно ресурса для этого выбора.' });
         return;
       }
-      state.statValues[choice.cost.statId] = cur - choice.cost.amount;
+      base = { ...state, statValues: { ...state.statValues, [choice.cost.statId]: cur - choice.cost.amount } };
       const isPhoneCost = choice.cost.statId === PHONE_BALANCE_STAT;
       const statName = isPhoneCost
         ? project.phone?.currencyName || '$'
@@ -610,11 +615,11 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       move += `\n[COST ALREADY CHARGED BY ENGINE: -${choice.cost.amount} ${statName} — do NOT include this in statChanges]`;
       // Платный выбор за баланс телефона автоматически создаёт транзакцию-выписку
       // (ревизия блока 6 §2) — без отдельного beat от ИИ.
-      if (isPhoneCost && state.phone) {
-        state.phone = {
-          ...state.phone,
+      if (isPhoneCost && base.phone) {
+        base.phone = {
+          ...base.phone,
           transactions: [
-            ...state.phone.transactions,
+            ...base.phone.transactions,
             {
               amount: -choice.cost.amount,
               reason: choice.text.replace(/[*_`]/g, '').slice(0, 60),
@@ -626,7 +631,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       }
     }
     // Выбор кнопкой → ИИ разворачивает его в реплику/действие героя (Блок B.1).
-    await runAndApply(set, get, project, state, move);
+    await runAndApply(set, get, project, base, move);
   },
 
   async continueStory() {
@@ -770,7 +775,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       messagesSinceSummary: Math.max(0, st.memory.messagesSinceSummary - 1),
     };
     const trimmed: RuntimeState = { ...st, history, memory };
-    set({ state: trimmed });
+    // Кнопки выбора принадлежали удалённому ответу — убираем сразу.
+    set({ state: trimmed, ...(isTail ? { choices: [] } : {}) });
     if (!isTail || !project || !history.length) {
       void get().autosave();
       return;
@@ -785,7 +791,12 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       const res = await rebuildAt(project, trimmed, history.length - 1);
       // Пока искали снимок, удалили ещё одно — тот вызов откатит сам.
       if (get().state !== trimmed) return;
-      set({ state: carryPlayerEdits(res.state, get().state) });
+      // Кнопки — от нового последнего ответа (из снимка мира, где хранится его ход).
+      const last = history[history.length - 1];
+      set({
+        state: carryPlayerEdits(res.state, get().state),
+        choices: last?.role === 'assistant' ? res.state.lastTurn?.choices ?? [] : [],
+      });
       if (res.precision === 'none') {
         logEvent('warn', 'turn', 'Откат без снимка мира (ход сыгран до обновления): главы и телефон подчищены, часы/досье/статы проверьте в Game Master');
       } else {
@@ -828,7 +839,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       visibleBeats: [],
       queue: [],
       phase: 'choices',
-      choices: [],
+      choices: draft ? [] : res.state.lastTurn?.choices ?? [],
       cg: null,
       pendingMove: null,
       error: null,
@@ -951,7 +962,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
 
     const base: RuntimeState = carryPlayerEdits(JSON.parse(JSON.stringify(snap)), state);
-    const turn = rpTurn(base, rp.prose, rp.worldState);
+    const choiceCfg = choiceModeOf(project);
+    const turn = rpTurn(base, rp.prose, rp.worldState, choiceCfg ? validateChoices(rp.choices, project, choiceCfg) : []);
     const applied = await applyTurn(project, base, move, turn, last.swipes[index], {});
     const next = carryEngineMemory(applied.state, base, get().state);
     const h = [...next.history];
@@ -962,7 +974,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       queue: rest,
       visibleBeats: first ? [first] : [],
       phase: 'beats',
-      choices: [],
+      choices: turn.choices,
       error: null,
     });
     void get().autosave();

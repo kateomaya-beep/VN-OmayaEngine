@@ -1,4 +1,4 @@
-import type { AiTurn, RuntimeState, WorldStateUpdate } from '../shared/types';
+import type { AiTurn, Choice, RuntimeState, WorldStateUpdate } from '../shared/types';
 import { worldStateSchema } from './schema';
 import { extractThinking } from './responseParser';
 import { RP_STATE_CLOSE, RP_STATE_OPEN } from './rpPreset';
@@ -21,9 +21,41 @@ const STATE_RE = new RegExp(
   'i'
 );
 
+// Блок вариантов (режим выбора): после прозы, до сводки. Строки «1. …», «- …»;
+// платный вариант оканчивается на « | cost: <statId> <число>». Как и сводка, в
+// историю истории не входит: вырезается и при показе, и при сборке контекста.
+const CHOICES_RE = /<choices>([\s\S]*?)<\/choices>/i;
+
+export interface RawChoice {
+  text: string;
+  cost?: { statId: string; amount: number };
+}
+
+export function parseChoicesBlock(raw: string): RawChoice[] {
+  const m = CHOICES_RE.exec(raw);
+  if (!m) return [];
+  const out: RawChoice[] = [];
+  for (const line of m[1].split('\n')) {
+    let t = line.trim().replace(/^(?:\d+[.)]|[-*•])\s*/, '').trim();
+    if (!t) continue;
+    let cost: RawChoice['cost'];
+    const c = /\s*\|\s*cost\s*:\s*([\w:.-]+)\s+(\d+)\s*$/i.exec(t);
+    if (c) {
+      cost = { statId: c[1], amount: Number(c[2]) };
+      t = t.slice(0, c.index).trim();
+    }
+    // Кавычки и звёздочки вокруг варианта — разметка, а не текст.
+    t = t.replace(/^["«]|["»]$/g, '').trim();
+    if (t) out.push(cost ? { text: t, cost } : { text: t });
+  }
+  return out;
+}
+
 export interface RpResponse {
   /** Текст истории — то, что видит игрок. */
   prose: string;
+  /** Варианты из <choices> (режим выбора); проверяет их уже движок. */
+  choices: RawChoice[];
   /** Сводка мира из <state>, если она была и разобралась. */
   worldState?: WorldStateUpdate;
   /** План из <thinking>, если было управляемое размышление. */
@@ -34,7 +66,7 @@ export interface RpResponse {
 // сборке контекста: пересылать модели её собственную сводку в истории незачем —
 // актуальная версия и так приезжает динамическим блоком Game Master.
 export function stripStateBlock(raw: string): string {
-  return raw.replace(STATE_RE, '').trim();
+  return raw.replace(STATE_RE, '').replace(CHOICES_RE, '').trim();
 }
 
 // Убирает префилл из начала текста. Префилл — это НАШИ слова, вписанные в уста
@@ -95,9 +127,12 @@ export function streamingProse(raw: string): string {
   // чем служебные ключи в ленте.
   t = dropLeakedPlan(t, { streaming: true }).prose;
   t = t.replace(STATE_RE, '');
-  // Сводка началась — история на этом закончилась, дальше только служебное.
+  // Сводка или варианты начались — история на этом закончилась, дальше служебное.
+  t = t.replace(CHOICES_RE, '');
   const at = t.search(new RegExp(RP_STATE_OPEN.replace(/[<>]/g, (c) => '\\' + c), 'i'));
   if (at !== -1) t = t.slice(0, at);
+  const atC = t.search(/<choices>/i);
+  if (atC !== -1) t = t.slice(0, atC);
   // Хвост вида «<sta» — начало тега, приехавшее по кусочкам.
   t = t.replace(/<[a-z]*$/i, '');
   return t.trimStart();
@@ -261,7 +296,7 @@ export function parseRpResponse(
   let prose = dropPrefill(stripStateBlock(body), opts?.prefill);
   if (opts?.guard !== false) prose = trimImpersonation(prose, opts?.userName || '');
 
-  return { prose, worldState, plan };
+  return { prose, worldState, plan, choices: parseChoicesBlock(body) };
 }
 
 function safeParseState(text: string): WorldStateUpdate | undefined {
@@ -286,7 +321,7 @@ function safeParseState(text: string): WorldStateUpdate | undefined {
 // новеллы (applyTurn → история → память → свёртка → Game Master) работает без
 // единой правки, а разница между режимами остаётся ровно там, где она есть, —
 // в промпте и в показе.
-export function rpTurn(state: RuntimeState, prose: string, worldState?: WorldStateUpdate): AiTurn {
+export function rpTurn(state: RuntimeState, prose: string, worldState?: WorldStateUpdate, choices: Choice[] = []): AiTurn {
   return {
     scene: {
       backgroundId: state.currentBackgroundId,
@@ -296,7 +331,7 @@ export function rpTurn(state: RuntimeState, prose: string, worldState?: WorldSta
     },
     beats: prose ? [{ type: 'narration', text: prose }] : [],
     statChanges: [],
-    choices: [],
+    choices,
     chapterEvent: null,
     worldState,
   };

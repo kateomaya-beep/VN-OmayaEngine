@@ -534,6 +534,7 @@ export interface Project {
   randomSms?: RandomSmsConfig; // случайные входящие СМС — отдельно от событий (Batch 8-fix)
   phone?: PhoneConfig; // расширение «Телефон» (Batch 7)
   finance?: ProjectFinanceConfig; // стартовый капитал + регулярные статьи (Batch 8 §III)
+  choiceMode?: ChoiceModeConfig; // режим выбора в текстовом РП (кнопки под ответом)
 }
 
 // ---- Телефон (Batch 7) ----
@@ -1276,6 +1277,25 @@ export interface StatChange {
   statId: string;
   delta: number;
   reason: string;
+}
+
+// РЕЖИМ ВЫБОРА в текстовом РП — подключаемый, по проекту. Ответ модели, как и
+// без него, — проза; в конце она добавляет варианты, что делать дальше, и они
+// показываются кнопками. Своё можно написать как обычно. Нужен, когда хочется не
+// писать каждый ход самой, а отдаться истории.
+export interface ChoiceModeConfig {
+  enabled: boolean;
+  /** Сколько вариантов предлагать: 2–4. */
+  count: number;
+  /** Разрешить изредка платный вариант (за стат проекта или баланс телефона). */
+  paid: boolean;
+}
+
+export function normalizeChoiceMode(v: unknown): ChoiceModeConfig | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  const n = typeof o.count === 'number' ? Math.round(o.count) : 3;
+  return { enabled: o.enabled === true, count: Math.min(4, Math.max(2, n)), paid: o.paid === true };
 }
 
 export interface Choice {

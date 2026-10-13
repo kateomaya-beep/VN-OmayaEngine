@@ -7,7 +7,7 @@ import { parseRpResponse } from '../../../ai/rpResponse';
 import { protagonistName } from '../../../ai/macros';
 import { applyRegexRules } from '../../../ai/regexRules';
 import { usePresetSettings } from '../../../ai/presetSettings';
-import type { WorldStateUpdate } from '../../../shared/types';
+import type { Choice, WorldStateUpdate } from '../../../shared/types';
 import { StateInfobox } from './StateInfobox';
 import { MessageMenu, type MessageMenuItem } from '../../../shared/MessageMenu';
 import { copyToClipboard } from '../../../shared/utils';
@@ -72,7 +72,7 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
     return history.map((m) => {
       if (m.role === 'user') {
         return {
-          text: applyRegexRules(stripMoveTag(m.content), cfg.regexRules, {
+          text: applyRegexRules(stripMoveTag(m.content).replace(/\n?\[COST ALREADY CHARGED BY ENGINE:[^\]]*\]/g, '').trim(), cfg.regexRules, {
             role: 'user',
             scope: 'display',
           }),
@@ -237,6 +237,20 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
               не отличить работу от зависания. Свёрнут по умолчанию: это черновик,
               а не часть истории, и разворачивать его нужно не всем и не всегда. */}
           {s.thinking && !!s.thinkingText && <ThinkingDraft text={s.thinkingText} />}
+
+          {/* Режим выбора: кнопки под последним ответом. Своё — в строке ввода. */}
+          {!s.thinking && !s.pendingMove && s.choices.length > 0 && last?.role === 'assistant' && s.project && s.state && (
+            <ChoiceButtons
+              choices={s.choices}
+              balance={(id) => s.state!.statValues[id] ?? 0}
+              costName={(id) =>
+                id === 'phone_balance'
+                  ? s.project!.phone?.currencyName || '$'
+                  : s.project!.stats.find((x) => x.id === id)?.name || id
+              }
+              onChoose={(c) => void s.choose(c)}
+            />
+          )}
 
           {s.thinking && (
             <div className="flex items-center gap-2 text-sm text-gray-400 pl-1">
@@ -456,6 +470,50 @@ function Message({
           {infobox}
         </>
       )}
+    </div>
+  );
+}
+
+// КНОПКИ РЕЖИМА ВЫБОРА. Как в новелле, только под прозой: вариант — действие героя,
+// платный показывает цену и гаснет, если ресурса не хватает. Своё по-прежнему
+// пишется в строке ввода.
+function ChoiceButtons({
+  choices,
+  balance,
+  costName,
+  onChoose,
+}: {
+  choices: Choice[];
+  balance: (statId: string) => number;
+  costName: (statId: string) => string;
+  onChoose: (c: Choice) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 mt-1" role="group" aria-label="Варианты">
+      {choices.map((c) => {
+        const short = !!c.cost && balance(c.cost.statId) < c.cost.amount;
+        return (
+          <button
+            key={c.id}
+            disabled={short}
+            onClick={() => onChoose(c)}
+            title={short ? 'Не хватает ресурса' : undefined}
+            className={`text-left rounded-xl px-4 py-2.5 border transition text-[15px] leading-snug ${
+              short
+                ? 'opacity-50 cursor-not-allowed border-white/10 bg-white/[0.03]'
+                : 'border-[rgba(180,150,255,0.35)] bg-[rgba(160,110,255,0.10)] hover:bg-[rgba(160,110,255,0.2)] hover:border-[rgba(190,150,255,0.6)]'
+            }`}
+          >
+            <span className="opacity-60 mr-1.5">▸</span>
+            {c.text}
+            {c.cost && (
+              <span className="ml-2 text-xs rounded-full px-2 py-0.5 bg-amber-400/15 text-amber-200 whitespace-nowrap">
+                {c.cost.amount} {costName(c.cost.statId)}
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

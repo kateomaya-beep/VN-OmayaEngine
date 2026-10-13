@@ -8,6 +8,7 @@ import { applyRegexRules } from './regexRules';
 import { getPresetSettings, presetForMode } from './presetSettings';
 import { modelAlwaysThinks, modelIsVerboseThinker } from './providers';
 import { composeThinkingPlan, planSteps } from './thinkingPlan';
+import { choiceModeDirective, choiceModeOf } from './choiceMode';
 import { matchLorebook } from './lorebookEngine';
 import { logEvent } from '../shared/logStore';
 import { getGlobalNotes } from '../shared/globalNotes';
@@ -1204,6 +1205,9 @@ export async function buildRequest(
   // здесь стояла БЕЗУСЛОВНАЯ директива «EVERY turn ends with 2–4 choices», да ещё
   // и помеченная «overrides any other guidance above» — она перебивала весь
   // РП-пресет и заставляла модель предлагать выбор каждый ход.
+  // Режим выбора в РП — подключается по проекту (вкладка «Выборы» в Game Master).
+  const choiceMode = choiceModeOf(project);
+  if (mode === 'rp' && choiceMode) systemParts.push(choiceModeDirective(project, choiceMode));
   if (mode !== 'rp') {
     const gap = ps.choiceMinGap ?? 0;
     systemParts.push(
@@ -1501,6 +1505,7 @@ export async function buildRequest(
   const formatReminder =
     mode === 'rp'
       ? 'Reply with the story only: plain prose, no JSON, no headers, no OOC text, nothing written for the player.' +
+        (choiceMode ? `\nAfter the story: the <choices> block with ${choiceMode.count} options (see CHOICE MODE).` : '') +
         // Сам контракт сводки лежит блоком пресета — далеко наверху, за всей
         // историей. Одной строки-упоминания в хвосте не хватало: модель дописывала
         // прозу и на этом останавливалась, а сводка «терялась» — с ней переставали
@@ -1535,7 +1540,7 @@ export async function buildRequest(
     const verbose = modelIsVerboseThinker();
     let plan =
       ps.thinkingPlan?.trim() ||
-      composeThinkingPlan({ mode: mode === 'rp' ? 'rp' : 'vn', profile: ps.modelProfile, blocks: preset.blocks, banWords: !!banWords, compact: verbose });
+      composeThinkingPlan({ mode: mode === 'rp' ? 'rp' : 'vn', profile: ps.modelProfile, blocks: preset.blocks, banWords: !!banWords, compact: verbose, choices: choiceMode?.count });
     if (!banWords) plan = plan.split('\n').filter((l) => !/^\s*\d+\.\s*BAN LIST/i.test(l)).join('\n');
 
     if (nativeThinker) {

@@ -35,6 +35,7 @@ import {
   normalizePhoneConfig,
   initialPhoneState,
   normalizeFinanceConfig,
+  normalizeChoiceMode,
   normalizeInventory,
   normalizeRandomSms,
   PHONE_BALANCE_STAT,
@@ -405,6 +406,7 @@ export function normalizeProject(raw: any): Project {
     randomSms: raw?.randomSms ? normalizeRandomSms(raw.randomSms) : undefined,
     phone: raw?.phone ? normalizePhoneConfig(raw.phone) : undefined,
     finance: raw?.finance ? normalizeFinanceConfig(raw.finance) : undefined,
+    choiceMode: normalizeChoiceMode(raw?.choiceMode),
   };
 }
 

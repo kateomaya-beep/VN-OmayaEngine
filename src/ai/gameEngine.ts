@@ -14,6 +14,7 @@ import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, forcedEvent, rollRandomSms } from './randomEvents';
 import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock } from './rpResponse';
+import { choiceModeOf, validateChoices } from './choiceMode';
 import { RP_STATE_OPEN, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { protagonistName } from './macros';
 import { presentPersonIds } from './presence';
@@ -942,7 +943,12 @@ export async function runTurn(
         (lastReasoning.trim() ? `, родное размышление ${lastReasoning.trim().length}` : '')
     );
 
-    const turn = rpTurn(state, rp.prose, rp.worldState);
+    // Режим выбора: варианты из <choices> → кнопки. Не прислала — ход всё равно
+    // идёт, просто без кнопок; своё игрок может написать как обычно.
+    const choiceCfg = choiceModeOf(project);
+    const choices = choiceCfg ? validateChoices(rp.choices, project, choiceCfg) : [];
+    if (choiceCfg && !choices.length) logEvent('warn', 'turn', 'Режим выбора: модель не прислала варианты — в этот ход без кнопок');
+    const turn = rpTurn(state, rp.prose, rp.worldState, choices);
     // В историю кладём СЫРОЙ ответ, вместе со служебной сводкой. В контекст она не
     // попадает — её вырезают и сборка промпта, и свёртка памяти, — зато остаётся
     // при сообщении: из неё рисуется инфобокс под ответом, и по ней же
