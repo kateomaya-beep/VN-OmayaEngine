@@ -1,7 +1,8 @@
 import { parsePresetJson, type PromptPreset } from './promptPreset';
 import { normalizeRegexRules, type RegexRule } from './regexRules';
+import { ensureEngineBlocks } from './engineBlocks';
 
-// АЛЬТЕРНАТИВНЫЕ ПРЕСЕТЫ РП. Наш пресет остаётся стандартным; рядом можно держать
+// АЛЬТЕРНАТИВНЫЕ ПРЕСЕТЫ (РП и новелла). Наш пресет остаётся стандартным; рядом можно держать
 // чужие — импортированные из SillyTavern (например, Dr. D) — и переключаться между
 // ними в панели. Такой пресет живёт целиком: свои блоки в своём порядке, свои
 // регулярки (виджеты, чистка старых сообщений) и своя выборка (температура, top_p).
@@ -22,9 +23,13 @@ export interface AltRpPreset {
   name: string;
   /** Откуда взят: встроенная копия Dr. D или импорт файла. */
   source: 'drd' | 'sillytavern';
+  /** Режим, под который собран: в новелле в нём JSON-контракт и блоки спрайтов. */
+  mode: 'rp' | 'vn';
   preset: PromptPreset;
   regexRules: RegexRule[];
   sampling: AltPresetSampling;
+  /** Префилл ответа из пресета (assistant_prefill). */
+  prefill?: string;
   importedAt: number;
 }
 
@@ -38,11 +43,14 @@ export function normalizeAltPresets(raw: unknown): AltRpPreset[] {
     const preset = parsePresetJson(r.preset);
     if (!preset) continue;
     const s = r.sampling && typeof r.sampling === 'object' ? r.sampling : {};
+    const mode = r.mode === 'vn' ? 'vn' : 'rp';
     out.push({
       id: r.id,
       name: typeof r.name === 'string' && r.name.trim() ? r.name : preset.name,
       source: r.source === 'drd' ? 'drd' : 'sillytavern',
-      preset: { ...preset, foreign: 'sillytavern' },
+      mode,
+      // Блоки движка — при каждой загрузке: новые доезжают, нетронутые обновляются.
+      preset: ensureEngineBlocks({ ...preset, foreign: 'sillytavern' }, mode),
       regexRules: normalizeRegexRules(r.regexRules),
       sampling: {
         temperature: num(s.temperature),
@@ -51,6 +59,7 @@ export function normalizeAltPresets(raw: unknown): AltRpPreset[] {
         presencePenalty: num(s.presencePenalty),
         maxTokens: num(s.maxTokens),
       },
+      ...(typeof r.prefill === 'string' && r.prefill.trim() ? { prefill: r.prefill } : {}),
       importedAt: num(r.importedAt) ?? 0,
     });
   }

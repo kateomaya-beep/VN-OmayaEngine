@@ -431,7 +431,7 @@ const OUTDATED_SIGNATURES_ALL: BuiltinSignature[] = [
 // Короткие сигнатуры, которые встречаются и в последнем дефолте, не отличают
 // нетронутый блок от правленого — по ним переписались бы правки. Убираем их:
 // последний дефолт ловит точная сигнатура.
-const OUTDATED_SIGNATURES: BuiltinSignature[] = [
+export const OUTDATED_SIGNATURES: BuiltinSignature[] = [
   ...OUTDATED_SIGNATURES_ALL.filter((s) => !(VN_VERBOSE_V1[s.key] ?? '').includes(s.signature)),
   ...Object.entries(VN_VERBOSE_V1).map(([key, signature]) => ({ key, signature, exact: true })),
   // Сжатые тексты ДО модульного пресета: один блок держал несколько наборов правил.

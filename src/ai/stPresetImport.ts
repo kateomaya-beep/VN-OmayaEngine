@@ -1,6 +1,6 @@
 import { uid } from '../shared/utils';
 import type { DynamicSource, PromptBlock, PromptPreset } from './promptPreset';
-import { defaultRpPreset } from './rpPreset';
+import { ensureEngineBlocks, type EngineMode } from './engineBlocks';
 import type { RegexRule } from './regexRules';
 import type { AltRpPreset } from './altPresets';
 
@@ -53,25 +53,75 @@ export interface StImportOptions {
   /** Имя в списке пресетов; нет — из файла или «Импорт SillyTavern». */
   name?: string;
   source?: AltRpPreset['source'];
+  /** Для какого режима: в новелле к пресету добавляется JSON-контракт и блоки спрайтов. */
+  mode?: EngineMode;
   /** Язык повествования: для ru включаются русские варианты тумблеров и виджетов, где они есть. */
   lang?: 'ru' | 'en';
 }
 
+// Пресет Chat Completion: массив prompts. prompt_order у старых экспортов бывает
+// пустым или отсутствует — тогда порядок берём из самого массива.
 export function isSillyTavernPreset(raw: unknown): boolean {
+  return !!toChatCompletion(raw);
+}
+
+// Приводит файл Таверны к виду Chat Completion. Кроме него понимаем системный
+// промпт Text Completion — отдельным файлом ({name, content, post_history}) или в
+// «мастер-экспорте» ({sysprompt, instruct, context, preset}): текст встаёт главным
+// блоком, post_history — после истории, выборка — из preset.
+function toChatCompletion(raw: unknown): any | null {
   const r = raw as any;
-  return !!r && Array.isArray(r.prompts) && Array.isArray(r.prompt_order);
+  if (!r || typeof r !== 'object' || Array.isArray(r) || Array.isArray(r.blocks)) return null;
+  if (Array.isArray(r.prompts) && r.prompts.some((p: any) => p && typeof p.identifier === 'string')) return r;
+  const sp = r.sysprompt && typeof r.sysprompt === 'object' ? r.sysprompt : typeof r.content === 'string' && typeof r.name === 'string' ? r : null;
+  if (!sp || typeof sp.content !== 'string') return null;
+  const marker = (identifier: string) => ({ identifier, name: identifier, marker: true, system_prompt: true });
+  const prompts = [
+    { identifier: 'main', name: sp.name || 'System Prompt', role: 'system', content: sp.content },
+    marker('worldInfoBefore'),
+    marker('personaDescription'),
+    marker('charDescription'),
+    marker('scenario'),
+    marker('worldInfoAfter'),
+    marker('dialogueExamples'),
+    marker('chatHistory'),
+    ...(typeof sp.post_history === 'string' && sp.post_history.trim()
+      ? [{ identifier: 'jailbreak', name: 'Post-History Instructions', role: 'system', content: sp.post_history }]
+      : []),
+  ];
+  const tc = r.preset && typeof r.preset === 'object' ? r.preset : {};
+  return {
+    name: sp.name,
+    prompts,
+    prompt_order: [],
+    temperature: tc.temp ?? tc.temperature,
+    top_p: tc.top_p,
+    frequency_penalty: tc.frequency_penalty,
+    presence_penalty: tc.presence_penalty,
+    openai_max_tokens: tc.genamt,
+  };
 }
 
 export function importSillyTavernPreset(raw: unknown, opts: StImportOptions = {}): AltRpPreset {
-  if (!isSillyTavernPreset(raw)) throw new Error('Это не пресет SillyTavern: нет prompts и prompt_order');
-  const r = raw as any;
+  const r = toChatCompletion(raw);
+  if (!r) throw new Error('Это не пресет SillyTavern: нет ни блоков prompts (Chat Completion), ни системного промпта');
+  const mode: EngineMode = opts.mode ?? 'rp';
   const byId = new Map<string, any>();
   for (const p of r.prompts) if (p && typeof p.identifier === 'string') byId.set(p.identifier, p);
-  const orders: any[] = r.prompt_order.filter((o: any) => o && Array.isArray(o.order));
-  const order: { identifier: string; enabled: boolean }[] = (
+  const orders: any[] = (Array.isArray(r.prompt_order) ? r.prompt_order : []).filter((o: any) => o && Array.isArray(o.order) && o.order.length);
+  // Порядок как в Таверне: по персонажу 100001 (его показывает редактор), иначе
+  // самый полный из сохранённых, иначе — порядок массива prompts с их enabled.
+  let order: { identifier: string; enabled: boolean }[] = (
     orders.find((o) => o.character_id === 100001) ?? orders.reduce((a, b) => (b.order.length > (a?.order.length ?? 0) ? b : a), null)
   )?.order ?? [];
-  if (!order.length) throw new Error('В пресете пустой prompt_order');
+  if (!order.length) order = [...byId.values()].map((p) => ({ identifier: p.identifier, enabled: p.enabled !== false }));
+  // Блоки, которых в порядке нет (у Таверны это «не добавлены в список»), тоже
+  // переносим — выключенными в конце: пусть будут под рукой.
+  const listed = new Set(order.map((o) => o.identifier));
+  for (const p of byId.values()) {
+    if (!listed.has(p.identifier) && !p.marker && typeof p.content === 'string' && p.content.trim()) order.push({ identifier: p.identifier, enabled: false });
+  }
+  if (!order.length) throw new Error('В пресете нет ни одного блока');
 
   const blocks: PromptBlock[] = [];
   const seenDynamic = new Set<string>();
@@ -142,30 +192,19 @@ export function importSillyTavernPreset(raw: unknown, opts: StImportOptions = {}
   insertBefore(memIdx >= 0 ? memIdx : memoryAt >= 0 ? memoryAt : historyIdx(), extra);
   if (historyIdx() < 0) blocks.push({ id: uid('blk'), enabled: true, name: NAMES.history!, content: '', dynamic: 'history' });
 
-  // Связка с движком — первыми, до правил пресета.
-  const rp = defaultRpPreset().blocks;
-  const engine = (key: string, name: string, enabled: boolean): PromptBlock | null => {
-    const b = rp.find((x) => x.builtinKey === key);
-    return b ? { ...b, id: uid('blk'), name, enabled } : null;
-  };
-  const engineBlocks = [
-    engine('rp_moves', '⚙ Движок: пометки хода игрока', true),
-    engine('rp_state', '⚙ Движок: служебная сводка состояния', true),
-    // У чужого пресета свои правила о том, кто пишет за героя, — наш запрет только
-    // как опция.
-    engine('rp_no_impersonation', '⚙ Движок: не писать за игрока', false),
-  ].filter(Boolean) as PromptBlock[];
-  blocks.unshift(...engineBlocks);
-
   const regexRules = importRegexScripts(r.extensions?.regex_scripts);
   if (opts.lang === 'ru') preferRussian(blocks, regexRules);
 
-  const preset: PromptPreset = {
-    id: uid('preset'),
-    name: opts.name || (typeof r.name === 'string' && r.name) || 'Импорт SillyTavern',
-    blocks,
-    foreign: 'sillytavern',
-  };
+  // Блоки движка — на свои места (см. engineBlocks.ts).
+  const preset: PromptPreset = ensureEngineBlocks(
+    {
+      id: uid('preset'),
+      name: opts.name || (typeof r.name === 'string' && r.name) || 'Импорт SillyTavern',
+      blocks,
+      foreign: 'sillytavern',
+    },
+    mode
+  );
   const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
   // Нули у штрафов — «выключено»: не шлём вовсе, как и наш дефолт.
   const nz = (v: unknown) => (n(v) ? n(v) : undefined);
@@ -173,6 +212,7 @@ export function importSillyTavernPreset(raw: unknown, opts: StImportOptions = {}
     id: uid('alt'),
     name: preset.name,
     source: opts.source ?? 'sillytavern',
+    mode,
     preset,
     regexRules,
     sampling: {
@@ -182,6 +222,8 @@ export function importSillyTavernPreset(raw: unknown, opts: StImportOptions = {}
       presencePenalty: nz(r.presence_penalty),
       maxTokens: n(r.openai_max_tokens) && n(r.openai_max_tokens)! > 0 ? Math.min(32000, n(r.openai_max_tokens)!) : undefined,
     },
+    // Префилл ответа (у пресетов под Claude) — работает вместо нашего, пока выбран пресет.
+    ...(typeof r.assistant_prefill === 'string' && r.assistant_prefill.trim() ? { prefill: r.assistant_prefill } : {}),
     importedAt: Date.now(),
   };
 }
@@ -255,7 +297,7 @@ function preferRussian(blocks: PromptBlock[], rules: RegexRule[]): void {
 }
 
 // Встроенная копия Dr. D v3.5 — грузится лениво, только по кнопке «Добавить».
-export async function loadDrD(lang: 'ru' | 'en'): Promise<AltRpPreset> {
+export async function loadDrD(lang: 'ru' | 'en', mode: EngineMode = 'rp'): Promise<AltRpPreset> {
   const mod = await import('../presets/drd-v3.5.json');
-  return importSillyTavernPreset(mod.default, { name: 'Dr. D v3.5', source: 'drd', lang });
+  return importSillyTavernPreset(mod.default, { name: 'Dr. D v3.5', source: 'drd', lang, mode });
 }

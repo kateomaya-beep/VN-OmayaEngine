@@ -1101,8 +1101,10 @@ export async function buildRequest(
   // становятся отдельными сообщениями ПЕРЕД живой историей.
   const preset = presetForMode(ps, mode);
   // Чужой пресет (импорт из Таверны): свои правила письма у него есть, наши
-  // директивы длины, стиля, плана и формата «только проза» с ними бы спорили.
-  const foreign = mode === 'rp' && !!preset.foreign;
+  // директивы стиля и стоп-слова с ними бы спорили. В РП — ещё длина хода и
+  // формат «только проза»; в новелле они часть JSON-контракта и остаются.
+  const foreign = !!preset.foreign;
+  const foreignRp = foreign && mode === 'rp';
   const systemParts: string[] = [];
   const presetMessages: LlmMessage[] = [];
   // Блоки с глубиной вставки — уходят внутрь истории, на N сообщений от конца.
@@ -1200,7 +1202,7 @@ export async function buildRequest(
   // средним, куда бы ни двигали ползунок. Поэтому в РП стоит своя директива — с тем
   // же весом, что в новелле, но про абзацы прозы вместо бит.
   const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
-  if (!foreign) systemParts.push(
+  if (!foreignRp) systemParts.push(
     mode === 'rp'
       ? `TURN LENGTH (authoritative; overrides every other length or pacing instruction): ${tl.min}–${tl.max} words of story.
 - ${tl.max} is a hard ceiling; stop at a natural pause inside the range, do not pad.
@@ -1622,7 +1624,7 @@ export async function buildRequest(
     }
   } else {
     // Длину чужому пресету задают его тумблеры (у Dr. D — «size»), не наш ползунок.
-    tail.push(foreign ? formatReminder : `${formatReminder}\n${lengthReminder}`);
+    tail.push(foreignRp ? formatReminder : `${formatReminder}\n${lengthReminder}`);
   }
 
   withMove.push({

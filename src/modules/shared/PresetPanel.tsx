@@ -10,6 +10,7 @@ import {
 import { usePresetSettings, MODEL_PROFILES, activeAltPreset, type PresetSettings, type ModelProfile } from '../../ai/presetSettings';
 import { importSillyTavernPreset, isSillyTavernPreset, loadDrD } from '../../ai/stPresetImport';
 import type { AltRpPreset } from '../../ai/altPresets';
+import { engineBlockContent } from '../../ai/engineBlocks';
 import { defaultRpPreset, defaultRpBlockContent } from '../../ai/rpPreset';
 import { defaultLocalPreset, defaultLocalBlockContent } from '../../ai/localPreset';
 import {
@@ -58,12 +59,13 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   const prof = cfg.modelProfile;
   const isLocal = prof === 'local' && isRp;
   const isDs = prof === 'deepseek' && isRp;
-  // Альтернативный пресет РП (Dr. D, импорт из Таверны) — правится он, пока выбран.
-  const alt = isRp ? activeAltPreset(cfg, 'rp') : null;
+  // Альтернативный пресет (Dr. D, импорт из Таверны) — правится он, пока выбран.
+  const alt = activeAltPreset(cfg, mode);
+  const altKey = isRp ? 'activeRpPreset' : 'activeVnPreset';
   const preset = alt ? alt.preset : isLocal ? cfg.localPreset : isDs ? cfg.deepseekPreset : isRp ? cfg.rpPreset : cfg.preset;
   const saveAlt = (next: AltRpPreset) =>
     patchStore({ altRpPresets: cfg.altRpPresets.map((a) => (a.id === next.id ? next : a)) });
-  const addAlt = (a: AltRpPreset) => patchStore({ altRpPresets: [...cfg.altRpPresets, a], activeRpPreset: a.id });
+  const addAlt = (a: AltRpPreset) => patchStore({ altRpPresets: [...cfg.altRpPresets, a], [altKey]: a.id });
 
   const patch = (p: Partial<PresetSettings>) => patchStore(p);
   // Где стоит история — по ней считается «ниже/выше» для меток и подсветки.
@@ -86,7 +88,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   const resetBlock = (b: PromptBlock) => {
     if (!b.builtinKey) return;
     const content = alt
-      ? defaultRpBlockContent(b.builtinKey)
+      ? engineBlockContent(isRp ? 'rp' : 'vn', b.builtinKey)
       : isLocal
       ? defaultLocalBlockContent(b.builtinKey)
       : isDs
@@ -103,7 +105,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         return;
       }
       if (!confirm(`Вернуть «${alt.name}» к исходному? Правки блоков и регулярок будут потеряны.`)) return;
-      const fresh = await loadDrD(cfg.narrativeLanguage);
+      const fresh = await loadDrD(cfg.narrativeLanguage, isRp ? 'rp' : 'vn');
       saveAlt({ ...fresh, id: alt.id });
       return;
     }
@@ -151,10 +153,10 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   const importPresetFile = async (file: File) => {
     try {
       const json = JSON.parse(await file.text());
-      // Пресет Таверны — не замена нашего, а ещё один пресет РП рядом.
+      // Пресет Таверны — не замена нашего, а ещё один пресет рядом, под текущий
+      // режим: блоки движка (контракт, сводка, Game Master) встают в него сами.
       if (isSillyTavernPreset(json)) {
-        if (!isRp) throw new Error('пресеты SillyTavern подключаются в режиме РП — переключите режим и импортируйте там');
-        addAlt(importSillyTavernPreset(json, { name: file.name.replace(/\.json$/i, ''), lang: cfg.narrativeLanguage }));
+        addAlt(importSillyTavernPreset(json, { name: file.name.replace(/\.json$/i, ''), lang: cfg.narrativeLanguage, mode: isRp ? 'rp' : 'vn' }));
         return;
       }
       const parsed = parsePresetJson(json);
@@ -251,7 +253,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         )}
       </div>
 
-      {isRp && <AltPresetCard cfg={cfg} patch={patch} alt={alt} onAdd={addAlt} onImport={() => fileRef.current?.click()} />}
+      <AltPresetCard cfg={cfg} patch={patch} mode={isRp ? 'rp' : 'vn'} alt={alt} onAdd={addAlt} onImport={() => fileRef.current?.click()} />
 
       {/* БЛОКИ ПРЕСЕТА. Ради них панель и существует: имя пресета, экспорт/импорт,
           список блоков с галочкой, ролью, порядком и текстом. Однажды эта секция
@@ -608,9 +610,9 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         </div>
         {alt && (
           <p className="text-[11px] text-amber-300 mb-3">
-            Пока выбран «{alt.name}», часть этих настроек за него решает сам пресет: длина хода — его
-            тумблерами (у Dr. D — «size»), размышление — его цепочкой в блоке «cot» (наше управляемое
-            выключено), температура, top_p и штрафы — его собственные (см. карточку пресета вверху).
+            Пока выбран «{alt.name}», часть этих настроек за него решает сам пресет:{' '}
+            {isRp ? 'длина хода — его тумблерами (у Dr. D — «size»), ' : ''}размышление — его собственное
+            (наше управляемое выключено), температура, top_p и штрафы — его (см. карточку пресета вверху).
           </p>
         )}
         <div className="grid sm:grid-cols-2 gap-3">
@@ -1182,23 +1184,28 @@ function PenaltyField({
 function AltPresetCard({
   cfg,
   patch,
+  mode,
   alt,
   onAdd,
   onImport,
 }: {
   cfg: PresetSettings;
   patch: (p: Partial<PresetSettings>) => void;
+  mode: 'rp' | 'vn';
   alt: AltRpPreset | null;
   onAdd: (a: AltRpPreset) => void;
   onImport: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const hasDrd = cfg.altRpPresets.some((a) => a.source === 'drd');
+  const isRp = mode === 'rp';
+  const key = isRp ? 'activeRpPreset' : 'activeVnPreset';
+  const mine = cfg.altRpPresets.filter((a) => a.mode === mode);
+  const hasDrd = mine.some((a) => a.source === 'drd');
   const profLabel = MODEL_PROFILES.find((p) => p.id === cfg.modelProfile)?.label;
   const addDrd = async () => {
     setBusy(true);
     try {
-      onAdd(await loadDrD(cfg.narrativeLanguage));
+      onAdd(await loadDrD(cfg.narrativeLanguage, mode));
     } catch (e) {
       alert('Не удалось добавить Dr. D: ' + (e as Error).message);
     } finally {
@@ -1207,15 +1214,17 @@ function AltPresetCard({
   };
   const remove = () => {
     if (!alt || !confirm(`Удалить пресет «${alt.name}»? Его правки и регулярки пропадут; стандартный пресет не меняется.`)) return;
-    patch({ altRpPresets: cfg.altRpPresets.filter((a) => a.id !== alt.id), activeRpPreset: '' });
+    patch({ altRpPresets: cfg.altRpPresets.filter((a) => a.id !== alt.id), [key]: '' });
   };
   const sm = alt?.sampling;
   return (
     <div className="card !bg-panel2 !p-3 mb-3">
-      <label className="label">Пресет РП</label>
-      <select className="input !py-1" value={alt?.id ?? ''} onChange={(e) => patch({ activeRpPreset: e.target.value })}>
-        <option value="">OmayaEngine — стандартный{cfg.modelProfile !== 'universal' && profLabel ? ` (${profLabel})` : ''}</option>
-        {cfg.altRpPresets.map((a) => (
+      <label className="label">{isRp ? 'Пресет РП' : 'Пресет новеллы'}</label>
+      <select className="input !py-1" value={alt?.id ?? ''} onChange={(e) => patch({ [key]: e.target.value })}>
+        <option value="">
+          OmayaEngine — стандартный{isRp && cfg.modelProfile !== 'universal' && profLabel ? ` (${profLabel})` : ''}
+        </option>
+        {mine.map((a) => (
           <option key={a.id} value={a.id}>
             {a.name}
           </option>
@@ -1237,10 +1246,13 @@ function AltPresetCard({
         )}
       </div>
       <p className="text-[11px] text-gray-500 mt-1.5">
-        Стандартный пресет никуда не девается: альтернативный работает, только пока выбран, и правится
-        отдельно. Блоки, порядок, глубина вставки, макросы <code>{'{{setvar}}'}</code>/<code>{'{{getvar}}'}</code> и
-        регулярки с виджетами переносятся как в Таверне; сверху добавлены блоки «⚙ Движок» — без них не
-        обновляются часы, досье и память.
+        Любой пресет SillyTavern (Chat Completion, .json) встаёт как есть: блоки, порядок, глубина
+        вставки, макросы <code>{'{{setvar}}'}</code>/<code>{'{{getvar}}'}</code>, регулярки с виджетами, выборка.
+        Блоки «⚙ Движок» и «↳» добавляются сами и всегда на своих местах:{' '}
+        {isRp
+          ? 'пометки хода, служебная сводка для Game Master (часы, досье, память), мир, персонажи, память.'
+          : 'JSON-контракт ответа (последним перед историей), эмоции спрайтов, музыка, отношения, правила хода и выборов, ассеты, мир, персонажи, память и Game Master.'}{' '}
+        Стандартный пресет не меняется: альтернативный работает, только пока выбран.
       </p>
       {alt && sm && (
         <p className="text-[11px] text-emerald-300/90 mt-1">
@@ -1248,10 +1260,18 @@ function AltPresetCard({
           {sm.topP !== undefined ? `, top_p ${sm.topP}` : ''}
           {sm.frequencyPenalty !== undefined ? `, частота ${sm.frequencyPenalty}` : ''}
           {sm.presencePenalty !== undefined ? `, присутствие ${sm.presencePenalty}` : ''}
-          {sm.maxTokens ? `, потолок ответа ${sm.maxTokens} ток.` : ''} — вместо ваших, пока выбран пресет.
+          {sm.maxTokens ? `, потолок ответа ${sm.maxTokens} ток.` : ''}
+          {alt.prefill ? `, префилл «${alt.prefill.slice(0, 40)}${alt.prefill.length > 40 ? '…' : ''}»` : ''} — вместо ваших, пока выбран пресет.
         </p>
       )}
-      {alt?.source === 'drd' && (
+      {alt && !isRp && (
+        <p className="text-[11px] text-gray-400 mt-1">
+          В новелле ответ — JSON с битами, поэтому HUD, виджеты и прочий «вывод вне истории» из пресета не
+          рисуются, а его правила прозы работают внутри реплик и повествования. Длину хода и частоту выборов
+          по-прежнему задают настройки ниже — они часть контракта.
+        </p>
+      )}
+      {alt?.source === 'drd' && isRp && (
         <p className="text-[11px] text-gray-400 mt-1">
           У Dr. D своё размышление (<code>{'<think>'}</code>, блок «cot.») и виджеты под ответом: часы-HUD,
           лента твитов, заметки, логи, таро, GliTch — каждый включается своим тумблером в блоках ниже. Язык

@@ -81,10 +81,13 @@ export interface PresetSettings {
   localMode: boolean;
   // Пресет под болячки DeepSeek — см. deepseekPreset.ts.
   deepseekPreset: PromptPreset;
-  // Альтернативные пресеты РП (импорт из SillyTavern, Dr. D) — см. altPresets.ts.
+  // Альтернативные пресеты (импорт из SillyTavern, Dr. D) — см. altPresets.ts.
+  // Один список на оба режима, у каждого пресета свой режим (mode). Имя поля —
+  // историческое: сначала такие пресеты были только в РП.
   altRpPresets: AltRpPreset[];
-  // Какой из них сейчас работает в РП. Пусто — наш стандартный (по профилю модели).
+  // Какой из них сейчас работает в РП / в новелле. Пусто — наш стандартный.
   activeRpPreset: string;
+  activeVnPreset: string;
   // ПРОФИЛЬ МОДЕЛИ. Универсальный пресет «для всех» — компромисс, а модели ломаются
   // по-разному: у DeepSeek эхо и заедание фраз, у локальной — предел контекста.
   // Профиль подставляет и пресет, и параметры генерации под конкретную родню.
@@ -160,6 +163,7 @@ function defaults(): PresetSettings {
     deepseekPreset: defaultDeepseekPreset(),
     altRpPresets: [],
     activeRpPreset: '',
+    activeVnPreset: '',
     modelProfile: 'universal',
     promptProcessing: 'merge',
     impersonationGuard: true,
@@ -239,6 +243,7 @@ function load(): PresetSettings {
       deepseekPreset: normalizeDeepseekPreset(v.deepseekPreset),
       altRpPresets: normalizeAltPresets(v.altRpPresets),
       activeRpPreset: typeof v.activeRpPreset === 'string' ? v.activeRpPreset : '',
+      activeVnPreset: typeof v.activeVnPreset === 'string' ? v.activeVnPreset : '',
       // Миграция: раньше был один тумблер «локальная модель», теперь профиль.
       modelProfile: isModelProfile(v.modelProfile) ? v.modelProfile : v.localMode ? 'local' : 'universal',
       cloudBackup: v.cloudBackup && typeof v.cloudBackup === 'object' ? v.cloudBackup : undefined,
@@ -379,11 +384,13 @@ export function getPresetSettings(): PresetSettings {
 // Пресет, действующий для данного режима повествования. Один и тот же проект можно
 // вести и новеллой, и текстовым РП — блоки при этом берутся разные.
 export function presetForMode(s: PresetSettings, mode: NarrativeMode): PromptPreset {
+  // Выбранный альтернативный пресет — в любом режиме (в новелле у него свой
+  // JSON-контракт, см. engineBlocks.ts).
+  const alt = activeAltPreset(s, mode);
+  if (alt) return alt.preset;
   // Профиль подменяет пресет только в РП. В новелле подменять нечем: там ход
   // держится на JSON-контракте, и выкинуть его — значит не получить ход вовсе.
   if (mode === 'rp') {
-    const alt = activeAltPreset(s, mode);
-    if (alt) return alt.preset;
     if (s.modelProfile === 'local') return s.localPreset;
     if (s.modelProfile === 'deepseek') return s.deepseekPreset;
     return s.rpPreset;
@@ -391,10 +398,12 @@ export function presetForMode(s: PresetSettings, mode: NarrativeMode): PromptPre
   return s.preset;
 }
 
-// Выбранный альтернативный пресет — только в РП и только если он ещё существует.
+// Выбранный альтернативный пресет режима — если он ещё существует и собран под
+// этот режим (пресет РП в новелле не сработает: в нём нет JSON-контракта).
 export function activeAltPreset(s: PresetSettings, mode: NarrativeMode): AltRpPreset | null {
-  if (mode !== 'rp' || !s.activeRpPreset) return null;
-  return s.altRpPresets.find((a) => a.id === s.activeRpPreset) ?? null;
+  const id = mode === 'rp' ? s.activeRpPreset : s.activeVnPreset;
+  if (!id) return null;
+  return s.altRpPresets.find((a) => a.id === id && a.mode === (mode === 'rp' ? 'rp' : 'vn')) ?? null;
 }
 
 // Настройки, действующие в этом режиме. С альтернативным пресетом поверх общих
@@ -413,6 +422,7 @@ export function settingsForMode(s: PresetSettings, mode: NarrativeMode): PresetS
     frequencyPenalty: sm.frequencyPenalty,
     presencePenalty: sm.presencePenalty,
     guidedThinking: false,
+    prefill: alt.prefill ?? s.prefill,
     regexRules: [...s.regexRules, ...alt.regexRules],
   };
 }
