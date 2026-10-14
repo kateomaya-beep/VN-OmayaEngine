@@ -69,6 +69,11 @@ export function stripStateBlock(raw: string): string {
   return raw.replace(STATE_RE, '').replace(CHOICES_RE, '').trim();
 }
 
+/** Без закрытых блоков размышления (<thinking>, <think>) — для истории в промпте. */
+export function stripThinkingBlocks(raw: string): string {
+  return raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
+}
+
 // Убирает префилл из начала текста. Префилл — это НАШИ слова, вписанные в уста
 // модели, чтобы она начала ответ нужным образом; провайдер приклеивает их обратно
 // к результату, иначе ответ был бы обрезан с головы.

@@ -5,6 +5,8 @@ import { defaultLocalPreset, normalizeLocalPreset } from './localPreset';
 import { defaultDeepseekPreset, normalizeDeepseekPreset, DEEPSEEK_THINKING_PLAN } from './deepseekPreset';
 import { isPromptProcessing, type PromptProcessing } from './promptPostProcess';
 import { normalizeRegexRules, type RegexRule } from './regexRules';
+import { normalizeAltPresets, type AltRpPreset } from './altPresets';
+import { pushToast } from '../shared/toast';
 import type { AdvancedPromptBlock, NarrativeMode } from '../shared/types';
 import { DEFAULT_TURN_LENGTH, normalizeTurnLength, LEGACY_THINKING_PLANS, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, NATIVE_RP_THINKING_PLAN, NATIVE_VN_THINKING_PLAN } from '../shared/types';
 
@@ -79,6 +81,10 @@ export interface PresetSettings {
   localMode: boolean;
   // Пресет под болячки DeepSeek — см. deepseekPreset.ts.
   deepseekPreset: PromptPreset;
+  // Альтернативные пресеты РП (импорт из SillyTavern, Dr. D) — см. altPresets.ts.
+  altRpPresets: AltRpPreset[];
+  // Какой из них сейчас работает в РП. Пусто — наш стандартный (по профилю модели).
+  activeRpPreset: string;
   // ПРОФИЛЬ МОДЕЛИ. Универсальный пресет «для всех» — компромисс, а модели ломаются
   // по-разному: у DeepSeek эхо и заедание фраз, у локальной — предел контекста.
   // Профиль подставляет и пресет, и параметры генерации под конкретную родню.
@@ -152,6 +158,8 @@ function defaults(): PresetSettings {
     localPreset: defaultLocalPreset(),
     localMode: false,
     deepseekPreset: defaultDeepseekPreset(),
+    altRpPresets: [],
+    activeRpPreset: '',
     modelProfile: 'universal',
     promptProcessing: 'merge',
     impersonationGuard: true,
@@ -229,6 +237,8 @@ function load(): PresetSettings {
       localPreset: normalizeLocalPreset(v.localPreset),
       localMode: !!v.localMode,
       deepseekPreset: normalizeDeepseekPreset(v.deepseekPreset),
+      altRpPresets: normalizeAltPresets(v.altRpPresets),
+      activeRpPreset: typeof v.activeRpPreset === 'string' ? v.activeRpPreset : '',
       // Миграция: раньше был один тумблер «локальная модель», теперь профиль.
       modelProfile: isModelProfile(v.modelProfile) ? v.modelProfile : v.localMode ? 'local' : 'universal',
       cloudBackup: v.cloudBackup && typeof v.cloudBackup === 'object' ? v.cloudBackup : undefined,
@@ -372,11 +382,39 @@ export function presetForMode(s: PresetSettings, mode: NarrativeMode): PromptPre
   // Профиль подменяет пресет только в РП. В новелле подменять нечем: там ход
   // держится на JSON-контракте, и выкинуть его — значит не получить ход вовсе.
   if (mode === 'rp') {
+    const alt = activeAltPreset(s, mode);
+    if (alt) return alt.preset;
     if (s.modelProfile === 'local') return s.localPreset;
     if (s.modelProfile === 'deepseek') return s.deepseekPreset;
     return s.rpPreset;
   }
   return s.preset;
+}
+
+// Выбранный альтернативный пресет — только в РП и только если он ещё существует.
+export function activeAltPreset(s: PresetSettings, mode: NarrativeMode): AltRpPreset | null {
+  if (mode !== 'rp' || !s.activeRpPreset) return null;
+  return s.altRpPresets.find((a) => a.id === s.activeRpPreset) ?? null;
+}
+
+// Настройки, действующие в этом режиме. С альтернативным пресетом поверх общих
+// ложатся его выборка и регулярки, а наше управляемое размышление выключается:
+// у таких пресетов своя цепочка размышления (у Dr. D — <think> в блоке «cot»), и
+// два плана подряд модель только путают. Сохранённые настройки не меняются —
+// вернулись на стандартный пресет, и всё как было.
+export function settingsForMode(s: PresetSettings, mode: NarrativeMode): PresetSettings {
+  const alt = activeAltPreset(s, mode);
+  if (!alt) return s;
+  const sm = alt.sampling;
+  return {
+    ...s,
+    temperature: sm.temperature ?? s.temperature,
+    topP: sm.topP,
+    frequencyPenalty: sm.frequencyPenalty,
+    presencePenalty: sm.presencePenalty,
+    guidedThinking: false,
+    regexRules: [...s.regexRules, ...alt.regexRules],
+  };
 }
 
 interface PresetStore {
@@ -389,7 +427,13 @@ export const usePresetSettings = create<PresetStore>((set) => ({
   settings: current,
   patch: (p) => {
     current = { ...current, ...p };
-    localStorage.setItem(LS_KEY, JSON.stringify(current));
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(current));
+    } catch {
+      // Импортированные пресеты тяжёлые (у Dr. D виджеты — сотни килобайт). Не
+      // влезло в хранилище браузера — работаем до перезагрузки и честно говорим.
+      pushToast('error', 'Настройки пресета не сохранились: в хранилище браузера нет места. Удалите лишние импортированные пресеты.');
+    }
     set({ settings: current });
   },
   // СМЕНА ПРОФИЛЯ. Профиль не накрывает настройки невидимым слоем, а ПОДСТАВЛЯЕТ

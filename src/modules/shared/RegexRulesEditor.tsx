@@ -50,9 +50,14 @@ const TEMPLATES: { name: string; rule: Partial<RegexRule> }[] = [
 export function RegexRulesEditor({
   rules,
   onChange,
+  title,
+  hint,
 }: {
   rules: RegexRule[];
   onChange: (next: RegexRule[]) => void;
+  /** Заголовок карточки — у регулярок альтернативного пресета свой. */
+  title?: string;
+  hint?: string;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [sample, setSample] = useState('Дэм: «Долго же ты.» (OOC: напомни, где мы)');
@@ -78,11 +83,15 @@ export function RegexRulesEditor({
     <div className="card !bg-panel2 mt-4">
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
-          <h4 className="font-semibold">Правила-регэкспы</h4>
+          <h4 className="font-semibold">{title ?? 'Правила-регэкспы'}</h4>
           <p className="text-xs text-gray-500">
-            Правка текста между моделью и экраном. Порядок сверху вниз — правила
-            применяются одно за другим. В замене работают <code>$1</code>…<code>$9</code> и{' '}
-            <code>{'{{match}}'}</code> (всё совпадение).
+            {hint ?? (
+              <>
+                Правка текста между моделью и экраном. Порядок сверху вниз — правила
+                применяются одно за другим. В замене работают <code>$1</code>…<code>$9</code> и{' '}
+                <code>{'{{match}}'}</code> (всё совпадение).
+              </>
+            )}
           </p>
         </div>
         <button className="btn-ghost !px-3 !py-1 text-xs whitespace-nowrap" onClick={() => add()}>
@@ -124,6 +133,12 @@ export function RegexRulesEditor({
                   value={r.name}
                   onChange={(e) => patch(r.id, { name: e.target.value })}
                 />
+                {(r.minDepth !== undefined || r.maxDepth !== undefined) && (
+                  <span className="text-[10px] text-gray-500" title="Глубина сообщения: 0 — последнее">
+                    глуб. {r.minDepth ?? 0}–{r.maxDepth ?? '∞'}
+                  </span>
+                )}
+                {r.html && <span className="chip !px-1.5 !py-0 text-[10px]" title="Замена рисуется как HTML-виджет">HTML</span>}
                 <button
                   className="btn-ghost !px-2 !py-1 text-xs"
                   title="Выше"
@@ -214,6 +229,33 @@ export function RegexRulesEditor({
                         ))}
                       </div>
                     </div>
+                  </div>
+
+                  <div className="flex gap-3 items-center flex-wrap text-xs text-gray-500">
+                    <label className="flex items-center gap-1.5" title="0 — последнее сообщение, 1 — предпоследнее…">
+                      Глубина от
+                      <input
+                        type="number"
+                        min={0}
+                        className="input !py-0.5 !px-1.5 w-14 text-xs"
+                        value={r.minDepth ?? ''}
+                        placeholder="0"
+                        onChange={(e) => patch(r.id, { minDepth: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) })}
+                      />
+                      до
+                      <input
+                        type="number"
+                        min={0}
+                        className="input !py-0.5 !px-1.5 w-14 text-xs"
+                        value={r.maxDepth ?? ''}
+                        placeholder="∞"
+                        onChange={(e) => patch(r.id, { maxDepth: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)) })}
+                      />
+                    </label>
+                    <label className="flex items-center gap-1.5" title="Замена — HTML-разметка: на экране рисуется виджетом (без скриптов, в изолированном блоке)">
+                      <input type="checkbox" checked={!!r.html} onChange={(e) => patch(r.id, { html: e.target.checked || undefined })} />
+                      HTML-виджет
+                    </label>
                   </div>
 
                   <div>

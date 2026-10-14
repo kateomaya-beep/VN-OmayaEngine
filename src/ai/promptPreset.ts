@@ -62,12 +62,20 @@ export interface PromptBlock {
   dynamic?: DynamicSource; // если задан — контент генерирует движок (content игнорируется)
   flagged?: boolean; // визуальное предупреждение (JSON-контракт)
   builtinKey?: string; // ключ дефолтного блока для «вернуть по умолчанию»
+  // Глубина вставки, как в Таверне (injection_position = 1): блок уходит не на своё
+  // место в списке, а ВНУТРЬ истории — на столько сообщений от конца (0 — после
+  // хода игрока, 1 — перед ним). Нет поля — блок стоит на своём месте.
+  injectDepth?: number;
 }
 
 export interface PromptPreset {
   id: string;
   name: string;
   blocks: PromptBlock[];
+  // Чужой пресет (импорт из SillyTavern): движок не навязывает ему свои правила
+  // письма — длину хода, план размышления, стиль русского, формат «только проза».
+  // Свои у такого пресета уже есть, и наши спорили бы с ними.
+  foreign?: 'sillytavern';
 }
 
 const JSON_CONTRACT = `Output EXACTLY ONE JSON object per this schema. No markdown fences, no text outside the JSON.
@@ -333,9 +341,15 @@ export function parsePresetJson(raw: unknown): PromptPreset | null {
       dynamic: typeof b.dynamic === 'string' ? b.dynamic : undefined,
       flagged: !!b.flagged,
       builtinKey: typeof b.builtinKey === 'string' ? b.builtinKey : undefined,
+      ...(typeof b.injectDepth === 'number' && b.injectDepth >= 0 ? { injectDepth: Math.floor(b.injectDepth) } : {}),
     }));
   if (!blocks.length) return null;
-  return { id: typeof r.id === 'string' ? r.id : uid('preset'), name: typeof r.name === 'string' ? r.name : 'Imported preset', blocks };
+  return {
+    id: typeof r.id === 'string' ? r.id : uid('preset'),
+    name: typeof r.name === 'string' ? r.name : 'Imported preset',
+    blocks,
+    ...(r.foreign === 'sillytavern' ? { foreign: 'sillytavern' as const } : {}),
+  };
 }
 
 // Гарантируем наличие пустых слотов-плейсхолдеров (jailbreak/nsfw) в любом пресете —

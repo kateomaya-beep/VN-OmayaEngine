@@ -31,6 +31,15 @@ export interface RegexRule {
   replace: string;
   appliesTo: RegexTarget;
   scope: RegexScope;
+  // Глубина, как в Таверне: 0 — последнее сообщение, 1 — предпоследнее… Правило
+  // работает только на сообщениях с глубиной от minDepth до maxDepth. Так чистят
+  // старые сообщения (minDepth: виджеты прошлых ходов не едут в контекст) и
+  // рисуют виджеты только на свежих (maxDepth). Нет поля — без ограничения.
+  minDepth?: number;
+  maxDepth?: number;
+  // Замена — HTML (виджет из пресета): на экране рисуется разметкой в
+  // изолированном блоке, а не показывается текстом. В промпт уходит как есть.
+  html?: boolean;
 }
 
 export function newRegexRule(): RegexRule {
@@ -60,7 +69,14 @@ export function normalizeRegexRules(raw: unknown): RegexRule[] {
       replace: typeof r.replace === 'string' ? r.replace : '',
       appliesTo: r.appliesTo === 'user' || r.appliesTo === 'both' ? r.appliesTo : 'ai',
       scope: r.scope === 'prompt' || r.scope === 'both' ? r.scope : 'display',
+      ...(depthOf(r.minDepth) !== undefined ? { minDepth: depthOf(r.minDepth) } : {}),
+      ...(depthOf(r.maxDepth) !== undefined ? { maxDepth: depthOf(r.maxDepth) } : {}),
+      ...(r.html ? { html: true } : {}),
     }));
+}
+
+function depthOf(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined;
 }
 
 function dedupeFlags(flags: string): string {
@@ -85,16 +101,44 @@ function compile(rule: RegexRule): RegExp | null {
 }
 
 // {{match}} — привычное по Таверне имя для всего совпадения. У нативного replace
-// это $&; переводим, чтобы готовые правила переносились без правки.
+// это $&; переводим, чтобы готовые правила переносились без правки. $0 — тоже
+// Таверна: там это всё совпадение, а нативный replace его не знает.
 function prepareReplacement(replace: string): string {
-  return replace.replace(/\{\{\s*match\s*\}\}/gi, '$&');
+  return replace.replace(/\{\{\s*match\s*\}\}/gi, '$$&').replace(/\$0(?!\d)/g, '$$&');
 }
+
+// Подстановка $1…$99, $<имя>, $& и $$ — то же, что делает нативный replace, но
+// руками: виджету нужен готовый текст замены, чтобы унести его из строки.
+function substitute(tpl: string, match: string, groups: (string | undefined)[], named?: Record<string, string>): string {
+  return tpl.replace(/\$(\$|&|<([^>]+)>|(\d{1,2}))/g, (whole, tok: string, name?: string, digits?: string) => {
+    if (tok === '$') return '$';
+    if (tok === '&') return match;
+    if (name !== undefined) return named?.[name] ?? '';
+    if (digits) {
+      const two = Number(digits);
+      if (digits.length === 2 && two >= 1 && two <= groups.length) return groups[two - 1] ?? '';
+      const one = Number(digits[0]);
+      if (one >= 1 && one <= groups.length) return (groups[one - 1] ?? '') + (digits.length === 2 ? digits[1] : '');
+    }
+    return whole;
+  });
+}
+
+export const WIDGET_OPEN = '\uE000W';
+export const WIDGET_CLOSE = '\uE001';
+export const WIDGET_RE = /\uE000W(\d+)\uE001/g;
 
 export interface RegexContext {
   /** Чей это текст. */
   role: 'ai' | 'user';
   /** Куда он идёт: на экран или в запрос модели. */
   scope: 'display' | 'prompt';
+  /** Глубина сообщения (0 — последнее). Нет — считаем последним. */
+  depth?: number;
+  /** Макросы в тексте замены ({{char}}, {{user}}) — как в Таверне. */
+  expand?: (s: string) => string;
+  /** Сюда складываются HTML-виджеты; в тексте на их месте — метка WIDGET_RE. Только на экране. */
+  widgets?: string[];
 }
 
 export function applyRegexRules(text: string, rules: RegexRule[] | undefined, ctx: RegexContext): string {
@@ -104,10 +148,24 @@ export function applyRegexRules(text: string, rules: RegexRule[] | undefined, ct
     if (!rule.enabled || !rule.find) continue;
     if (rule.appliesTo !== 'both' && rule.appliesTo !== ctx.role) continue;
     if (rule.scope !== 'both' && rule.scope !== ctx.scope) continue;
+    const depth = ctx.depth ?? 0;
+    if (rule.minDepth !== undefined && depth < rule.minDepth) continue;
+    if (rule.maxDepth !== undefined && depth > rule.maxDepth) continue;
     const re = compile(rule);
     if (!re) continue;
     try {
-      out = out.replace(re, prepareReplacement(rule.replace));
+      const tpl = prepareReplacement(ctx.expand && rule.replace.includes('{{') ? ctx.expand(rule.replace) : rule.replace);
+      const widgets = rule.html && ctx.scope === 'display' ? ctx.widgets : undefined;
+      if (widgets) {
+        out = out.replace(re, (...args: any[]) => {
+          const named = typeof args[args.length - 1] === 'object' ? (args[args.length - 1] as Record<string, string>) : undefined;
+          const groups = args.slice(1, named ? -3 : -2) as (string | undefined)[];
+          widgets.push(substitute(tpl, args[0], groups, named));
+          return `${WIDGET_OPEN}${widgets.length - 1}${WIDGET_CLOSE}`;
+        });
+      } else {
+        out = out.replace(re, tpl);
+      }
     } catch (e) {
       logEvent('warn', 'prompt', `Правило «${rule.name}» упало при замене: ${(e as Error).message}`);
     }

@@ -4,9 +4,9 @@ import { Console } from './Console';
 import { Markdown } from '../../../shared/markdown';
 import { stripMoveTag } from '../../../ai/responseParser';
 import { parseRpResponse } from '../../../ai/rpResponse';
-import { protagonistName } from '../../../ai/macros';
-import { applyRegexRules } from '../../../ai/regexRules';
-import { usePresetSettings } from '../../../ai/presetSettings';
+import { expandMacros, protagonistName } from '../../../ai/macros';
+import { applyRegexRules, WIDGET_RE } from '../../../ai/regexRules';
+import { settingsForMode, usePresetSettings } from '../../../ai/presetSettings';
 import type { Choice, WorldStateUpdate } from '../../../shared/types';
 import { StateInfobox } from './StateInfobox';
 import { MessageMenu, type MessageMenuItem } from '../../../shared/MessageMenu';
@@ -41,11 +41,15 @@ interface Rendered {
   text: string;
   /** Разобранная сводка мира этого хода — из неё рисуется инфобокс. */
   world?: WorldStateUpdate;
+  /** HTML-виджеты регулярок пресета (метки на их месте — в text). */
+  widgets?: string[];
 }
 
 export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNotes: () => void }) {
   const s = usePlayerStore();
-  const cfg = usePresetSettings((x) => x.settings);
+  // С альтернативным пресетом РП к своим регуляркам добавляются его (виджеты).
+  const baseCfg = usePresetSettings((x) => x.settings);
+  const cfg = useMemo(() => settingsForMode(baseCfg, 'rp'), [baseCfg]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
@@ -68,14 +72,28 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
   // Разбор всей ленты — заметная работа (регэкспы плюс JSON сводки на каждое
   // сообщение), поэтому считаем один раз на изменение истории, а не на каждый кадр
   // перерисовки: во время стриминга кадров десятки в секунду.
+  // Глубина — как в Таверне: последнее сообщение 0. По ней правила пресета
+  // рисуют виджеты только на свежих ходах и прячут их на старых.
+  const expand = useMemo(
+    () => (project && state ? (t: string) => expandMacros(t, { project, state }) : undefined),
+    // Макросы виджетов — имена ({{user}}, {{char}}); пересобирать ленту на каждое
+    // изменение состояния ради них незачем.
+    [project, state?.protagonistName]
+  );
   const rendered: Rendered[] = useMemo(() => {
-    return history.map((m) => {
+    return history.map((m, i) => {
+      const depth = history.length - 1 - i;
+      const widgets: string[] = [];
       if (m.role === 'user') {
         return {
           text: applyRegexRules(stripMoveTag(m.content).replace(/\n?\[COST ALREADY CHARGED BY ENGINE:[^\]]*\]/g, '').trim(), cfg.regexRules, {
             role: 'user',
             scope: 'display',
+            depth,
+            expand,
+            widgets,
           }),
+          widgets,
         };
       }
       // guard: false — обрезать «письмо за игрока» на показе поздно и вредно: ход
@@ -85,11 +103,17 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
         prefill: cfg.hidePrefill ? cfg.prefill : undefined,
       });
       return {
-        text: applyRegexRules(rp.prose, cfg.regexRules, { role: 'ai', scope: 'display' }),
+        text: applyRegexRules(rp.prose, cfg.regexRules, { role: 'ai', scope: 'display', depth, expand, widgets }),
         world: rp.worldState,
+        widgets,
       };
     });
-  }, [history, cfg.regexRules, cfg.hidePrefill, cfg.prefill]);
+  }, [history, cfg.regexRules, cfg.hidePrefill, cfg.prefill, expand]);
+  const streamWidgets: string[] = [];
+  const streamText =
+    s.thinking && s.streamingText
+      ? applyRegexRules(s.streamingText, cfg.regexRules, { role: 'ai', scope: 'display', depth: 0, expand, widgets: streamWidgets })
+      : '';
 
   // Прокрутка вниз при новом сообщении и по мере набора текста. useLayoutEffect, а
   // не useEffect: иначе кадр между вёрсткой и прокруткой видно как рывок вверх.
@@ -171,6 +195,7 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
                 who={mine ? heroName : narratorName}
                 number={theme.showMessageNumbers ? i + 1 : undefined}
                 text={r?.text ?? ''}
+                widgets={r?.widgets}
                 infobox={
                   !mine && cfg.showStateInfobox && r?.world ? <StateInfobox state={r.world} /> : null
                 }
@@ -201,7 +226,7 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
                         if (confirm(ask)) void s.branchFromMessage(i);
                       }
                 }
-                onCopy={() => copyToClipboard(r?.text ?? '')}
+                onCopy={() => copyToClipboard((r?.text ?? '').replace(WIDGET_RE, ''))}
                 // Варианты — только у последнего ответа. Вернуться к сообщению в
                 // середине ленты — «⑂ Играть отсюда».
                 swipes={canSwipe ? { count: Math.max(1, swipeCount), at: swipeAt } : undefined}
@@ -226,7 +251,8 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
             <Message
               mine={false}
               who={narratorName}
-              text={applyRegexRules(s.streamingText, cfg.regexRules, { role: 'ai', scope: 'display' })}
+              text={streamText}
+              widgets={streamWidgets}
               streaming
               busy
             />
@@ -332,6 +358,7 @@ function Message({
   who,
   number,
   text,
+  widgets,
   infobox,
   pending,
   streaming,
@@ -354,6 +381,7 @@ function Message({
   /** Порядковый номер в ленте (1-based) — тумблер «Счётчик сообщений» в оформлении. */
   number?: number;
   text: string;
+  widgets?: string[];
   infobox?: React.ReactNode;
   pending?: boolean;
   streaming?: boolean;
@@ -457,6 +485,7 @@ function Message({
               lineAsParagraph — разбивка по одиночным переводам строк, как в Таверне. */}
           <Markdown
             text={text}
+            widgets={widgets}
             lineAsParagraph
             className="block md-content text-[color:var(--pl-text)]"
             style={{

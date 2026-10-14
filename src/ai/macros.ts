@@ -18,6 +18,46 @@ export interface MacroContext {
   project: Project;
   state?: RuntimeState | null;
   protagonistName?: string;
+  /**
+   * Переменные сборки запроса ({{setvar}} / {{getvar}}, как в Таверне). Одна карта на
+   * весь запрос: блоки разворачиваются по порядку, и значение, заданное выше, видно
+   * ниже. Так собираются пресеты Таверны: тумблер «язык: русский» ставит переменную,
+   * а блок формата дальше её читает.
+   */
+  vars?: Map<string, string>;
+}
+
+// Переменные Таверны — по порядку появления в тексте: setvar раньше getvar в том же
+// блоке тоже работает. Значение берётся до первых «}}», поэтому вложенные макросы в
+// нём не поддерживаются (пресеты их там и не используют).
+function expandVars(text: string, vars: Map<string, string>): string {
+  return text.replace(
+    /\{\{\s*(setvar|getvar|addvar|incvar|decvar)\s*::\s*([^:}]+?)\s*(?:::([\s\S]*?))?\}\}/gi,
+    (_m, op: string, name: string, value?: string) => {
+      const key = name.trim();
+      const cur = vars.get(key) ?? '';
+      switch (op.toLowerCase()) {
+        case 'setvar':
+          vars.set(key, value ?? '');
+          return '';
+        case 'getvar':
+          return cur;
+        case 'addvar': {
+          const a = Number(cur);
+          const b = Number(value);
+          vars.set(key, !Number.isNaN(a) && !Number.isNaN(b) && cur !== '' ? String(a + b) : cur + (value ?? ''));
+          return '';
+        }
+        case 'incvar':
+          vars.set(key, String((Number(cur) || 0) + 1));
+          return '';
+        case 'decvar':
+          vars.set(key, String((Number(cur) || 0) - 1));
+          return '';
+      }
+      return '';
+    }
+  );
 }
 
 // Главный «собеседник» проекта для {{char}}: у нас, в отличие от карточки Таверны,
@@ -95,6 +135,9 @@ export function expandMacros(text: string, ctx: MacroContext): string {
   const now = new Date();
 
   let out = expandUserMacros(text, project);
+  // Комментарии Таверны {{// …}} — для автора пресета, модели они не нужны.
+  out = out.replace(/\{\{\s*\/\/[\s\S]*?\}\}/g, '');
+  if (ctx.vars) out = expandVars(out, ctx.vars);
 
   const simple: Record<string, string> = {
     // Кто есть кто
@@ -119,6 +162,8 @@ export function expandMacros(text: string, ctx: MacroContext): string {
     lastusermessage: lastOf('user'),
     // Утилиты
     newline: '\n',
+    // Сводка сюжета (в Таверне — расширение Summarize): у нас это снапшот памяти.
+    summary: state?.memory?.storyState?.trim() || '',
   };
 
   out = out.replace(/\{\{\s*([a-z_][\w]*)\s*\}\}/gi, (whole, key: string) => {
@@ -168,4 +213,7 @@ export const MACRO_HELP: { name: string; what: string }[] = [
   { name: '{{roll:d20}}', what: 'бросок кубика (можно 2d6)' },
   { name: '{{newline}}', what: 'перевод строки' },
   { name: '{{trim}}', what: 'съедает пробелы и переводы строк после себя' },
+  { name: '{{setvar::имя::значение}}', what: 'задать переменную запроса (как в Таверне); блоки ниже её видят' },
+  { name: '{{getvar::имя}}', what: 'значение переменной, заданной выше' },
+  { name: '{{summary}}', what: 'снапшот памяти — сводка того, что уже случилось' },
 ];

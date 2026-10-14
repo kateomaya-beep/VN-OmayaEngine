@@ -1,4 +1,6 @@
-import type { CSSProperties } from 'react';
+import { useLayoutEffect, useRef, type CSSProperties } from 'react';
+import { WIDGET_RE } from '../ai/regexRules';
+import { mountWidget } from './htmlWidget';
 
 // Безопасный рендер ограниченного markdown (Batch 3 §7-bis). ОБЯЗАТЕЛЬНАЯ
 // санитизация: сначала экранируем весь HTML, потом применяем markdown-разметку к
@@ -202,20 +204,28 @@ export function Markdown({
   className,
   style,
   lineAsParagraph,
+  widgets,
 }: {
   text: string;
   className?: string;
   style?: CSSProperties;
   /** Каждая строка — отдельный абзац (как в Таверне). См. renderMarkdown. */
   lineAsParagraph?: boolean;
+  /** HTML-виджеты регулярок; в тексте на их месте метки (см. applyRegexRules). */
+  widgets?: string[];
 }) {
-  return (
-    <span
-      className={className}
-      style={style}
-      dangerouslySetInnerHTML={{ __html: renderMarkdown(text, { lineAsParagraph }) }}
-    />
-  );
+  const ref = useRef<HTMLSpanElement>(null);
+  let html = renderMarkdown(text, { lineAsParagraph });
+  if (widgets?.length) html = html.replace(WIDGET_RE, (_m, n: string) => `<span class="nf-widget" data-w="${n}"></span>`);
+  else html = html.replace(WIDGET_RE, '');
+  useLayoutEffect(() => {
+    if (!widgets?.length || !ref.current) return;
+    for (const host of Array.from(ref.current.querySelectorAll<HTMLElement>('span.nf-widget'))) {
+      const w = widgets[Number(host.dataset.w)];
+      if (w !== undefined) mountWidget(host, w);
+    }
+  });
+  return <span ref={ref} className={className} style={style} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 // Только инлайновая разметка (жирный/курсив/моно), без блочных элементов —

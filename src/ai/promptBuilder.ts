@@ -3,9 +3,9 @@ import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_BAN_WORDS, PHONE_BALANCE_STAT
 import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
-import { stripStateBlock } from './rpResponse';
+import { stripStateBlock, stripThinkingBlocks } from './rpResponse';
 import { applyRegexRules } from './regexRules';
-import { getPresetSettings, presetForMode } from './presetSettings';
+import { getPresetSettings, presetForMode, settingsForMode } from './presetSettings';
 import { modelAlwaysThinks, modelIsVerboseThinker } from './providers';
 import { composeThinkingPlan, planSteps } from './thinkingPlan';
 import { choiceModeDirective, choiceModeOf } from './choiceMode';
@@ -1034,11 +1034,15 @@ export async function buildRequest(
   opts?: { skipVector?: boolean; extraDirective?: string; preview?: boolean }
 ): Promise<BuiltRequest> {
   const cfg = project.aiConfig;
-  const ps = getPresetSettings(); // ГЛОБАЛЬНЫЙ пресет/настройки генерации (не на проект)
   // Режим повествования решает, ЧЕМ собирать запрос: у новеллы и текстового РП
   // разные пресеты (см. presetForMode) и разный контракт ответа.
   const mode = normalizeNarrativeMode(project.mode);
-  const ctx: MacroContext = { project, state };
+  // ГЛОБАЛЬНЫЙ пресет/настройки генерации (не на проект) — с поправкой на
+  // альтернативный пресет РП, если он выбран (его выборка и регулярки).
+  const ps = settingsForMode(getPresetSettings(), mode);
+  // Переменные {{setvar}}/{{getvar}} живут один запрос: блоки читаются по порядку,
+  // и то, что поставил тумблер выше, видно блокам ниже — как в Таверне.
+  const ctx: MacroContext = { project, state, vars: new Map() };
   const onScreenIds = state.onScreen.map((s) => s.characterId);
 
   const recentText =
@@ -1096,8 +1100,13 @@ export async function buildRequest(
   // Роль блока (как в Таверне): 'system' идёт в системный промпт; 'user'/'assistant'
   // становятся отдельными сообщениями ПЕРЕД живой историей.
   const preset = presetForMode(ps, mode);
+  // Чужой пресет (импорт из Таверны): свои правила письма у него есть, наши
+  // директивы длины, стиля, плана и формата «только проза» с ними бы спорили.
+  const foreign = mode === 'rp' && !!preset.foreign;
   const systemParts: string[] = [];
   const presetMessages: LlmMessage[] = [];
+  // Блоки с глубиной вставки — уходят внутрь истории, на N сообщений от конца.
+  const depthBlocks: { depth: number; msg: LlmMessage }[] = [];
   const renderedDynamics = new Set<DynamicSource>();
   // Куда вставлять живую историю. null — блока «История переписки» в пресете нет
   // (старые пресеты): тогда, как раньше, история идёт после всех блоков.
@@ -1134,6 +1143,10 @@ export async function buildRequest(
     }
     if (!text.trim()) continue;
     const role = block.role || 'system';
+    if (block.injectDepth !== undefined) {
+      depthBlocks.push({ depth: block.injectDepth, msg: { role, content: text } });
+      continue;
+    }
     // ПОЛОЖЕНИЕ БЛОКА РЕШАЕТ, КУДА ОН УЙДЁТ. Раньше решала только роль: любой
     // system-блок улетал в системную часть, то есть в самое начало запроса, —
     // и опустить его ниже истории было НЕВОЗМОЖНО. Пользователь переставлял блок
@@ -1187,7 +1200,7 @@ export async function buildRequest(
   // средним, куда бы ни двигали ползунок. Поэтому в РП стоит своя директива — с тем
   // же весом, что в новелле, но про абзацы прозы вместо бит.
   const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
-  systemParts.push(
+  if (!foreign) systemParts.push(
     mode === 'rp'
       ? `TURN LENGTH (authoritative; overrides every other length or pacing instruction): ${tl.min}–${tl.max} words of story.
 - ${tl.max} is a hard ceiling; stop at a natural pause inside the range, do not pad.
@@ -1231,7 +1244,7 @@ export async function buildRequest(
   // Страховка только для пресетов без своего тумблера «Язык» (свои и старые): где
   // он есть, автор решает сам — выключил, значит, так и задумано.
   const hasLanguageToggle = preset.blocks.some((b) => b.builtinKey === 'language' || b.builtinKey === 'rp_language');
-  if (ps.narrativeLanguage !== 'en' && !hasLanguageToggle) {
+  if (ps.narrativeLanguage !== 'en' && !hasLanguageToggle && !foreign) {
     systemParts.push(
       'RUSSIAN STYLE (authoritative): modern literary Russian, as in a contemporary novel; dialogue is natural present-day speech. ' +
         'Folk or archaic words (ишь, гляди-ка, авось, кабы, давеча, сударь, батюшки) only if a character\'s card or samples use them; setting or social status alone never justify them.'
@@ -1273,20 +1286,26 @@ export async function buildRequest(
   // приезжает динамическим блоком Game Master, а старая с ним ещё и спорит.
   // Правила-регэкспы со scope 'prompt' правят ровно то, что уезжает модели, и
   // ничего больше: на экране игрока текст остаётся исходным.
-  const rx = (text: string, role: 'ai' | 'user') =>
-    applyRegexRules(text, ps.regexRules, { role, scope: 'prompt' });
-  let window: LlmMessage[] = state.history.slice(-histCap).map((m) =>
+  // Глубина — как в Таверне: ход игрока 0, последнее сообщение истории 1 и так
+  // далее (по ней правила вроде «чистить виджеты старше 6 сообщений»).
+  const rx = (text: string, role: 'ai' | 'user', depth = 0) =>
+    applyRegexRules(text, ps.regexRules, { role, scope: 'prompt', depth, expand: (t) => expandMacros(t, ctx) });
+  const histSlice = state.history.slice(-histCap);
+  let window: LlmMessage[] = histSlice.map((m, i) =>
     m.role === 'assistant'
       ? {
           role: 'assistant' as const,
           content: rx(
             mode === 'rp'
-              ? stripStateBlock(m.content)
+              ? // Размышление прошлых ходов (<thinking> плана, <think> цепочки
+                // пресета) модели второй раз ни к чему — в Таверне оно тоже не едет.
+                stripThinkingBlocks(stripStateBlock(m.content))
               : condenseAssistantTurn(m.content, project, state) ?? m.content,
-            'ai'
+            'ai',
+            histSlice.length - i
           ),
         }
-      : { role: m.role, content: rx(m.content, 'user') }
+      : { role: m.role, content: rx(m.content, 'user', histSlice.length - i) }
   );
 
   // ЖЁСТКИЙ БЮДЖЕТ КОНТЕКСТА. «Бюджет контекста» из пресета раньше был только
@@ -1409,10 +1428,19 @@ export async function buildRequest(
     });
   }
   withMove.push({ role: 'user', content: rx(playerMove, 'user') });
-  for (const b of blocks) {
-    const depth = Math.max(0, Math.floor(b.depth));
-    const insertAt = Math.max(0, withMove.length - depth);
-    withMove.splice(insertAt, 0, { role: 'user', content: expandMacros(b.content, ctx) });
+  // Вставки на глубину: блоки пресета с injectDepth и продвинутые блоки. Глубина
+  // считается от ленты ДО вставок — иначе блок на глубине 0 сдвигал бы всё, что
+  // вставлено на глубину 1, и порядок зависел бы от того, кто вставлен первым.
+  // Блоки одной глубины идут в своём порядке.
+  const injections = [
+    ...depthBlocks,
+    ...blocks.map((b) => ({ depth: Math.max(0, Math.floor(b.depth)), msg: { role: 'user' as const, content: expandMacros(b.content, ctx) } })),
+  ];
+  if (injections.length) {
+    const base = withMove.splice(0);
+    const at = (d: number) => injections.filter((x) => Math.min(x.depth, base.length) === d).map((x) => x.msg);
+    base.forEach((m, i) => withMove.push(...at(base.length - i), m));
+    withMove.push(...at(0));
   }
 
   // ХВОСТ ПОСЛЕ ХОДА ИГРОКА — ОДНИМ сообщением. Раньше заметки, директива события,
@@ -1481,7 +1509,9 @@ export async function buildRequest(
 
   // Стоп-слова. undefined = список по умолчанию, пустая строка = осознанно
   // выключено (тогда ни блока, ни пункта проверки в чек-листе размышления).
-  const banWords = (ps.banWords ?? DEFAULT_BAN_WORDS).trim();
+  // У чужого пресета свой список (у Dr. D — тумблер «banwords»), поэтому наш
+  // дефолтный туда не добавляем; свой, вписанный автором, — да.
+  const banWords = (ps.banWords ?? (foreign ? '' : DEFAULT_BAN_WORDS)).trim();
   if (banWords) {
     tail.push(
       'BANNED PHRASES — never write these in any language or form, including rewordings and synonyms of the same image. ' +
@@ -1504,7 +1534,11 @@ export async function buildRequest(
       : `Length: ${tl.min}–${tl.max} words in beats of 1–3 sentences; mix dialogue (with the speaker's characterId) and narration.`;
   const formatReminder =
     mode === 'rp'
-      ? 'Reply with the story only: plain prose, no JSON, no headers, no OOC text, nothing written for the player.' +
+      ? // У чужого пресета свой формат ответа (HUD, виджеты, заметки) — «только
+        // проза» его сломала бы. Остаётся то, без чего не работает движок.
+        (foreign
+          ? 'Follow the output format of your instructions above; never write for the player beyond their move.'
+          : 'Reply with the story only: plain prose, no JSON, no headers, no OOC text, nothing written for the player.') +
         (choiceMode ? `\nAfter the story: the <choices> block with ${choiceMode.count} options (see CHOICE MODE).` : '') +
         // Сам контракт сводки лежит блоком пресета — далеко наверху, за всей
         // историей. Одной строки-упоминания в хвосте не хватало: модель дописывала
@@ -1587,7 +1621,8 @@ export async function buildRequest(
       prefill = '<thinking>\n';
     }
   } else {
-    tail.push(`${formatReminder}\n${lengthReminder}`);
+    // Длину чужому пресету задают его тумблеры (у Dr. D — «size»), не наш ползунок.
+    tail.push(foreign ? formatReminder : `${formatReminder}\n${lengthReminder}`);
   }
 
   withMove.push({

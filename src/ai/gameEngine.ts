@@ -8,12 +8,12 @@ import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson
 import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion, modelTakesPrefill } from './providers';
-import { getPresetSettings, presetForMode, type PresetSettings } from './presetSettings';
+import { activeAltPreset, getPresetSettings, presetForMode, settingsForMode, type PresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, forcedEvent, rollRandomSms } from './randomEvents';
-import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock } from './rpResponse';
+import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock, stripThinkingBlocks } from './rpResponse';
 import { choiceModeOf, validateChoices } from './choiceMode';
 import { RP_STATE_OPEN, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { protagonistName } from './macros';
@@ -749,7 +749,7 @@ export async function runTurn(
   // адженда/крючками. Показываем отклонённый вариант и требуем другой.
   const rejectedText = rejectedTurn?.trim()
     ? mode === 'rp'
-      ? stripStateBlock(rejectedTurn)
+      ? stripThinkingBlocks(stripStateBlock(rejectedTurn))
       : condenseAssistantTurn(rejectedTurn, project, state) ?? rejectedTurn
     : '';
   const rerollDirective = rejectedText
@@ -775,7 +775,8 @@ export async function runTurn(
   // кириллицы) + запас на JSON-обвязку/worldState. Держим НЕ слишком большим,
   // иначе модель выбирает весь бюджет и уходит в «полотно» (медленно). Но и не
   // ниже дефолта шлюза, который иначе режет ход.
-  const ps = getPresetSettings();
+  // С альтернативным пресетом РП — его температура, top_p и штрафы.
+  const ps = settingsForMode(getPresetSettings(), req.mode);
   const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
   // Потолок ответа. 2.2 токена на слово хватало для английского, но кириллица у
   // всех популярных токенайзеров стоит ~3 токена на слово, а JSON добавляет ключи,
@@ -783,7 +784,10 @@ export async function runTurn(
   // обрывался посреди JSON — и до пользователя это доходило как «ошибка ИИ»
   // (с обязательными выборами заметнее: choices идут последними и срезались всегда).
   const perWord = ps.narrativeLanguage === 'en' ? 1.8 : 3;
-  const maxTokens = Math.min(8000, Math.max(1500, Math.round(tl.max * perWord) + 900));
+  // У альтернативного пресета свой потолок: размышление в <think>, HUD и виджеты
+  // сверх самой прозы в расчёт по длине хода не влезают.
+  const altMax = activeAltPreset(getPresetSettings(), req.mode)?.sampling.maxTokens;
+  const maxTokens = altMax ?? Math.min(8000, Math.max(1500, Math.round(tl.max * perWord) + 900));
   // При управляемом размышлении родную «думалку» глушим (none) — иначе она сложится
   // с нашим планом и станет только медленнее.
   //
