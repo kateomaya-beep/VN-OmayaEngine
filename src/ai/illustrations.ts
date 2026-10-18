@@ -46,6 +46,15 @@ export function illustrationKey(caption: string): string {
   return `il_${h.toString(36)}_${t.length}`;
 }
 
+/**
+ * Ключ иллюстрации «по просьбе» (меню сообщения → «Проиллюстрировать»): по тексту
+ * сообщения, без служебных блоков. У каждого варианта ответа — своя, правка текста
+ * её отвязывает (рисовали другой текст).
+ */
+export function messageIllustrationKey(content: string): string {
+  return 'msg_' + illustrationKey(stripStateBlock(content)).slice(3);
+}
+
 /** Сколько ответов модели прошло после последнего с нарисованной иллюстрацией. */
 export function turnsSinceIllustration(project: Project, history: LlmMessage[]): number {
   const map = project.imageGen?.illustrations || {};
@@ -113,7 +122,7 @@ export async function drawIllustration(
   project: Project,
   state: RuntimeState,
   caption: string,
-  opts: { prompt?: string; signal?: AbortSignal } = {}
+  opts: { prompt?: string; signal?: AbortSignal; recent?: string } = {}
 ): Promise<DrawnIllustration> {
   const ig = project.imageGen ?? defaultImageGenConfig();
   const people = scenePeople(project, state);
@@ -124,8 +133,9 @@ export async function drawIllustration(
   if (!prompt) {
     const res = await composeCgPrompt(project, state, ig.systemPrompt, {
       people,
-      moment: caption,
-      recent: lastStory ? stripStateBlock(lastStory.content) : undefined,
+      // Пустая подпись (рисуем по просьбе, без уточнения) — момент выбирает воркер.
+      moment: caption.trim() || undefined,
+      recent: opts.recent ? stripStateBlock(opts.recent) : lastStory ? stripStateBlock(lastStory.content) : undefined,
     });
     prompt = res.prompt;
     if (!aspect) aspect = res.aspectRatio;

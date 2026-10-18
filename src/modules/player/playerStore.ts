@@ -221,9 +221,11 @@ interface PlayerStore {
   setSwipe: (index: number) => Promise<void>;
   // ИЛЛЮСТРАЦИИ В РП (см. ai/illustrations.ts). prompt — свой текст для художника
   // (правка в карточке); без него промпт собирает воркер CG-студии.
-  drawIllustration: (caption: string, opts?: { prompt?: string }) => Promise<void>;
-  removeIllustration: (caption: string) => Promise<void>;
-  illustrationToGallery: (caption: string) => Promise<void>;
+  // key — своя ячейка (иллюстрация по просьбе к сообщению), recent — текст, по
+  // которому рисовать (по умолчанию — последний ответ).
+  drawIllustration: (caption: string, opts?: { prompt?: string; key?: string; recent?: string }) => Promise<void>;
+  removeIllustration: (caption: string, key?: string) => Promise<void>;
+  illustrationToGallery: (caption: string, key?: string) => Promise<void>;
 }
 
 // Сколько последних автосейвов хранить в кольце (история для отката, если прогресс
@@ -993,7 +995,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   async drawIllustration(caption, opts) {
     const { project, state } = get();
     if (!project || !state) return;
-    const key = illustrationKey(caption);
+    const key = opts?.key || illustrationKey(caption);
     const prev = project.imageGen?.illustrations?.[key];
     if (prev?.status === 'drawing') return;
     const patchRec = (rec: Partial<NonNullable<typeof prev>> | null) =>
@@ -1007,7 +1009,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     await patchRec({ status: 'drawing', error: undefined });
     const t0 = Date.now();
     try {
-      const { blob, prompt } = await paintIllustration(project, state, caption, { prompt: opts?.prompt });
+      const { blob, prompt } = await paintIllustration(project, state, caption, { prompt: opts?.prompt, recent: opts?.recent });
       const blobKey = uid('blob');
       await putAsset(blobKey, blob);
       const asset: AssetMeta = {
@@ -1015,7 +1017,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         // 'icon', а не 'cg': кат-сцены уходят модели списком ассетов, и подписи
         // иллюстраций (а с ними и прошлые метки) ехали бы в каждый запрос.
         type: 'icon',
-        name: `Иллюстрация: ${caption.slice(0, 40)}`,
+        name: `Иллюстрация: ${(caption || 'по просьбе').slice(0, 40)}`,
         generated: true,
         blobKey,
         mime: blob.type || 'image/png',
@@ -1035,7 +1037,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           illustrations: { ...(ig.illustrations || {}), [key]: { caption, status: 'done', assetId: asset.id, prompt, at: Date.now() } },
         };
       });
-      logEvent('info', 'image', `Иллюстрация нарисована за ${Math.round((Date.now() - t0) / 1000)} с: «${caption.slice(0, 60)}»`, prompt);
+      logEvent('info', 'image', `Иллюстрация нарисована за ${Math.round((Date.now() - t0) / 1000)} с: «${(caption || 'по просьбе').slice(0, 60)}»`, prompt);
     } catch (e) {
       const msg = (e as Error).message;
       // Перерисовка не удалась — прежняя картинка остаётся.
@@ -1045,10 +1047,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
   },
 
-  async removeIllustration(caption) {
+  async removeIllustration(caption, k) {
     const project = get().project;
     if (!project) return;
-    const key = illustrationKey(caption);
+    const key = k || illustrationKey(caption);
     await get().patchProject((p) => {
       const ig = p.imageGen ?? defaultImageGenConfig();
       const rec = ig.illustrations?.[key];
@@ -1063,8 +1065,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     });
   },
 
-  async illustrationToGallery(caption) {
-    const rec = get().project?.imageGen?.illustrations?.[illustrationKey(caption)];
+  async illustrationToGallery(caption, k) {
+    const rec = get().project?.imageGen?.illustrations?.[k || illustrationKey(caption)];
     if (!rec?.assetId) return;
     await get().patchProject((p) => {
       const ig = p.imageGen ?? defaultImageGenConfig();

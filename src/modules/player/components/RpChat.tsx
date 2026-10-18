@@ -11,6 +11,7 @@ import type { Choice, WorldStateUpdate } from '../../../shared/types';
 import { StateInfobox } from './StateInfobox';
 import { IllustrationCard } from './IllustrationCard';
 import { stripIllustrationMarks } from '../../../ai/rpResponse';
+import { messageIllustrationKey } from '../../../ai/illustrations';
 import { MessageMenu, type MessageMenuItem } from '../../../shared/MessageMenu';
 import { copyToClipboard } from '../../../shared/utils';
 import { loadGlobalTheme } from '../playerTheme';
@@ -198,6 +199,9 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
                 number={theme.showMessageNumbers ? i + 1 : undefined}
                 text={r?.text ?? ''}
                 widgets={r?.widgets}
+                // Иллюстрация по просьбе — у любого ответа рассказчика, в том числе
+                // у стартовой сцены: момент не обязан быть «важным».
+                illustrate={!mine ? { key: messageIllustrationKey(m.content), recent: m.content } : undefined}
                 infobox={
                   !mine && cfg.showStateInfobox && r?.world ? <StateInfobox state={r.world} /> : null
                 }
@@ -377,6 +381,7 @@ function Message({
   swipes,
   onSwipe,
   onNewSwipe,
+  illustrate,
 }: {
   mine: boolean;
   who: string;
@@ -400,12 +405,27 @@ function Message({
   swipes?: { count: number; at: number };
   onSwipe?: (dir: -1 | 1) => void;
   onNewSwipe?: () => void;
+  /** Ячейка иллюстрации «по просьбе» и текст, по которому её рисовать. */
+  illustrate?: { key: string; recent: string };
 }) {
+  const drawIllustration = usePlayerStore((x) => x.drawIllustration);
+  const manual = usePlayerStore((x) => (illustrate ? x.project?.imageGen?.illustrations?.[illustrate.key] : undefined));
+  const [askArt, setAskArt] = useState(false);
+  const [artWhat, setArtWhat] = useState('');
   const menuItems: MessageMenuItem[] = [];
   if (onStartEdit) menuItems.push({ icon: '✎', label: 'Редактировать', onClick: onStartEdit });
   if (onCopy) menuItems.push({ icon: '⧉', label: 'Копировать', onClick: onCopy });
   if (onNewSwipe) menuItems.push({ icon: '↻', label: 'Другой вариант', onClick: onNewSwipe });
   if (onBranch && !busy) menuItems.push({ icon: '⑂', label: 'Играть отсюда', onClick: onBranch });
+  if (illustrate && !streaming && !pending && manual?.status !== 'drawing')
+    menuItems.push({
+      icon: '🎨',
+      label: manual ? 'Проиллюстрировать заново' : 'Проиллюстрировать',
+      onClick: () => {
+        setArtWhat(manual?.caption || '');
+        setAskArt(true);
+      },
+    });
   if (onDelete) menuItems.push({ icon: '✕', label: 'Удалить', onClick: onDelete, danger: true });
 
   return (
@@ -489,7 +509,7 @@ function Message({
               где её поставил рассказчик. Недописанная метка на потоке не видна. */}
           {splitIllustrations(text).map((part, k) =>
             part.caption !== undefined ? (
-              <IllustrationCard key={k} caption={part.caption} interactive={!streaming && !pending} />
+              <IllustrationCard key={k} caption={part.caption} recent={illustrate?.recent} interactive={!streaming && !pending} />
             ) : (
               <Markdown
                 key={k}
@@ -506,6 +526,43 @@ function Message({
           )}
           {streaming && (
             <span className="inline-block w-1.5 h-4 align-text-bottom ml-0.5 bg-[var(--pl-accent)] animate-pulse" />
+          )}
+          {/* Иллюстрация по просьбе — в конце сообщения: момент выбран не
+              рассказчиком, места в тексте у неё нет. */}
+          {askArt && illustrate && (
+            <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-2.5 space-y-2">
+              <div className="text-xs text-gray-300">🎨 Что нарисовать?</div>
+              <input
+                className="input !py-1 text-sm"
+                autoFocus
+                value={artWhat}
+                placeholder="Необязательно — ИИ возьмёт самый яркий момент сообщения"
+                onChange={(e) => setArtWhat(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setAskArt(false);
+                    void drawIllustration(artWhat.trim(), { key: illustrate.key, recent: illustrate.recent });
+                  } else if (e.key === 'Escape') setAskArt(false);
+                }}
+              />
+              <div className="flex gap-2 justify-end">
+                <button className="btn-ghost !py-1 !px-3 text-xs" onClick={() => setAskArt(false)}>
+                  Отмена
+                </button>
+                <button
+                  className="btn-primary !py-1 !px-3 text-xs"
+                  onClick={() => {
+                    setAskArt(false);
+                    void drawIllustration(artWhat.trim(), { key: illustrate.key, recent: illustrate.recent });
+                  }}
+                >
+                  Нарисовать
+                </button>
+              </div>
+            </div>
+          )}
+          {illustrate && manual && (
+            <IllustrationCard caption={manual.caption} ikey={illustrate.key} recent={illustrate.recent} interactive={!streaming && !pending} />
           )}
           {infobox}
         </>

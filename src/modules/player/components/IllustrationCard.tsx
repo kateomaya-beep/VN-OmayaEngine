@@ -8,8 +8,21 @@ import { illustrationKey } from '../../../ai/illustrations';
 // мерцающая заглушка с подписью; готово — картинка в рамке с мягким свечением и
 // подписью курсивом. Нажатие — на весь экран. Метки без записи (до срока, лишние)
 // не показываются вовсе.
-export function IllustrationCard({ caption, interactive = true }: { caption: string; interactive?: boolean }) {
-  const rec = usePlayerStore((s) => s.project?.imageGen?.illustrations?.[illustrationKey(caption)]);
+export function IllustrationCard({
+  caption,
+  ikey,
+  recent,
+  interactive = true,
+}: {
+  caption: string;
+  /** Своя ячейка (иллюстрация по просьбе); нет — по подписи метки. */
+  ikey?: string;
+  /** Текст, по которому перерисовывать (сообщение, к которому картинка). */
+  recent?: string;
+  interactive?: boolean;
+}) {
+  const key = ikey || illustrationKey(caption);
+  const rec = usePlayerStore((s) => s.project?.imageGen?.illustrations?.[key]);
   const asset = usePlayerStore((s) => (rec?.assetId ? s.project?.assets.find((a) => a.id === rec.assetId) : undefined));
   const draw = usePlayerStore((s) => s.drawIllustration);
   const remove = usePlayerStore((s) => s.removeIllustration);
@@ -43,7 +56,7 @@ export function IllustrationCard({ caption, interactive = true }: { caption: str
     if (!url) return;
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${caption.slice(0, 40).replace(/[\\/:*?"<>|]+/g, '') || 'illustration'}.png`;
+    a.download = `${(caption || 'illustration').slice(0, 40).replace(/[\\/:*?"<>|]+/g, '') || 'illustration'}.png`;
     a.click();
   };
 
@@ -56,7 +69,7 @@ export function IllustrationCard({ caption, interactive = true }: { caption: str
   );
 
   return (
-    <figure className="nf-illustration my-3 mx-0 not-prose" data-key={illustrationKey(caption)}>
+    <figure className="nf-illustration my-3 mx-0 not-prose" data-key={key}>
       <div
         className="relative rounded-2xl overflow-hidden border border-[color-mix(in_srgb,var(--pl-accent)_35%,transparent)] bg-black/40"
         style={{ boxShadow: '0 0 28px -6px color-mix(in srgb, var(--pl-accent) 45%, transparent)' }}
@@ -77,18 +90,18 @@ export function IllustrationCard({ caption, interactive = true }: { caption: str
           <div className="aspect-[3/2] w-full flex flex-col items-center justify-center gap-2 px-4 text-center">
             <span className="text-xs text-red-300">⚠ {rec.error || 'Не нарисовалось'}</span>
             {interactive && (
-              <button className="btn-ghost !px-3 !py-1 text-xs" onClick={() => void draw(caption)}>
+              <button className="btn-ghost !px-3 !py-1 text-xs" onClick={() => void draw(caption, { key, recent })}>
                 ↻ Нарисовать снова
               </button>
             )}
           </div>
         )}
       </div>
-      {captionLine}
+      {caption.trim() && captionLine}
 
       {interactive && rec.status === 'done' && !drawing && (
         <div className="nf-ill-actions flex flex-wrap justify-center gap-1 text-[11px]">
-          <button className="rounded-full px-2 py-0.5 bg-white/5 hover:bg-white/10" onClick={() => void draw(caption)} title="Новый вариант по тому же моменту">
+          <button className="rounded-full px-2 py-0.5 bg-white/5 hover:bg-white/10" onClick={() => void draw(caption, { key, recent })} title="Новый вариант по тому же моменту">
             ↻ перерисовать
           </button>
           <button
@@ -100,7 +113,7 @@ export function IllustrationCard({ caption, interactive = true }: { caption: str
           >
             ✎ промпт
           </button>
-          <button className="rounded-full px-2 py-0.5 bg-white/5 hover:bg-white/10 disabled:opacity-40" disabled={inGallery} onClick={() => void toGallery(caption)}>
+          <button className="rounded-full px-2 py-0.5 bg-white/5 hover:bg-white/10 disabled:opacity-40" disabled={inGallery} onClick={() => void toGallery(caption, key)}>
             {inGallery ? '★ в галерее' : '⭐ в галерею'}
           </button>
           <button className="rounded-full px-2 py-0.5 bg-white/5 hover:bg-white/10" onClick={() => void download()}>
@@ -108,7 +121,7 @@ export function IllustrationCard({ caption, interactive = true }: { caption: str
           </button>
           <button
             className="rounded-full px-2 py-0.5 bg-white/5 hover:bg-white/10 text-red-300"
-            onClick={() => confirm('Убрать иллюстрацию из ответа?') && void remove(caption)}
+            onClick={() => confirm('Убрать иллюстрацию из ответа?') && void remove(caption, key)}
           >
             ✕ убрать
           </button>
@@ -126,7 +139,7 @@ export function IllustrationCard({ caption, interactive = true }: { caption: str
               disabled={!prompt.trim()}
               onClick={() => {
                 setEditing(false);
-                void draw(caption, { prompt });
+                void draw(caption, { prompt, key, recent });
               }}
             >
               🎨 Нарисовать по этому промпту
@@ -143,7 +156,7 @@ export function IllustrationCard({ caption, interactive = true }: { caption: str
         createPortal(
           <div className="fixed inset-0 z-[200] bg-black/95 flex flex-col items-center justify-center p-3" onClick={() => setFull(false)}>
             <img src={url} alt={caption} className="max-w-full max-h-[86vh] object-contain rounded-lg" />
-            <div className="mt-3 text-sm italic text-gray-300 text-center max-w-2xl">{caption}</div>
+            {caption.trim() && <div className="mt-3 text-sm italic text-gray-300 text-center max-w-2xl">{caption}</div>}
             <button className="absolute top-3 right-3 rounded-full bg-white/10 hover:bg-white/20 w-9 h-9" aria-label="Закрыть">
               ✕
             </button>
