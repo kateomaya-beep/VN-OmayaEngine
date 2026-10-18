@@ -370,6 +370,18 @@ async function generateOpenAI(cfg: ImageGenConfig, input: ImageGenInput): Promis
 //    поднимаем картиночные (image / imagen) наверх списка.
 //  • openai — GET {base}/models (Bearer), терпимый разбор обёрток.
 export async function listImageModels(cfg: ImageGenConfig, apiKey: string): Promise<string[]> {
+  return (await listImageModelsDetailed(cfg, apiKey)).ids;
+}
+
+// То же, с названиями и пометкой «рисует картинки» — для выпадающего списка.
+//  • OpenRouter и клоны: name — человеческое имя, architecture.output_modalities
+//    (или modality «…->…image») — умеет ли модель отдавать картинку;
+//  • Google: displayName, а id приходит как "models/…".
+// Где провайдер молчит, картиночность угадываем по имени.
+export async function listImageModelsDetailed(
+  cfg: ImageGenConfig,
+  apiKey: string
+): Promise<{ ids: string[]; info: Record<string, { name?: string; image?: boolean }> }> {
   const base = effectiveImageBase(cfg);
   const url = `${base}/models`;
   const res = await netFetch(url, {
@@ -385,19 +397,28 @@ export async function listImageModels(cfg: ImageGenConfig, apiKey: string): Prom
   if (!res.ok) throw imageHttpError(res.status, url, await res.text().catch(() => ''), cfg);
   const data = await res.json();
   const list: any[] = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
-  const ids = list
-    .filter((m) => {
-      if (cfg.providerKind !== 'gemini') return true;
+  const guessImage = (m: string) => /image|imagen|dall|flux|sd|diffusion|banana|seedream|ideogram|recraft|kandinsky/i.test(m);
+  const info: Record<string, { name?: string; image?: boolean }> = {};
+  const ids: string[] = [];
+  for (const m of list) {
+    if (cfg.providerKind === 'gemini') {
       const methods = m?.supportedGenerationMethods;
-      return !Array.isArray(methods) || methods.includes('generateContent');
-    })
-    .map((m) => (typeof m === 'string' ? m : m?.id || m?.name || m?.model || m?.slug))
-    .filter((id): id is string => typeof id === 'string' && id.length > 0)
-    .map((id) => id.replace(/^models\//, ''));
-  const uniq = Array.from(new Set(ids));
+      if (Array.isArray(methods) && !methods.includes('generateContent') && !methods.includes('predict')) continue;
+    }
+    const rawId = typeof m === 'string' ? m : m?.id || m?.name || m?.model || m?.slug;
+    if (typeof rawId !== 'string' || !rawId) continue;
+    const id = rawId.replace(/^models\//, '');
+    if (info[id]) continue;
+    const display = typeof m === 'object' ? m?.displayName || (m?.name && m.name !== rawId ? m.name : undefined) : undefined;
+    const outs = m?.architecture?.output_modalities;
+    const modality = typeof m?.architecture?.modality === 'string' ? m.architecture.modality : '';
+    const image = Array.isArray(outs) ? outs.includes('image') : modality.includes('->') ? /->.*image/.test(modality) : guessImage(id + ' ' + (display || ''));
+    info[id] = { ...(display ? { name: String(display) } : {}), image };
+    ids.push(id);
+  }
   // Картиночные модели — вперёд: их в общем списке легко не заметить.
-  const isImage = (m: string) => /image|imagen|dall|flux|sd|diffusion/i.test(m);
-  return [...uniq.filter(isImage).sort(), ...uniq.filter((m) => !isImage(m)).sort()];
+  const sorted = [...ids.filter((m) => info[m].image).sort(), ...ids.filter((m) => !info[m].image).sort()];
+  return { ids: sorted, info };
 }
 
 export async function testImageConnection(

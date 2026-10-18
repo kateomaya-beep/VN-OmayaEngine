@@ -5,10 +5,14 @@ import { useConnection } from '../../ai/connection';
 import { useConnectionPresets } from '../../ai/connectionPresets';
 import { isProxyActive, recheckProxy, forgetLearnedModelQuirks } from '../../ai/providers';
 import { pushToast } from '../../shared/toast';
+import { ImageConnectionField } from './ImageConnectionField';
+import { usePlayerStore } from '../player/playerStore';
 
 // Глобальное основное подключение к LLM (Batch 3 §2): единый источник истины для
 // всей игровой генерации, не на проект. Живёт в верхней панели везде.
 export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  // Открытая история — чтобы её старое подключение картинок переехало в общее.
+  const playerProject = usePlayerStore((s) => s.project);
   const { connection, setConnection } = useConnection();
   const { presets, activeId, saveCurrent, apply, remove } = useConnectionPresets();
   const [proxy, setProxy] = useState<boolean | null>(null);
@@ -65,7 +69,7 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
       <p className="text-xs text-gray-500 mb-4">
         Одно активное подключение на всё приложение. Несколько провайдеров можно держать
         пресетами и переключаться. Ключ хранится только в этом браузере. Отдельные
-        подключения для саммари/эмбеддингов/картинок — в «Расширениях».
+        подключения для саммари и эмбеддингов — в «Расширениях», для картинок — ниже.
       </p>
 
       {/* Пресеты подключения: быстрое переключение между провайдерами. */}
@@ -155,6 +159,15 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
         keyRole={connection.provider}
         onChange={(conn) => setConnection(conn)}
       />
+
+      {/* Картинки — тоже общее подключение, рядом с основным: настроить один раз
+          на все истории. То же самое открывается в студии. */}
+      <details className="card !bg-panel2 !p-3 mt-4">
+        <summary className="cursor-pointer text-sm font-semibold select-none">🖼 Картинки (image-API)</summary>
+        <div className="mt-3">
+          <ImageConnectionField project={playerProject} />
+        </div>
+      </details>
 
       {/* Движок сам подстраивается под капризы модели — не приняла глубину
           размышления, не приняла префилл — и ЗАПОМИНАЕТ это, чтобы не платить

@@ -1,6 +1,7 @@
 import type { LlmMessage, Project, RuntimeState } from '../shared/types';
-import { defaultImageGenConfig, normalizeNarrativeMode } from '../shared/types';
+import { normalizeNarrativeMode } from '../shared/types';
 import { composeCgPrompt } from './imagePrompt';
+import { imageGenFor } from './imageConnection';
 import { renderImage } from './imageCast';
 import { resolvePerson, type Person } from './characterRegistry';
 import { ILLUSTRATION_RE, stripStateBlock } from './rpResponse';
@@ -124,7 +125,7 @@ export async function drawIllustration(
   caption: string,
   opts: { prompt?: string; signal?: AbortSignal; recent?: string } = {}
 ): Promise<DrawnIllustration> {
-  const ig = project.imageGen ?? defaultImageGenConfig();
+  const ig = imageGenFor(project);
   const people = scenePeople(project, state);
   const lastStory = [...state.history].reverse().find((m) => m.role === 'assistant');
   let prompt = opts.prompt?.trim() || '';

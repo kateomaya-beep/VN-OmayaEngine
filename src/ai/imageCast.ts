@@ -1,7 +1,7 @@
 import type { Project, RuntimeState } from '../shared/types';
-import { defaultImageGenConfig } from '../shared/types';
 import { blobToRef, composeFinalPrompt, generateImage, supportsReferences, type ImageRef } from './imageProvider';
 import { getAssetBlob } from '../storage/db';
+import { imageGenFor } from './imageConnection';
 import { resolveSprite } from '../shared/outfits';
 import { resolvePerson, personsInText, describePerson, type Person } from './characterRegistry';
 
@@ -21,7 +21,7 @@ async function personRefs(
   person: Person,
   opts: { withOutfit: boolean }
 ): Promise<ImageRef[]> {
-  const ig = project.imageGen ?? defaultImageGenConfig();
+  const ig = imageGenFor(project);
   const out: ImageRef[] = [];
   if (!supportsReferences(ig) || !ig.sendReferences) return out;
 
@@ -77,7 +77,8 @@ export async function renderImage(
   state: RuntimeState,
   opts: RenderImageOpts
 ): Promise<RenderedImage> {
-  const ig = project.imageGen ?? defaultImageGenConfig();
+  // Подключение — общее, стиль и рефы — проекта (см. imageConnection.ts).
+  const ig = imageGenFor(project);
 
   const people: Person[] = [];
   const taken = new Set<string>();

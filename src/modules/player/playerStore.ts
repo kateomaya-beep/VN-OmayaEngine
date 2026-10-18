@@ -19,6 +19,7 @@ import { resolvePerson } from '../../ai/characterRegistry';
 import { uploadAsset } from '../../storage/assetOps';
 import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, saveProject, deleteSave, putAsset, deleteAsset } from '../../storage/db';
+import { imageGenFor } from '../../ai/imageConnection';
 import { drawIllustration as paintIllustration, illustrateConfig, illustrationDue, illustrationKey, illustrationMarks } from '../../ai/illustrations';
 import {
   listPlaythroughs,
@@ -1668,9 +1669,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   async testImageApi() {
     const st = get();
     if (!st.project) return 'Проект не загружен.';
-    if (!getApiKey('image')) return 'Не задан ключ image-API (🎬 CG-студия → подключение).';
+    if (!getApiKey('image')) return 'Не задан ключ image-API (🔌 Подключение к ИИ → Картинки, или 🎬 Студия).';
     try {
-      const ig = st.project.imageGen ?? defaultImageGenConfig();
+      const ig = imageGenFor(st.project);
       // Единственная картинка в игре мимо renderImage — и намеренно: это проверка
       // связи, а не кадр истории. Стиль и рефы здесь только мешали бы диагностике.
       const blob = await generateImage(ig, {

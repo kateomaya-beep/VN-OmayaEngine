@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, AssetImage } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
 import { usePlayerStore } from '../playerStore';
@@ -10,6 +10,7 @@ import { useStylePresets } from '../../../ai/imageStyles';
 import { scenePeople, DEFAULT_ILLUSTRATE } from '../../../ai/illustrations';
 import { stripStateBlock } from '../../../ai/rpResponse';
 import { ImageConnectionField } from '../../shared/ImageConnectionField';
+import { imageGenFor, useImageConnection } from '../../../ai/imageConnection';
 import { getAssetBlob, putAsset, deleteAsset } from '../../../storage/db';
 import { uploadAsset } from '../../../storage/assetOps';
 import { uid } from '../../../shared/utils';
@@ -61,6 +62,10 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   const [result, setResult] = useState<Result | null>(null);
   // Состав кадра: null — авто (решает воркер по тексту сцены), массив — ручной выбор.
   const [castOverride, setCastOverride] = useState<string[] | null>(null);
+  // Общее подключение к image-API: подписка, чтобы студия видела правки из окна
+  // «Подключение к ИИ», и снимок «открыт ли раздел подключения» на момент открытия.
+  useImageConnection((x) => x.conn);
+  const connOpenAtStart = useMemo(() => open && !imageGenFor(project).model, [open]);
   const [lastCast, setLastCast] = useState<string[] | null>(null); // кто попал в прошлый кадр
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -71,7 +76,8 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   }, [result]);
 
   if (!open || !project || !state) return null;
-  const ig: ImageGenConfig = project.imageGen ?? defaultImageGenConfig();
+  // Подключение — общее (провайдер, адрес, модель), остальное — проекта.
+  const ig: ImageGenConfig = imageGenFor(project);
   // В текстовом РП спрайтов на сцене нет: кто рядом — по Game Master, что
   // происходит — по последнему ответу рассказчика.
   const rp = normalizeNarrativeMode(project.mode) === 'rp';
@@ -599,12 +605,15 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
         </div>
 
         {/* Подключение к image-API и промпт-воркер — здесь же: всё про картинки в одном месте. */}
-        <details className="rounded-xl border border-white/10 bg-panel2/60 p-3" open={!ig.model}>
+        {/* Открыт сам, пока модель не задана. Именно «сам» — один раз при показе:
+            раньше open был привязан к модели, и после ⟳ (модель подставляется)
+            раздел схлопывался прямо перед глазами вместе со списком. */}
+        <details className="rounded-xl border border-white/10 bg-panel2/60 p-3" open={connOpenAtStart || undefined}>
           <summary className="cursor-pointer text-sm font-semibold select-none">
             🔌 {L('Подключение к image-API', 'Image API connection')}
           </summary>
           <div className="mt-3">
-            <ImageConnectionField cfg={ig} onChange={patchIG} />
+            <ImageConnectionField project={project} />
             <div className="mt-3">
               <label className="label">{L('Системный промпт воркера', 'Prompt-worker system prompt')}</label>
               <p className="text-[11px] text-gray-500 mb-1">
