@@ -1,6 +1,7 @@
 import type { Project, RuntimeState, ImageAspectRatio } from '../shared/types';
 import { IMAGE_ASPECT_RATIOS } from '../shared/types';
 import { runCompletion } from './providers';
+import { describePerson, type Person } from './characterRegistry';
 
 // Собирает короткий промпт для image-API из текущего контекста сцены
 // (локация, настроение, последние beats). Отдельный дешёвый вызов LLM.
@@ -51,7 +52,15 @@ export async function composeCgPrompt(
   project: Project,
   state: RuntimeState,
   systemPrompt: string,
-  opts?: { onlyCharacterIds?: string[] }
+  opts?: {
+    onlyCharacterIds?: string[];
+    /** Кто рядом, если спрайтов на сцене нет (текстовый РП: по Game Master). */
+    people?: Person[];
+    /** Что именно рисуем — метка рассказчика (иллюстрация в РП). */
+    moment?: string;
+    /** Текст вокруг момента вместо последних бит новеллы. */
+    recent?: string;
+  }
 ): Promise<{ prompt: string; aspectRatio?: ImageAspectRatio; cast?: string[] }> {
   // Кандидаты — те, кто «на сцене» по состоянию движка. ВАЖНО: это не значит,
   // что все они в кадре: персонаж остаётся на сцене и после своей реплики, и на
@@ -62,7 +71,16 @@ export async function composeCgPrompt(
   const present = state.onScreen
     .map((os) => ({ os, c: project.characters.find((c) => c.id === os.characterId) }))
     .filter((x) => x.c && (!manual || manual.includes(x.c!.id)));
-  const charLines = present.map(({ os, c }) => {
+  const charLines = opts?.people
+    ? opts.people
+        .filter((p) => !manual || p.ids.some((id) => manual.includes(id)))
+        .map((p) => {
+          const look = describePerson(p).slice(0, 300);
+          const d = p.dossier;
+          const bits = [d?.outfit ? `outfit now: ${d.outfit}` : '', d?.mood ? `mood: ${d.mood}` : ''].filter(Boolean).join(', ');
+          return `- ${p.name}: ${look || '(appearance unknown)'}${bits ? ` (${bits})` : ''}`;
+        })
+    : present.map(({ os, c }) => {
     const nm = c!.role === 'protagonist' ? state.protagonistName || c!.name : c!.name;
     const appearance = (c!.card.appearance || '').slice(0, 300);
     const bits = [os.outfit ? `outfit: ${os.outfit}` : '', os.emotion ? `expression: ${os.emotion}` : '']
@@ -76,6 +94,7 @@ export async function composeCgPrompt(
     project.assets.find((a) => a.id === state.currentBackgroundId)?.name ||
     '';
   const recent =
+    opts?.recent?.slice(-1500) ||
     (state.lastTurn?.beats || [])
       .filter((b): b is Extract<typeof b, { text: string }> => 'text' in b && !!b.text)
       .map((b) => b.text)
@@ -87,7 +106,7 @@ export async function composeCgPrompt(
     ? 'ONLY these characters may appear; add no one else.'
     : 'These people are in the scene, not necessarily in this shot. Include ONLY those the moment below is about.';
   const user = `SCENE TO ILLUSTRATE AS A CG:
-Location: ${loc || 'unspecified'}
+${opts?.moment ? `THE MOMENT TO DRAW (chosen by the narrator — frame exactly this): ${opts.moment}\n` : ''}Location: ${loc || 'unspecified'}
 Characters available (use these exact names). ${castRule}
 ${charLines.join('\n') || '(no named characters — an environment/mood CG)'}
 What is happening at this exact moment:

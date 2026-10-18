@@ -65,8 +65,23 @@ export interface RpResponse {
 // Убирает служебный блок состояния из текста. Используется и при показе, и при
 // сборке контекста: пересылать модели её собственную сводку в истории незачем —
 // актуальная версия и так приезжает динамическим блоком Game Master.
+// Служебные блоки ответа — для всего, что едет обратно модели (контекст, память,
+// главы, реролл). Метки иллюстраций тоже служебные: картинка уже стоит в ленте, а
+// модели незачем видеть свои прошлые метки — она стала бы ставить их по образцу.
 export function stripStateBlock(raw: string): string {
+  return stripIllustrationMarks(stripServiceBlocks(raw));
+}
+
+/** Без сводки и вариантов, но с метками иллюстраций — для показа в ленте. */
+function stripServiceBlocks(raw: string): string {
   return raw.replace(STATE_RE, '').replace(CHOICES_RE, '').trim();
+}
+
+export const ILLUSTRATION_RE = /<illustration>\s*([\s\S]*?)\s*<\/illustration>/gi;
+
+/** Метки иллюстраций вон, включая недописанную на конце (поток). */
+export function stripIllustrationMarks(text: string): string {
+  return text.replace(ILLUSTRATION_RE, '').replace(/<illustration>[\s\S]*$/i, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /** Без закрытых блоков размышления (<thinking>, <think>) — для истории в промпте. */
@@ -298,7 +313,7 @@ export function parseRpResponse(
     if (parsed) worldState = parsed;
   }
 
-  let prose = dropPrefill(stripStateBlock(body), opts?.prefill);
+  let prose = dropPrefill(stripServiceBlocks(body), opts?.prefill);
   if (opts?.guard !== false) prose = trimImpersonation(prose, opts?.userName || '');
 
   return { prose, worldState, plan, choices: parseChoicesBlock(body) };

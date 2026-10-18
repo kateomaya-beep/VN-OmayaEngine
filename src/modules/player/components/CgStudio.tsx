@@ -7,12 +7,15 @@ import { supportsReferences } from '../../../ai/imageProvider';
 import { renderImage } from '../../../ai/imageCast';
 import { resolvePerson, type Person } from '../../../ai/characterRegistry';
 import { useStylePresets } from '../../../ai/imageStyles';
+import { scenePeople, DEFAULT_ILLUSTRATE } from '../../../ai/illustrations';
+import { stripStateBlock } from '../../../ai/rpResponse';
 import { ImageConnectionField } from '../../shared/ImageConnectionField';
 import { getAssetBlob, putAsset, deleteAsset } from '../../../storage/db';
 import { uploadAsset } from '../../../storage/assetOps';
 import { uid } from '../../../shared/utils';
 import {
   defaultImageGenConfig,
+  normalizeNarrativeMode,
   IMAGE_ASPECT_RATIOS,
   IMAGE_ASPECT_LABELS,
   IMAGE_SIZE_TIERS,
@@ -69,6 +72,13 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
 
   if (!open || !project || !state) return null;
   const ig: ImageGenConfig = project.imageGen ?? defaultImageGenConfig();
+  // В текстовом РП спрайтов на сцене нет: кто рядом — по Game Master, что
+  // происходит — по последнему ответу рассказчика.
+  const rp = normalizeNarrativeMode(project.mode) === 'rp';
+  const people = scenePeople(project, state);
+  const lastStory = rp ? [...state.history].reverse().find((m) => m.role === 'assistant') : undefined;
+  const ill = ig.illustrate ?? DEFAULT_ILLUSTRATE;
+  const illCount = Object.values(ig.illustrations || {}).filter((x) => x.status === 'done').length;
 
   function patchIG(patch: Partial<ImageGenConfig>) {
     s.patchProject((p) => {
@@ -147,6 +157,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
     try {
       const { prompt: p, aspectRatio: workerAspect, cast } = await composeCgPrompt(project, state, ig.systemPrompt, {
         onlyCharacterIds: castOverride ?? undefined,
+        ...(rp ? { people, recent: lastStory ? stripStateBlock(lastStory.content) : undefined } : {}),
       });
       if (controller.signal.aborted) return;
       setPrompt(p);
@@ -170,9 +181,11 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           .map((name) => resolvePerson(project, state, { name }))
           .filter((x): x is Person => !!x);
       } else {
-        inFrame = state.onScreen
-          .map((o) => resolvePerson(project, state, { id: o.characterId }))
-          .filter((x): x is Person => !!x);
+        inFrame = rp
+          ? people
+          : state.onScreen
+              .map((o) => resolvePerson(project, state, { id: o.characterId }))
+              .filter((x): x is Person => !!x);
       }
       const uniq: Person[] = [];
       for (const person of inFrame) if (!uniq.some((x) => x.id === person.id)) uniq.push(person);
@@ -263,11 +276,59 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   const galleryAssets = ig.gallery
     .map((id) => project.assets.find((a) => a.id === id))
     .filter((a): a is AssetMeta => !!a);
-  const presentChars = project.characters.filter((c) => state.onScreen.some((o) => o.characterId === c.id));
+  const presentChars: { id: string; name: string }[] = rp
+    ? people.map((p) => ({ id: p.id, name: p.name }))
+    : project.characters.filter((c) => state.onScreen.some((o) => o.characterId === c.id));
 
   return (
-    <Modal open={open} onClose={onClose} title={L('🎬 CG-студия', '🎬 CG Studio')} wide>
+    <Modal open={open} onClose={onClose} title={rp ? L('🎬 Студия', '🎬 Studio') : L('🎬 CG-студия', '🎬 CG Studio')} wide>
       <div className="max-h-[74vh] overflow-y-auto scrollbar-thin space-y-4 pr-1">
+        {/* ИЛЛЮСТРАЦИИ В ТЕКСТЕ (только РП): рассказчик сам отмечает важный
+            момент, движок рисует его и ставит картинку в ответ. */}
+        {rp && (
+          <div className="rounded-xl border border-[rgba(180,150,255,0.25)] bg-panel2/60 p-3">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={ill.enabled}
+                onChange={(e) => patchIG({ illustrate: { ...ill, enabled: e.target.checked } })}
+              />
+              <span>
+                <span className="text-sm font-semibold">🖼 {L('Иллюстрации в тексте', 'Illustrations in the text')}</span>
+                <span className="block text-[11px] text-gray-400 mt-0.5">
+                  {L(
+                    'Рассказчик сам решает, когда момент того стоит (признание, первая встреча, драка, красивое место), и ставит картинку прямо в ответ — сразу, без вопросов. Рисуется по стилю, референсам и промпту воркера ниже.',
+                    'The narrator decides when a moment deserves a picture and puts it right into the reply. Drawn with the style, references and worker prompt below.'
+                  )}
+                </span>
+              </span>
+            </label>
+            {ill.enabled && (
+              <div className="mt-2.5">
+                <label className="label">
+                  {L(`Не чаще раза в ${ill.minGap} ${ill.minGap === 1 ? 'ход' : ill.minGap < 5 ? 'хода' : 'ходов'}`, `At most once every ${ill.minGap} turns`)}
+                </label>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={1}
+                  className="w-full"
+                  value={ill.minGap}
+                  onChange={(e) => patchIG({ illustrate: { ...ill, minGap: Number(e.target.value) } })}
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  {L(
+                    `Пока срок не вышел, рассказчик об иллюстрациях не слышит. Нарисовано в этой истории: ${illCount}.`,
+                    `Until then the narrator is not told about illustrations. Drawn so far: ${illCount}.`
+                  )}
+                  {!ig.model && <span className="text-amber-300"> {L('Сначала настройте подключение к image-API внизу.', 'Set up the image API below first.')}</span>}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
         {/* Reveal результата */}
         {result && (
           <div className="rounded-2xl overflow-hidden border border-[rgba(180,150,255,0.25)] bg-gradient-to-b from-[#241d33] to-[#0a0912] p-3 animate-[fadein_400ms]">
@@ -376,9 +437,11 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
                 <div key={a.id} className="rounded-xl overflow-hidden border border-white/10 bg-black/40 group relative">
                   <AssetImage blobKey={a.blobKey} className="w-full aspect-video object-cover" />
                   <div className="hover-only absolute inset-x-0 bottom-0 flex justify-center gap-1 p-1.5 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button className="btn-ghost !px-2 !py-1 text-xs" title={L('В сцену', 'Show')} onClick={() => showInScene(a.id)}>
-                      ▶
-                    </button>
+                    {!rp && (
+                      <button className="btn-ghost !px-2 !py-1 text-xs" title={L('В сцену', 'Show')} onClick={() => showInScene(a.id)}>
+                        ▶
+                      </button>
+                    )}
                     <button className="btn-ghost !px-2 !py-1 text-xs" title={L('Скачать', 'Download')} onClick={() => galleryDownload(a.id)}>
                       ⬇
                     </button>

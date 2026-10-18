@@ -4,6 +4,7 @@ import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { stripStateBlock, stripThinkingBlocks } from './rpResponse';
+import { illustrationDirective, illustrationDue } from './illustrations';
 import { applyRegexRules } from './regexRules';
 import { getPresetSettings, presetForMode, settingsForMode } from './presetSettings';
 import { modelAlwaysThinks, modelIsVerboseThinker } from './providers';
@@ -1526,6 +1527,11 @@ export async function buildRequest(
   // сохраняется в истории (buildRequest собирает сообщения заново каждый ход).
   if (opts?.extraDirective?.trim()) tail.push(opts.extraDirective.trim());
 
+  // Иллюстрации в РП: модель слышит о них, только когда вышел срок «не чаще раза
+  // в N ходов» — иначе ставила бы метки каждый ход, а рисовать их всё равно нельзя.
+  const illustrate = mode === 'rp' && illustrationDue(project, state.history);
+  if (illustrate) tail.push(illustrationDirective());
+
   // Ремайндер формата + длины — последним в блоке. В РП он другой: там нет ни
   // JSON, ни битов, ни characterId, и старый текст прямо просил бы модель писать
   // служебную разметку в прозу.
@@ -1541,6 +1547,7 @@ export async function buildRequest(
         (foreign
           ? 'Follow the output format of your instructions above; never write for the player beyond their move.'
           : 'Reply with the story only: plain prose, no JSON, no headers, no OOC text, nothing written for the player.') +
+        (illustrate ? '\nOne <illustration> mark is allowed if the moment earns it (see ILLUSTRATION).' : '') +
         (choiceMode ? `\nAfter the story: the <choices> block with ${choiceMode.count} options (see CHOICE MODE).` : '') +
         // Сам контракт сводки лежит блоком пресета — далеко наверху, за всей
         // историей. Одной строки-упоминания в хвосте не хватало: модель дописывала

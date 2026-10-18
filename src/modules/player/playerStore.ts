@@ -18,7 +18,8 @@ import { formatClock, recordChatEvent } from '../../ai/gameMaster';
 import { resolvePerson } from '../../ai/characterRegistry';
 import { uploadAsset } from '../../storage/assetOps';
 import { expandMacros } from '../../ai/macros';
-import { getProject, putSave, saveProject, deleteSave, putAsset } from '../../storage/db';
+import { getProject, putSave, saveProject, deleteSave, putAsset, deleteAsset } from '../../storage/db';
+import { drawIllustration as paintIllustration, illustrateConfig, illustrationDue, illustrationKey, illustrationMarks } from '../../ai/illustrations';
 import {
   listPlaythroughs,
   activePlaythrough,
@@ -218,6 +219,11 @@ interface PlayerStore {
   // предыдущие, и переключаться между уже сгенерированными.
   addSwipe: () => Promise<void>;
   setSwipe: (index: number) => Promise<void>;
+  // ИЛЛЮСТРАЦИИ В РП (см. ai/illustrations.ts). prompt — свой текст для художника
+  // (правка в карточке); без него промпт собирает воркер CG-студии.
+  drawIllustration: (caption: string, opts?: { prompt?: string }) => Promise<void>;
+  removeIllustration: (caption: string) => Promise<void>;
+  illustrationToGallery: (caption: string) => Promise<void>;
 }
 
 // Сколько последних автосейвов хранить в кольце (история для отката, если прогресс
@@ -982,6 +988,89 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   clearError() {
     set({ error: null });
+  },
+
+  async drawIllustration(caption, opts) {
+    const { project, state } = get();
+    if (!project || !state) return;
+    const key = illustrationKey(caption);
+    const prev = project.imageGen?.illustrations?.[key];
+    if (prev?.status === 'drawing') return;
+    const patchRec = (rec: Partial<NonNullable<typeof prev>> | null) =>
+      get().patchProject((p) => {
+        const ig = p.imageGen ?? defaultImageGenConfig();
+        const map = { ...(ig.illustrations || {}) };
+        if (rec === null) delete map[key];
+        else map[key] = { ...map[key], caption, at: map[key]?.at ?? Date.now(), ...rec } as NonNullable<typeof prev>;
+        p.imageGen = { ...ig, illustrations: map };
+      });
+    await patchRec({ status: 'drawing', error: undefined });
+    const t0 = Date.now();
+    try {
+      const { blob, prompt } = await paintIllustration(project, state, caption, { prompt: opts?.prompt });
+      const blobKey = uid('blob');
+      await putAsset(blobKey, blob);
+      const asset: AssetMeta = {
+        id: uid('ill'),
+        // 'icon', а не 'cg': кат-сцены уходят модели списком ассетов, и подписи
+        // иллюстраций (а с ними и прошлые метки) ехали бы в каждый запрос.
+        type: 'icon',
+        name: `Иллюстрация: ${caption.slice(0, 40)}`,
+        generated: true,
+        blobKey,
+        mime: blob.type || 'image/png',
+      };
+      // Прежняя картинка (перерисовка) уходит — если её не сохранили в галерею.
+      const old = prev?.assetId;
+      await get().patchProject((p) => {
+        const ig = p.imageGen ?? defaultImageGenConfig();
+        p.assets.push(asset);
+        if (old && !ig.gallery.includes(old)) {
+          const a = p.assets.find((x) => x.id === old);
+          p.assets = p.assets.filter((x) => x.id !== old);
+          if (a) void deleteAsset(a.blobKey);
+        }
+        p.imageGen = {
+          ...ig,
+          illustrations: { ...(ig.illustrations || {}), [key]: { caption, status: 'done', assetId: asset.id, prompt, at: Date.now() } },
+        };
+      });
+      logEvent('info', 'image', `Иллюстрация нарисована за ${Math.round((Date.now() - t0) / 1000)} с: «${caption.slice(0, 60)}»`, prompt);
+    } catch (e) {
+      const msg = (e as Error).message;
+      // Перерисовка не удалась — прежняя картинка остаётся.
+      await patchRec(prev?.assetId ? { status: 'done', error: undefined } : { status: 'error', error: msg });
+      logEvent('error', 'image', 'Иллюстрация не нарисована: ' + msg);
+      if (prev?.assetId) pushToast('error', 'Не удалось перерисовать: ' + msg);
+    }
+  },
+
+  async removeIllustration(caption) {
+    const project = get().project;
+    if (!project) return;
+    const key = illustrationKey(caption);
+    await get().patchProject((p) => {
+      const ig = p.imageGen ?? defaultImageGenConfig();
+      const rec = ig.illustrations?.[key];
+      const map = { ...(ig.illustrations || {}) };
+      delete map[key];
+      if (rec?.assetId && !ig.gallery.includes(rec.assetId)) {
+        const a = p.assets.find((x) => x.id === rec.assetId);
+        p.assets = p.assets.filter((x) => x.id !== rec.assetId);
+        if (a) void deleteAsset(a.blobKey);
+      }
+      p.imageGen = { ...ig, illustrations: map };
+    });
+  },
+
+  async illustrationToGallery(caption) {
+    const rec = get().project?.imageGen?.illustrations?.[illustrationKey(caption)];
+    if (!rec?.assetId) return;
+    await get().patchProject((p) => {
+      const ig = p.imageGen ?? defaultImageGenConfig();
+      if (!ig.gallery.includes(rec.assetId!)) p.imageGen = { ...ig, gallery: [...ig.gallery, rec.assetId!] };
+    });
+    pushToast('success', 'Иллюстрация сохранена в галерею');
   },
 
   async autosave(title) {
@@ -1946,6 +2035,23 @@ async function answerDanglingMove(
   return runAndApply(set, get, project, base, move.content);
 }
 
+// Рисуем первую метку нового ответа — если режим включён и срок вышел. Лишние
+// метки (и метки до срока) не рисуются и в ленте не видны.
+function maybeIllustrate(get: () => PlayerStore): void {
+  const { project, state } = get();
+  if (!project || !state || !illustrateConfig(project)) return;
+  const last = state.history[state.history.length - 1];
+  if (last?.role !== 'assistant') return;
+  const marks = illustrationMarks(last.content);
+  if (!marks.length) return;
+  if (project.imageGen?.illustrations?.[illustrationKey(marks[0])]) return;
+  if (!illustrationDue(project, state.history.slice(0, -1))) {
+    logEvent('info', 'image', 'Метка иллюстрации до срока — не рисую');
+    return;
+  }
+  void get().drawIllustration(marks[0]);
+}
+
 async function runAndApply(
   set: (partial: Partial<PlayerStore>) => void,
   get: () => PlayerStore,
@@ -2099,6 +2205,8 @@ async function runAndApply(
     // Память сворачиваем ПОСЛЕ показа хода, в фоне: игроку незачем ждать второй
     // запрос к модели.
     void compressInBackground(get, set, compressDue);
+    // Иллюстрация: модель поставила метку, и срок «не чаще раза в N ходов» вышел.
+    maybeIllustrate(get);
     // Телефон живёт своей жизнью параллельно сцене: догенерируем фото, которые
     // боты прислали этим ходом, и даём группам шанс написать самим. Всё в фоне —
     // ход игрока это не задерживает и падать из-за этого не должно.

@@ -9,6 +9,8 @@ import { applyRegexRules, WIDGET_RE } from '../../../ai/regexRules';
 import { settingsForMode, usePresetSettings } from '../../../ai/presetSettings';
 import type { Choice, WorldStateUpdate } from '../../../shared/types';
 import { StateInfobox } from './StateInfobox';
+import { IllustrationCard } from './IllustrationCard';
+import { stripIllustrationMarks } from '../../../ai/rpResponse';
 import { MessageMenu, type MessageMenuItem } from '../../../shared/MessageMenu';
 import { copyToClipboard } from '../../../shared/utils';
 import { loadGlobalTheme } from '../playerTheme';
@@ -226,7 +228,7 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
                         if (confirm(ask)) void s.branchFromMessage(i);
                       }
                 }
-                onCopy={() => copyToClipboard((r?.text ?? '').replace(WIDGET_RE, ''))}
+                onCopy={() => copyToClipboard(stripIllustrationMarks((r?.text ?? '').replace(WIDGET_RE, '')))}
                 // Варианты — только у последнего ответа. Вернуться к сообщению в
                 // середине ленты — «⑂ Играть отсюда».
                 swipes={canSwipe ? { count: Math.max(1, swipeCount), at: swipeAt } : undefined}
@@ -483,16 +485,25 @@ function Message({
               заодно молча не работали три настройки оформления — отступ между
               абзацами, цвет прямой речи и цвет курсива (все они висят на .md-content).
               lineAsParagraph — разбивка по одиночным переводам строк, как в Таверне. */}
-          <Markdown
-            text={text}
-            widgets={widgets}
-            lineAsParagraph
-            className="block md-content text-[color:var(--pl-text)]"
-            style={{
-              lineHeight: 'var(--pl-line-height)',
-              fontSize: 'calc(15px * var(--pl-font-scale, 1))',
-            }}
-          />
+          {/* Метки иллюстраций режут прозу на куски: картинка встаёт ровно туда,
+              где её поставил рассказчик. Недописанная метка на потоке не видна. */}
+          {splitIllustrations(text).map((part, k) =>
+            part.caption !== undefined ? (
+              <IllustrationCard key={k} caption={part.caption} interactive={!streaming && !pending} />
+            ) : (
+              <Markdown
+                key={k}
+                text={part.text}
+                widgets={widgets}
+                lineAsParagraph
+                className="block md-content text-[color:var(--pl-text)]"
+                style={{
+                  lineHeight: 'var(--pl-line-height)',
+                  fontSize: 'calc(15px * var(--pl-font-scale, 1))',
+                }}
+              />
+            )
+          )}
           {streaming && (
             <span className="inline-block w-1.5 h-4 align-text-bottom ml-0.5 bg-[var(--pl-accent)] animate-pulse" />
           )}
@@ -545,4 +556,21 @@ function ChoiceButtons({
       })}
     </div>
   );
+}
+
+// Проза → куски текста и метки иллюстраций по порядку.
+function splitIllustrations(text: string): { text: string; caption?: string }[] {
+  const t = text.replace(/<illustration>(?![\s\S]*<\/illustration>)[\s\S]*$/i, '');
+  const out: { text: string; caption?: string }[] = [];
+  const re = /<illustration>\s*([\s\S]*?)\s*<\/illustration>/gi;
+  let at = 0;
+  for (const m of t.matchAll(re)) {
+    const before = t.slice(at, m.index).trim();
+    if (before) out.push({ text: before });
+    if (m[1].trim()) out.push({ text: '', caption: m[1].trim() });
+    at = (m.index ?? 0) + m[0].length;
+  }
+  const rest = t.slice(at).trim();
+  if (rest || !out.length) out.push({ text: rest });
+  return out;
 }

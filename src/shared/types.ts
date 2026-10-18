@@ -944,6 +944,25 @@ export interface ImageGenConfig {
   outfitReferences?: Record<string, string>;
   sendReferences: boolean; // отправлять ли референсы (для gemini)
   gallery: string[]; // сохранённые в галерею CG (assetId), новые в конце
+  // ИЛЛЮСТРАЦИИ В ТЕКСТОВОМ РП. Модель сама отмечает важный момент меткой
+  // <illustration>…</illustration>, движок рисует его и ставит картинку в ответ на
+  // место метки. minGap — «не чаще раза в N ходов».
+  illustrate?: { enabled: boolean; minGap: number };
+  // Нарисованные иллюстрации по ключу метки (см. illustrations.ts). Живут в
+  // проекте, а не в сейве: откат или свайп не должны терять уже оплаченную
+  // картинку и рисовать её заново.
+  illustrations?: Record<string, Illustration>;
+}
+
+export interface Illustration {
+  /** Текст метки — подпись под картинкой. */
+  caption: string;
+  status: 'drawing' | 'done' | 'error';
+  assetId?: string;
+  /** Промпт, по которому нарисовано, — правится и перерисовывается. */
+  prompt?: string;
+  error?: string;
+  at: number;
 }
 
 export const DEFAULT_IMAGE_SYSTEM_PROMPT = `Turn the CURRENT visual-novel scene into ONE text-to-image prompt.
@@ -1081,6 +1100,34 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     outfitReferences: pickRefs(o.outfitReferences),
     sendReferences: typeof o.sendReferences === 'boolean' ? o.sendReferences : true,
     gallery: Array.isArray(o.gallery) ? o.gallery.filter((x): x is string => typeof x === 'string') : [],
+    ...(o.illustrate && typeof o.illustrate === 'object'
+      ? {
+          illustrate: {
+            enabled: !!(o.illustrate as any).enabled,
+            minGap: Math.max(1, Math.min(20, Math.round(Number((o.illustrate as any).minGap) || 3))),
+          },
+        }
+      : {}),
+    ...(o.illustrations && typeof o.illustrations === 'object'
+      ? {
+          illustrations: Object.fromEntries(
+            Object.entries(o.illustrations as Record<string, any>)
+              .filter(([, v]) => v && typeof v.caption === 'string')
+              .map(([k, v]) => [
+                k,
+                {
+                  caption: v.caption,
+                  // «Рисуется» после перезагрузки уже не рисуется — генерация оборвалась.
+                  status: v.status === 'done' && typeof v.assetId === 'string' ? 'done' : 'error',
+                  ...(typeof v.assetId === 'string' ? { assetId: v.assetId } : {}),
+                  ...(typeof v.prompt === 'string' ? { prompt: v.prompt } : {}),
+                  ...(v.status === 'drawing' ? { error: 'Генерация прервалась' } : typeof v.error === 'string' ? { error: v.error } : {}),
+                  at: Number(v.at) || 0,
+                } as Illustration,
+              ])
+          ),
+        }
+      : {}),
   };
 }
 

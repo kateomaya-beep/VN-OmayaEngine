@@ -132,7 +132,7 @@ export function PlayerPage() {
             {!rp && <MenuItem icon="👗" label="Гардероб" onClick={() => setWardrobeOpen(true)} />}
             <MenuItem icon="🎨" label="Оформление" onClick={() => setWorkshopOpen(true)} />
             <MenuItem icon="🪄" label="Ассистент" onClick={() => setAssistantOpen(true)} />
-            {!rp && <MenuItem icon="🎬" label="CG-студия" onClick={() => setCgStudioOpen(true)} />}
+            <MenuItem icon="🎬" label={rp ? 'Студия' : 'CG-студия'} onClick={() => setCgStudioOpen(true)} />
             {!rp && <MenuItem icon="📱" label="Телефон" onClick={() => setPhoneOpen(true)} />}
             {!rp && <MenuItem icon="🖼" label="Генерация фонов" onClick={() => setGenOpen((v) => !v)} />}
             <MenuItem icon="✎" label="Правка в игре" onClick={() => setPanel('edit')} />
