@@ -1019,6 +1019,10 @@ export interface BuiltRequest {
   // Неизменяемая часть запроса (системный промпт + блоки пресета + ход игрока)
   // в токенах — для индикатора памяти и расчёта места под живую историю.
   fixedTokens?: number;
+  /** Весь запрос по прикидке движка (с поправкой на токенайзер модели). */
+  estimatedTokens?: number;
+  /** Что сколько занимает — для счётчика токенов. */
+  breakdown?: { label: string; tokens: number }[];
   // Системная часть больше всего бюджета. Свёртку в этом случае форсировать
   // вредно (она наращивает журнал) — надо уплотнять память, а не историю.
   systemOverBudget?: boolean;
@@ -1110,6 +1114,34 @@ export async function buildRequest(
   const presetMessages: LlmMessage[] = [];
   // Блоки с глубиной вставки — уходят внутрь истории, на N сообщений от конца.
   const depthBlocks: { depth: number; msg: LlmMessage }[] = [];
+  // ПОРЯДОК ПОД КЭШ ПРОВАЙДЕРА. Провайдеры (Gemini, OpenAI, Claude) берут дешевле
+  // за начало запроса, совпавшее с прошлым, — но только до первого отличия. А
+  // перед историей стояли части, меняющиеся КАЖДЫЙ ход: Game Master, карточки с
+  // текущим состоянием, сработавший лорбук и меморибук, статы, часы и деньги. Из-за
+  // них кэш обрывался в самом начале, и вся дословная история — самая большая часть
+  // запроса — каждый ход шла по полной цене. В этом режиме меняющееся уходит
+  // отдельным блоком «сцена сейчас» прямо перед ходом игрока; правила, мир,
+  // память и история от хода к ходу совпадают и попадают в кэш. Для модели это
+  // ещё и честнее: текущее состояние — самое свежее, и стоит последним.
+  const cacheOrder = ps.cacheFriendlyOrder !== false;
+  const VOLATILE = new Set<DynamicSource>(['lorebook', 'characters', 'state', 'gamemaster', 'memorybook']);
+  const sceneNow: string[] = [];
+  // СОСТАВ ЗАПРОСА — для счётчика токенов в пресете: что сколько занимает.
+  const parts = new Map<string, number>();
+  const count = (label: string, text: string) => parts.set(label, (parts.get(label) || 0) + estimateTokens(text));
+  const DYN_LABEL: Record<DynamicSource, string> = {
+    world: 'Мир и правила',
+    plot: 'Сюжетная арка',
+    lorebook: 'Лорбук',
+    characters: 'Персонажи',
+    manifest: 'Ассеты (фоны, музыка)',
+    state: 'Статы и сцена',
+    memory: 'Память (главы, снапшот)',
+    memorybook: 'Меморибук',
+    gamemaster: 'Game Master',
+    voice: 'Образцы речи',
+    history: 'История',
+  };
   const renderedDynamics = new Set<DynamicSource>();
   // Куда вставлять живую историю. null — блока «История переписки» в пресете нет
   // (старые пресеты): тогда, как раньше, история идёт после всех блоков.
@@ -1145,7 +1177,12 @@ export async function buildRequest(
       text = expandMacros(block.content, ctx);
     }
     if (!text.trim()) continue;
+    count(block.dynamic ? DYN_LABEL[block.dynamic] : 'Правила пресета', text);
     const role = block.role || 'system';
+    if (cacheOrder && block.dynamic && VOLATILE.has(block.dynamic) && historyAt === null && block.injectDepth === undefined) {
+      sceneNow.push(text);
+      continue;
+    }
     if (block.injectDepth !== undefined) {
       depthBlocks.push({ depth: block.injectDepth, msg: { role, content: text } });
       continue;
@@ -1188,7 +1225,11 @@ export async function buildRequest(
     logEvent('info', 'prompt', `В пресете нет динамических блоков [${missing.join(', ')}] — добавлены движком`);
     for (const k of missing) {
       const text = await dynamicContent[k]();
-      if (text.trim()) systemParts.push(text);
+      if (text.trim()) {
+        if (cacheOrder && VOLATILE.has(k)) sceneNow.push(text);
+        else systemParts.push(text);
+        count(DYN_LABEL[k], text);
+      }
     }
   }
 
@@ -1256,10 +1297,18 @@ export async function buildRequest(
   // Реестр персонажей (patch character-registry) — идентичность по id + правило.
   // Единый WORLD STATE (Batch 8) — дата/деньги/долг/инвентарь + правила.
   const worldCtx = worldStateBlock(project, state);
-  if (worldCtx) systemParts.push(worldCtx);
+  if (worldCtx) {
+    if (cacheOrder) sceneNow.push(worldCtx);
+    else systemParts.push(worldCtx);
+    count('Состояние мира (часы, деньги, вещи)', worldCtx);
+  }
   // Телефон-коммуникации (Batch 7) — только если расширение включено.
   const phoneCtx = phoneBlock(project, state);
-  if (phoneCtx) systemParts.push(phoneCtx);
+  if (phoneCtx) {
+    if (cacheOrder) sceneNow.push(phoneCtx);
+    else systemParts.push(phoneCtx);
+    count('Телефон', phoneCtx);
+  }
 
   // ГРАНИЦА КОНТЕКСТА — последним блоком системной части, вплотную к живой истории.
   // Порядок у нас правильный (фон и память → недавние ходы дословно → ход игрока),
@@ -1267,11 +1316,22 @@ export async function buildRequest(
   // отдельно поток сообщений, не понимая, что новее. Отсюда и откаты состояния —
   // модель принимала снапшот (срез на момент прошлой свёртки) за самое свежее.
   systemParts.push(
-    `=== CONTEXT ORDER ===\n` +
-      `Above: background — world, characters, memory (chapters oldest → newest; the snapshot is from the last memory fold). ` +
-      `Below: the recent story verbatim, newer than everything above; the last user message is the move to answer. ` +
-      `If recent messages contradict the background, the recent messages win: continue from them, never rewind.`
+    cacheOrder
+      ? `=== CONTEXT ORDER ===\n` +
+          `Above: rules, world, memory (chapters oldest → newest; the snapshot is from the last memory fold). ` +
+          `Below: the recent story verbatim, newer than everything above. Right before the player's move: the SCENE STATE ` +
+          `(who is here and their current state, active lore, stats, date, money, phone) — the newest facts. ` +
+          `The last user message is the move to answer. If the story contradicts older background, the story and the scene state win: never rewind.`
+      : `=== CONTEXT ORDER ===\n` +
+          `Above: background — world, characters, memory (chapters oldest → newest; the snapshot is from the last memory fold). ` +
+          `Below: the recent story verbatim, newer than everything above; the last user message is the move to answer. ` +
+          `If recent messages contradict the background, the recent messages win: continue from them, never rewind.`
   );
+  // «Сцена сейчас» — одним сообщением перед ходом (см. cacheOrder выше).
+  const sceneText = sceneNow.length
+    ? '[SCENE STATE RIGHT NOW — engine background for this turn, newer than the story above. Not the player\'s words; never quote it.]\n\n' +
+      sceneNow.join('\n\n')
+    : '';
   const system = systemParts.join('\n\n');
 
   // Живое окно истории. КЛЮЧЕВОЕ (фикс памяти): шлём ВСЮ ещё-не-свёрнутую историю,
@@ -1318,11 +1378,32 @@ export async function buildRequest(
   // часть и ход игрока неприкосновенны, старые сообщения срезаются с начала, пока
   // запрос не уложится. Что срезано — уже в саммари (журнал эпизодов + снапшот).
   const budget = Math.max(2000, ps.contextBudget || 8000);
+  // ХВОСТ ПОСЛЕ ИСТОРИИ — сколько он займёт. Раньше здесь стояли круглые 400
+  // токенов «на всё», а в хвост едут заметки автора, записка OOC, стоп-слова, план
+  // размышления, вставки на глубине (у Dr. D там вся цепочка рассуждений) — легко
+  // полторы-две тысячи. Бюджет от этого протекал: «потолок 80 000», а запрос больше.
+  // Считаем по тем же источникам, из которых хвост потом соберётся.
+  function tailReserve(): number {
+    const notesText = [...getGlobalNotes(), ...state.authorNotes].map((n) => n.text).join('\n');
+    const ban = ps.banWords ?? (foreign ? '' : DEFAULT_BAN_WORDS);
+    const adv = (ps.advancedBlocks || []).filter((b) => b.content.trim() && (!b.mode || b.mode === mode));
+    return (
+      900 + // «состояние сейчас», формат, каркас сводки, режим выбора, иллюстрации
+      estimateTokens(notesText) +
+      estimateTokens(ban) +
+      estimateTokens(state.oocNote || '') +
+      estimateTokens(opts?.extraDirective || '') +
+      depthBlocks.reduce((n, d) => n + estimateTokens(d.msg.content), 0) +
+      adv.reduce((n, b) => n + estimateTokens(b.content), 0) +
+      (ps.guidedThinking ? 500 : 0)
+    );
+  }
   const fixedTokens =
     estimateTokens(system) +
     presetMessages.reduce((n, m) => n + estimateTokens(m.content), 0) +
+    estimateTokens(sceneText) +
     estimateTokens(playerMove) +
-    400; // заметки автора, ремайндеры, директивы
+    tailReserve(); // всё, что встанет после истории: заметки, записка, директивы хода
   // Минимум 6 ходов живой истории: при 2 ходах (как раньше) модель выглядела
   // амнезиком — «забывала», что было парой сообщений раньше, стоило системной
   // части (память+реестр+world state+переписка) перерасти бюджет.
@@ -1420,6 +1501,7 @@ export async function buildRequest(
   // состояния (buildRequest вызывается на каждый ход с нуля), поэтому и накопиться
   // в переписке не может.
   const withMove: LlmMessage[] = [...messages];
+  if (sceneText) withMove.push({ role: 'user', content: sceneText });
   const ooc = expandMacros((state.oocNote || '').trim(), ctx);
   if (ooc) {
     withMove.push({
@@ -1641,16 +1723,61 @@ export async function buildRequest(
       tail.join('\n\n'),
   });
 
+  // ПОСЛЕДНЯЯ ПРОВЕРКА ПОТОЛКА — по уже собранному запросу целиком. Прикидка
+  // хвоста выше могла ошибиться; если запрос всё же вылез за бюджет, снимаем
+  // самые старые сообщения живой истории (по ходу за раз, не меньше минимума).
+  // Что снято — ещё не свёрнуто, поэтому счётчик dropped ведёт к свёртке.
+  const sizeOf = () =>
+    estimateTokens(system) + withMove.reduce((n, m) => n + estimateTokens(m.content), 0) + estimateTokens(prefill || '');
+  let total = sizeOf();
+  if (total > budget) {
+    let alive = window.filter((m) => withMove.includes(m));
+    while (total > budget && alive.length > MIN_WINDOW) {
+      const cut = alive.slice(0, alive[1]?.role === 'assistant' && alive[0].role === 'user' ? 2 : 1);
+      for (const m of cut) {
+        const at = withMove.indexOf(m);
+        if (at >= 0) withMove.splice(at, 1);
+        total -= estimateTokens(m.content);
+        dropped++;
+      }
+      alive = alive.slice(cut.length);
+    }
+    if (dropped) logEvent('warn', 'prompt', `Запрос не влезал в бюджет ${budget} ток. — сняты ещё старые сообщения истории (итого выброшено ${dropped}).`);
+  }
+
   return {
     system,
     messages: withMove,
     prefill,
     droppedUnfolded: dropped,
     fixedTokens,
+    estimatedTokens: total,
+    breakdown: (() => {
+      const hist = window.filter((m) => withMove.includes(m));
+      count(`История дословно (${hist.length} сообщ.)`, hist.map((m) => m.content).join(''));
+      count('Ход игрока', playerMove);
+      const named = [...parts.values()].reduce((a, b) => a + b, 0);
+      if (total > named) parts.set('Служебное движка (директивы, хвост хода)', total - named);
+      return [...parts.entries()].map(([label, tokens]) => ({ label, tokens })).filter((x) => x.tokens > 0).sort((a, b) => b.tokens - a.tokens);
+    })(),
     systemOverBudget: overloaded,
     mode,
     expectStateBlock: stateOn,
   };
+}
+
+// Состав запроса для счётчика в пресете — по реально собранному запросу.
+export async function estimateContextBreakdown(
+  project: Project,
+  state: RuntimeState,
+  playerMove: string
+): Promise<{ total: number; parts: { label: string; tokens: number }[] } | null> {
+  try {
+    const req = await buildRequest(project, state, playerMove || '(next turn)', { skipVector: true, preview: true });
+    return { total: req.estimatedTokens ?? 0, parts: req.breakdown ?? [] };
+  } catch {
+    return null;
+  }
 }
 
 // Живой счётчик токенов/контекста (см. CR v2 §J) — считает по РЕАЛЬНО собранному

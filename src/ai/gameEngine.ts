@@ -8,6 +8,7 @@ import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson
 import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion, modelTakesPrefill } from './providers';
+import { markMainUsage, takeLastUsage } from './tokenCalibration';
 import { activeAltPreset, getPresetSettings, presetForMode, settingsForMode, type PresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
@@ -708,6 +709,24 @@ export async function applyTurn(
 // Ждём ли мы служебную сводку в конце ответа. Ровно тот же вопрос, на который
 // отвечает сборка промпта: блок сводки включён в пресете — значит контракт ушёл
 // модели, и её молчание в ответ это сбой, а не выбор автора.
+// Сколько запрос стоил на самом деле — по счёту провайдера (если шлюз его отдал).
+// Рядом — прикидка движка: по их расхождению видно, честен ли потолок контекста,
+// а по «из кэша» — работает ли скидка на повторяющееся начало запроса.
+function logTurnUsage(req: { estimatedTokens?: number }): void {
+  const u = takeLastUsage();
+  if (!u || Date.now() - u.at > 10_000) return;
+  markMainUsage(u, req.estimatedTokens);
+  logEvent(
+    'info',
+    'llm',
+    `Запрос по счёту провайдера: ${u.promptTokens.toLocaleString('ru')} ток.` +
+      (u.cachedTokens ? ` (из кэша ${u.cachedTokens.toLocaleString('ru')})` : '') +
+      (req.estimatedTokens ? ` · прикидка движка ${req.estimatedTokens.toLocaleString('ru')}` : '') +
+      (u.completionTokens ? ` · ответ ${u.completionTokens.toLocaleString('ru')}` : '') +
+      (u.reasoningTokens ? ` · из них размышление ${u.reasoningTokens.toLocaleString('ru')}` : '')
+  );
+}
+
 function stateExpected(ps: PresetSettings): boolean {
   const blocks = presetForMode(ps, 'rp').blocks;
   return blocks.some((b) => b.builtinKey === RP_STATE_BLOCK_KEY && b.enabled);
@@ -879,6 +898,7 @@ export async function runTurn(
     };
 
     let rawRp = await ask();
+    logTurnUsage(req);
     let rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard, prefill: hidePf });
     // Пустой текст — единственная настоящая ошибка этого режима: обычно весь бюджет
     // ушёл в reasoning или сработал фильтр. Один повтор, дальше честная ошибка.
@@ -979,6 +999,7 @@ export async function runTurn(
     names,
     signal,
   });
+  logTurnUsage(req);
 
   // Состояние отдаём разбору: модель называет людей так, как их зовёт ростер, —
   // в том числе прозвищем. Без опознания «Дэм» не связывался с «Дэмианом».

@@ -134,6 +134,10 @@ export interface PresetSettings {
   disableNativeThinking: boolean;
   liveWindow: number;
   contextBudget: number;
+  // Порядок запроса под кэш провайдера: меняющееся каждый ход (Game Master,
+  // состояние персонажей, лорбук, статы, часы) — блоком «сцена сейчас» перед ходом,
+  // чтобы начало запроса совпадало с прошлым и шло по цене кэша. См. promptBuilder.
+  cacheFriendlyOrder: boolean;
   turnLength: { min: number; max: number };
   choiceMinGap: number; // 0 = без ограничения
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'max';
@@ -185,6 +189,7 @@ function defaults(): PresetSettings {
     // 12–32 хода и втрое меньше свёрток, 120000 сверх этого почти ничего не добавляет.
     // Запрос при 80000 — в среднем ~46k токенов: нужна модель со 128k контекста.
     contextBudget: 80000,
+    cacheFriendlyOrder: true,
     turnLength: { ...DEFAULT_TURN_LENGTH },
     choiceMinGap: 0,
     // Глубина размышления по умолчанию — «выкл», а НЕ «авто». Разница не
@@ -267,6 +272,7 @@ function load(): PresetSettings {
       contextBudget: [8000, 24000, 40000].includes(num(v.contextBudget, d.contextBudget))
         ? d.contextBudget
         : num(v.contextBudget, d.contextBudget),
+      cacheFriendlyOrder: typeof v.cacheFriendlyOrder === 'boolean' ? v.cacheFriendlyOrder : true,
       turnLength: v.turnLength ? normalizeTurnLength(v.turnLength) : d.turnLength,
       choiceMinGap: Math.max(0, Math.min(20, Math.round(num(v.choiceMinGap, 0)))),
       // Ключа нет (настройки сохранены до появления дефолта) — берём 'none', а не
