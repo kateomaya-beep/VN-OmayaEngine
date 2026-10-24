@@ -1114,18 +1114,6 @@ export async function buildRequest(
   const presetMessages: LlmMessage[] = [];
   // Блоки с глубиной вставки — уходят внутрь истории, на N сообщений от конца.
   const depthBlocks: { depth: number; msg: LlmMessage }[] = [];
-  // ПОРЯДОК ПОД КЭШ ПРОВАЙДЕРА. Провайдеры (Gemini, OpenAI, Claude) берут дешевле
-  // за начало запроса, совпавшее с прошлым, — но только до первого отличия. А
-  // перед историей стояли части, меняющиеся КАЖДЫЙ ход: Game Master, карточки с
-  // текущим состоянием, сработавший лорбук и меморибук, статы, часы и деньги. Из-за
-  // них кэш обрывался в самом начале, и вся дословная история — самая большая часть
-  // запроса — каждый ход шла по полной цене. В этом режиме меняющееся уходит
-  // отдельным блоком «сцена сейчас» прямо перед ходом игрока; правила, мир,
-  // память и история от хода к ходу совпадают и попадают в кэш. Для модели это
-  // ещё и честнее: текущее состояние — самое свежее, и стоит последним.
-  const cacheOrder = ps.cacheFriendlyOrder !== false;
-  const VOLATILE = new Set<DynamicSource>(['lorebook', 'characters', 'state', 'gamemaster', 'memorybook']);
-  const sceneNow: string[] = [];
   // СОСТАВ ЗАПРОСА — для счётчика токенов в пресете: что сколько занимает.
   const parts = new Map<string, number>();
   const count = (label: string, text: string) => parts.set(label, (parts.get(label) || 0) + estimateTokens(text));
@@ -1179,10 +1167,6 @@ export async function buildRequest(
     if (!text.trim()) continue;
     count(block.dynamic ? DYN_LABEL[block.dynamic] : 'Правила пресета', text);
     const role = block.role || 'system';
-    if (cacheOrder && block.dynamic && VOLATILE.has(block.dynamic) && historyAt === null && block.injectDepth === undefined) {
-      sceneNow.push(text);
-      continue;
-    }
     if (block.injectDepth !== undefined) {
       depthBlocks.push({ depth: block.injectDepth, msg: { role, content: text } });
       continue;
@@ -1226,8 +1210,7 @@ export async function buildRequest(
     for (const k of missing) {
       const text = await dynamicContent[k]();
       if (text.trim()) {
-        if (cacheOrder && VOLATILE.has(k)) sceneNow.push(text);
-        else systemParts.push(text);
+        systemParts.push(text);
         count(DYN_LABEL[k], text);
       }
     }
@@ -1298,15 +1281,13 @@ export async function buildRequest(
   // Единый WORLD STATE (Batch 8) — дата/деньги/долг/инвентарь + правила.
   const worldCtx = worldStateBlock(project, state);
   if (worldCtx) {
-    if (cacheOrder) sceneNow.push(worldCtx);
-    else systemParts.push(worldCtx);
+    systemParts.push(worldCtx);
     count('Состояние мира (часы, деньги, вещи)', worldCtx);
   }
   // Телефон-коммуникации (Batch 7) — только если расширение включено.
   const phoneCtx = phoneBlock(project, state);
   if (phoneCtx) {
-    if (cacheOrder) sceneNow.push(phoneCtx);
-    else systemParts.push(phoneCtx);
+    systemParts.push(phoneCtx);
     count('Телефон', phoneCtx);
   }
 
@@ -1316,22 +1297,11 @@ export async function buildRequest(
   // отдельно поток сообщений, не понимая, что новее. Отсюда и откаты состояния —
   // модель принимала снапшот (срез на момент прошлой свёртки) за самое свежее.
   systemParts.push(
-    cacheOrder
-      ? `=== CONTEXT ORDER ===\n` +
-          `Above: rules, world, memory (chapters oldest → newest; the snapshot is from the last memory fold). ` +
-          `Below: the recent story verbatim, newer than everything above. Right before the player's move: the SCENE STATE ` +
-          `(who is here and their current state, active lore, stats, date, money, phone) — the newest facts. ` +
-          `The last user message is the move to answer. If the story contradicts older background, the story and the scene state win: never rewind.`
-      : `=== CONTEXT ORDER ===\n` +
-          `Above: background — world, characters, memory (chapters oldest → newest; the snapshot is from the last memory fold). ` +
-          `Below: the recent story verbatim, newer than everything above; the last user message is the move to answer. ` +
-          `If recent messages contradict the background, the recent messages win: continue from them, never rewind.`
+    `=== CONTEXT ORDER ===\n` +
+      `Above: background — world, characters, memory (chapters oldest → newest; the snapshot is from the last memory fold). ` +
+      `Below: the recent story verbatim, newer than everything above; the last user message is the move to answer. ` +
+      `If recent messages contradict the background, the recent messages win: continue from them, never rewind.`
   );
-  // «Сцена сейчас» — одним сообщением перед ходом (см. cacheOrder выше).
-  const sceneText = sceneNow.length
-    ? '[SCENE STATE RIGHT NOW — engine background for this turn, newer than the story above. Not the player\'s words; never quote it.]\n\n' +
-      sceneNow.join('\n\n')
-    : '';
   const system = systemParts.join('\n\n');
 
   // Живое окно истории. КЛЮЧЕВОЕ (фикс памяти): шлём ВСЮ ещё-не-свёрнутую историю,
@@ -1401,7 +1371,6 @@ export async function buildRequest(
   const fixedTokens =
     estimateTokens(system) +
     presetMessages.reduce((n, m) => n + estimateTokens(m.content), 0) +
-    estimateTokens(sceneText) +
     estimateTokens(playerMove) +
     tailReserve(); // всё, что встанет после истории: заметки, записка, директивы хода
   // Минимум 6 ходов живой истории: при 2 ходах (как раньше) модель выглядела
@@ -1501,7 +1470,6 @@ export async function buildRequest(
   // состояния (buildRequest вызывается на каждый ход с нуля), поэтому и накопиться
   // в переписке не может.
   const withMove: LlmMessage[] = [...messages];
-  if (sceneText) withMove.push({ role: 'user', content: sceneText });
   const ooc = expandMacros((state.oocNote || '').trim(), ctx);
   if (ooc) {
     withMove.push({

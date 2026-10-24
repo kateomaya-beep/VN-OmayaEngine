@@ -768,23 +768,6 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
               провайдер, и подстраивается. Состав запроса и счёт провайдера — по нажатию на счётчик вверху.
             </p>
           </Field>
-          <label className="sm:col-span-2 flex items-start gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={cfg.cacheFriendlyOrder !== false}
-              onChange={(e) => patch({ cacheFriendlyOrder: e.target.checked })}
-            />
-            <span>
-              Порядок под кэш провайдера
-              <span className="block text-[11px] text-gray-500">
-                Всё, что меняется каждый ход (Game Master, состояние персонажей, сработавший лорбук, статы, часы,
-                деньги, телефон), уходит блоком «сцена сейчас» прямо перед ходом. Тогда правила, мир, память и вся
-                дословная история от хода к ходу совпадают — и провайдеры со скидкой на кэш (Gemini, OpenAI, Claude)
-                берут за них дешевле. Сработает ли скидка через ваш прокси, видно в счётчике: «из кэша …».
-              </span>
-            </span>
-          </label>
         </div>
       </div>
 
