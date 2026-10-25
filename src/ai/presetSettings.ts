@@ -7,6 +7,7 @@ import { isPromptProcessing, type PromptProcessing } from './promptPostProcess';
 import { normalizeRegexRules, type RegexRule } from './regexRules';
 import { normalizeAltPresets, type AltRpPreset } from './altPresets';
 import { pushToast } from '../shared/toast';
+import { NARRATIVE_DIRECTIVE } from './assistantDirective';
 import type { AdvancedPromptBlock, NarrativeMode } from '../shared/types';
 import { DEFAULT_TURN_LENGTH, normalizeTurnLength, LEGACY_THINKING_PLANS, DEFAULT_THINKING_PLAN, DEFAULT_RP_THINKING_PLAN, NATIVE_RP_THINKING_PLAN, NATIVE_VN_THINKING_PLAN } from '../shared/types';
 
@@ -110,6 +111,10 @@ export interface PresetSettings {
   // Личность ассистента-соавтора — ГЛОБАЛЬНАЯ: это ваш помощник, а не свойство
   // отдельного проекта. Пусто — берётся дефолтная.
   assistantPersona: string;
+  // Постоянные инструкции ассистента — правила работы, которые действуют в каждом
+  // ответе (по умолчанию — директива о персонажах, лоре и сюжете). Правится и
+  // стирается на вкладке ассистента; пустая строка — осознанно выключено.
+  assistantInstructions: string;
   // Профиль автора — для ассистента, и только для него (в ход рассказчика не
   // уходит). Один на все проекты и чаты: кто ты, как к тебе обращаться, как с
   // тобой общаться, и справочные заметки, которые ассистент берёт только по просьбе.
@@ -172,6 +177,7 @@ function defaults(): PresetSettings {
     regexRules: [],
     showStateInfobox: true,
     assistantPersona: '',
+    assistantInstructions: NARRATIVE_DIRECTIVE,
     userProfile: emptyUserProfile(),
     narrativeLanguage: 'ru',
     temperature: 0.9,
@@ -254,6 +260,9 @@ function load(): PresetSettings {
       regexRules: normalizeRegexRules(v.regexRules),
       showStateInfobox: typeof v.showStateInfobox === 'boolean' ? v.showStateInfobox : true,
       assistantPersona: typeof v.assistantPersona === 'string' ? v.assistantPersona : '',
+      // Ключа нет (настройки до появления поля) — подставляем директиву; пустую
+      // строку (автор стёр) оставляем пустой.
+      assistantInstructions: typeof v.assistantInstructions === 'string' ? v.assistantInstructions : NARRATIVE_DIRECTIVE,
       userProfile: normalizeUserProfile(v.userProfile),
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),
@@ -413,7 +422,9 @@ export function activeAltPreset(s: PresetSettings, mode: NarrativeMode): AltRpPr
 // вернулись на стандартный пресет, и всё как было.
 export function settingsForMode(s: PresetSettings, mode: NarrativeMode): PresetSettings {
   const alt = activeAltPreset(s, mode);
-  if (!alt) return s;
+  // Свой встроенный (не импортированный) пресет — обычный пресет движка: своей
+  // выборки и регулярок у него нет, управляемое размышление работает.
+  if (!alt || alt.source === 'omaya') return s;
   const sm = alt.sampling;
   return {
     ...s,
@@ -425,6 +436,55 @@ export function settingsForMode(s: PresetSettings, mode: NarrativeMode): PresetS
     prefill: alt.prefill ?? s.prefill,
     regexRules: [...s.regexRules, ...alt.regexRules],
   };
+}
+
+// ЯЧЕЙКА ПРЕСЕТА: куда записывать правку, чтобы она попала в тот пресет, что
+// реально уходит в запрос этого режима (альтернативный, профиль, РП или новелла).
+// Нужна ассистенту: он правит «активный» пресет так же, как панель.
+export type PresetSlot = { kind: 'alt'; id: string } | { kind: 'local' | 'deepseek' | 'rp' | 'vn' };
+
+export function presetSlotFor(s: PresetSettings, mode: NarrativeMode): PresetSlot {
+  const alt = activeAltPreset(s, mode);
+  if (alt) return { kind: 'alt', id: alt.id };
+  if (mode === 'rp') return { kind: s.modelProfile === 'local' ? 'local' : s.modelProfile === 'deepseek' ? 'deepseek' : 'rp' };
+  return { kind: 'vn' };
+}
+
+export function readPresetSlot(s: PresetSettings, slot: PresetSlot): PromptPreset | null {
+  switch (slot.kind) {
+    case 'alt':
+      return s.altRpPresets.find((a) => a.id === slot.id)?.preset ?? null;
+    case 'local':
+      return s.localPreset;
+    case 'deepseek':
+      return s.deepseekPreset;
+    case 'rp':
+      return s.rpPreset;
+    case 'vn':
+      return s.preset;
+  }
+}
+
+export function writePresetSlot(slot: PresetSlot, next: PromptPreset): void {
+  const s = getPresetSettings();
+  const patch = usePresetSettings.getState().patch;
+  switch (slot.kind) {
+    case 'alt':
+      patch({ altRpPresets: s.altRpPresets.map((a) => (a.id === slot.id ? { ...a, preset: next, name: next.name } : a)) });
+      return;
+    case 'local':
+      patch({ localPreset: next });
+      return;
+    case 'deepseek':
+      patch({ deepseekPreset: next });
+      return;
+    case 'rp':
+      patch({ rpPreset: next });
+      return;
+    case 'vn':
+      patch({ preset: next });
+      return;
+  }
 }
 
 interface PresetStore {

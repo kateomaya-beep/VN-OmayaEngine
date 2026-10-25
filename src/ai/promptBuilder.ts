@@ -709,6 +709,12 @@ const DEPTH_REMINDERS: { keys: string[]; text: string }[] = [
     keys: ['rp_no_impersonation'],
     text: "Do not write the player's words, thoughts, actions or feelings. Stop at their move.",
   },
+  {
+    // Пресет «Открытый мир»: без напоминания у хода модель к середине партии снова
+    // начинает вести героя по «сюжету».
+    keys: ['rp_ow_open_world'],
+    text: "Open world: follow the player's choice, never steer back to a plot. The world answers and keeps moving offscreen.",
+  },
 ];
 
 // Компактный дамп состояния Game Master для контекста ИИ (Horae-подобная память):

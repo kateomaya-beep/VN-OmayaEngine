@@ -1,6 +1,8 @@
 import { parsePresetJson, type PromptPreset } from './promptPreset';
 import { normalizeRegexRules, type RegexRule } from './regexRules';
 import { ensureEngineBlocks } from './engineBlocks';
+import { insertMissingByOrder } from './storyModules';
+import { openWorldBlocks } from './openWorldPreset';
 
 // АЛЬТЕРНАТИВНЫЕ ПРЕСЕТЫ (РП и новелла). Наш пресет остаётся стандартным; рядом можно держать
 // чужие — импортированные из SillyTavern (например, Dr. D) — и переключаться между
@@ -21,8 +23,8 @@ export interface AltPresetSampling {
 export interface AltRpPreset {
   id: string;
   name: string;
-  /** Откуда взят: встроенная копия Dr. D или импорт файла. */
-  source: 'drd' | 'sillytavern';
+  /** Откуда взят: встроенная копия Dr. D, импорт файла или наш встроенный вариант (omaya). */
+  source: 'drd' | 'sillytavern' | 'omaya';
   /** Режим, под который собран: в новелле в нём JSON-контракт и блоки спрайтов. */
   mode: 'rp' | 'vn';
   preset: PromptPreset;
@@ -44,13 +46,21 @@ export function normalizeAltPresets(raw: unknown): AltRpPreset[] {
     if (!preset) continue;
     const s = r.sampling && typeof r.sampling === 'object' ? r.sampling : {};
     const mode = r.mode === 'vn' ? 'vn' : 'rp';
+    const source = r.source === 'drd' ? 'drd' : r.source === 'omaya' ? 'omaya' : 'sillytavern';
     out.push({
       id: r.id,
       name: typeof r.name === 'string' && r.name.trim() ? r.name : preset.name,
-      source: r.source === 'drd' ? 'drd' : 'sillytavern',
+      source,
       mode,
-      // Блоки движка — при каждой загрузке: новые доезжают, нетронутые обновляются.
-      preset: ensureEngineBlocks({ ...preset, foreign: 'sillytavern' }, mode),
+      // Наш встроенный вариант — пресет движка, не чужой: недостающие встроенные
+      // блоки доезжают на штатные места. Чужим — блоки движка при каждой загрузке.
+      preset:
+        source === 'omaya'
+          ? (() => {
+              const { foreign: _f, ...own } = preset;
+              return insertMissingByOrder(own, openWorldBlocks());
+            })()
+          : ensureEngineBlocks({ ...preset, foreign: 'sillytavern' }, mode),
       regexRules: normalizeRegexRules(r.regexRules),
       sampling: {
         temperature: num(s.temperature),

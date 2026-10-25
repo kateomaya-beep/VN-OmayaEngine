@@ -1,3 +1,6 @@
+import type { PromptPreset } from './promptPreset';
+import type { PresetSlot } from './presetSettings';
+import { presetDigest, PRESET_PROTOCOL } from './assistantPreset';
 import type {
   ArcStage,
   Character,
@@ -53,7 +56,10 @@ export type Revert =
   | { kind: 'deleteMemory'; id: string }
   | { kind: 'restoreMemory'; prev: MemoryBookEntry; index?: number }
   | { kind: 'deleteArcStage'; name: string; id: string }
-  | { kind: 'dropJob'; jobId: string };
+  | { kind: 'dropJob'; jobId: string }
+  // Правки ПРЕСЕТА ПРОМПТА: снимок до них — на первой правке ответа, у остальных пометка.
+  | { kind: 'restorePreset'; slot: PresetSlot; before: PromptPreset }
+  | { kind: 'presetNote' };
 
 export interface AppliedChange {
   /** Человеческая строка: что именно изменилось. */
@@ -127,7 +133,11 @@ export function projectDigest(project: Project): string {
 //
 // Что важнее всего: люди, которых история уже знает, а проект — ещё нет. Они
 // помечены явно, потому что это ровно тот случай, ради которого слепок и нужен.
-const MAX_HISTORY_TURNS = 8;
+// Последние ходы дословно. Было 8 сообщений по 700 знаков — это два-три хода, и
+// на просьбу «сделай анкету того, кто был в прошлой сцене» ассистенту не хватало
+// материала. Теперь шире: дальше всё равно есть главы меморибука и досье.
+const MAX_HISTORY_TURNS = 16;
+const RECENT_CHARS = 1500;
 const MAX_GM_CHARACTERS = 24;
 
 function truncate(s: string, n: number): string {
@@ -149,6 +159,13 @@ export function playthroughDigest(project: Project, state: RuntimeState): string
 
   if (state.memory.storyState?.trim()) {
     parts.push(`== STORY STATE (memory snapshot) ==\n${state.memory.storyState.trim()}`);
+  }
+  if (state.memory.liveSummary?.trim()) {
+    parts.push(`== AUTHOR'S ARC NOTE ==\n${state.memory.liveSummary.trim()}`);
+  }
+  const facts = (state.memory.facts || []).filter((f) => f.kind !== 'choice').slice(-40);
+  if (facts.length) {
+    parts.push(`== KEY FACTS (canon) ==\n${facts.map((f) => `- [turn ${f.turn}] ${truncate(f.text, 200)}`).join('\n')}`);
   }
   parts.push(memorybookDigest(state));
 
@@ -229,7 +246,7 @@ export function playthroughDigest(project: Project, state: RuntimeState): string
         tail
           .map((m) => {
             const body = stripStateBlock(String(m.content)).replace(/^\s*\[[A-Z ]+\]\s*/, '');
-            return `[${m.role === 'user' ? 'player' : 'story'}] ${truncate(body, 700)}`;
+            return `[${m.role === 'user' ? 'player' : 'story'}] ${truncate(body, RECENT_CHARS)}`;
           })
           .filter((l) => l.split('] ')[1])
           .join('\n')
@@ -308,6 +325,15 @@ Choosing:
 - Memorybook empty or memory never recorded → memory.fill. It is a long background job: tell the author; progress is in Game Master → Memorybook.
 - Use ids only from the memorybook list above. Edit existing entries instead of duplicating.`;
 
+// Из конструктора ассистент видит последнее прохождение проекта — чтобы карточку
+// по истории можно было собрать и отсюда, — но только читает: память, главы и
+// эволюция правятся из игры (там их меняет движок, и правка поверх разошлась бы).
+const READONLY_PLAYTHROUGH_PROTOCOL = `THE PLAYTHROUGH SNAPSHOT ABOVE IS THE AUTHOR'S LATEST PLAYTHROUGH (read-only here).
+It is the source of truth for what already happened in the story; it is newer than the project's world description.
+- "NO CARD IN PROJECT" = appeared in the story without a project card. If asked to add one, build character.create from the dossier, memorybook and recent turns; do not invent. Copy the name exactly.
+- Memory, chapters, evolution, dossiers and the clock cannot be edited from here — if asked, say it is done from the game (🪄 Assistant in the in-game menu).
+- Do not retell the author's story to them.`;
+
 export const DEFAULT_ASSISTANT_PERSONA = `You are the co-author and editor of this project: calm, specific, with good taste in prose.
 Short and to the point, no compliments or filler. If an idea is weak, say so and offer a replacement.
 Do not write what was not asked; never silently "improve" existing text.`;
@@ -377,16 +403,28 @@ export function buildAssistantSystem(
   project: Project,
   persona: string,
   state?: RuntimeState | null,
-  profile?: UserProfile | null
+  profile?: UserProfile | null,
+  instructions?: string,
+  /** Прохождение открыто только для чтения (из конструктора): память не правится. */
+  playthroughReadOnly = false,
+  /** Активный пресет режима — ассистент его видит и может править. */
+  presetCtx?: { preset: PromptPreset; label: string } | null
 ): string {
   const who = persona.trim() || DEFAULT_ASSISTANT_PERSONA;
   const parts = [who];
+  // Постоянные инструкции автора — как придумывать персонажей, лор, сюжет. Действуют
+  // во всём, что ассистент сочиняет: карточки, лорбук, мир, арка, записи памяти.
+  if (instructions?.trim()) {
+    parts.push(`== STANDING INSTRUCTIONS FROM THE AUTHOR (apply to everything you create or edit) ==\n${instructions.trim()}`);
+  }
   const me = userProfileBlock(profile);
   if (me) parts.push(me);
   parts.push(projectDigest(project));
   if (state) parts.push(playthroughDigest(project, state));
+  if (presetCtx) parts.push(presetDigest(presetCtx.preset, presetCtx.label));
   parts.push(PROTOCOL);
-  if (state) parts.push(IN_GAME_PROTOCOL);
+  if (presetCtx) parts.push(PRESET_PROTOCOL);
+  if (state) parts.push(playthroughReadOnly ? READONLY_PLAYTHROUGH_PROTOCOL : IN_GAME_PROTOCOL);
   return parts.join('\n\n---\n\n');
 }
 

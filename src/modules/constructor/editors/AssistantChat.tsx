@@ -4,6 +4,12 @@ import type { MemoryState, Project, RuntimeState } from '../../../shared/types';
 import type { ChapterScope } from '../../../ai/chapterJobs';
 import { Markdown } from '../../../shared/markdown';
 import { runCompletion } from '../../../ai/providers';
+import { NARRATIVE_DIRECTIVE } from '../../../ai/assistantDirective';
+import { activePlaythrough } from '../../../storage/playthroughs';
+import { normalizeRuntimeState } from '../../../shared/factory';
+import { applyAssistantPresetOps, hasPresetOps } from '../../../ai/assistantPreset';
+import { getPresetSettings, presetSlotFor, readPresetSlot, writePresetSlot } from '../../../ai/presetSettings';
+import { normalizeNarrativeMode } from '../../../shared/types';
 import { usePresetSettings, type UserProfile } from '../../../ai/presetSettings';
 import { pushToast } from '../../../shared/toast';
 import { logEvent } from '../../../shared/logStore';
@@ -86,7 +92,30 @@ export function AssistantChat(props?: {
   const store = useProjectStore();
   const project = props?.project !== undefined ? props.project : store.project;
   const update = props?.update ?? store.update;
-  const state = props?.state ?? null;
+  // Из игры приходит живое состояние. В конструкторе его нет — тогда подтягиваем
+  // последнее прохождение проекта (то, что открывает «Продолжить»), только для
+  // чтения: иначе на просьбу «сделай анкету по истории» ассистент не знал ничего.
+  const [savedState, setSavedState] = useState<RuntimeState | null>(null);
+  const projectId = project?.id;
+  useEffect(() => {
+    if (props?.state || !projectId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const info = await activePlaythrough(projectId);
+        const save = info?.autosave || info?.checkpoints[info.checkpoints.length - 1];
+        const proj = project;
+        if (alive && save?.state && proj) setSavedState(normalizeRuntimeState(save.state, proj));
+      } catch {
+        /* нет прохождений — работаем по проекту */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [projectId, !!props?.state]);
+  const state = props?.state ?? savedState;
+  const stateReadOnly = !props?.state && !!savedState;
   const memoryApi = props?.memory;
   const cfg = usePresetSettings((s) => s.settings);
   const patchCfg = usePresetSettings((s) => s.patch);
@@ -95,11 +124,29 @@ export function AssistantChat(props?: {
   const [busy, setBusy] = useState(false);
   const [stream, setStream] = useState('');
   const [personaOpen, setPersonaOpen] = useState(false);
+  const [instrOpen, setInstrOpen] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
   const chat = (project?.assistantChat as AssistantMessage[] | undefined) ?? [];
+  // Режим проекта решает, чей пресет ассистент видит и правит.
+  const projectMode = normalizeNarrativeMode(project?.mode);
+  const presetCtx = () => {
+    const ps = getPresetSettings();
+    const slot = presetSlotFor(ps, projectMode);
+    const preset = readPresetSlot(ps, slot);
+    if (!preset) return null;
+    const label =
+      slot.kind === 'alt'
+        ? `alternative preset, ${projectMode === 'rp' ? 'roleplay' : 'visual novel'} mode`
+        : slot.kind === 'vn'
+          ? 'visual novel mode'
+          : slot.kind === 'rp'
+            ? 'roleplay mode'
+            : `roleplay mode, ${slot.kind} model profile`;
+    return { preset, label };
+  };
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -138,7 +185,7 @@ export function AssistantChat(props?: {
       }));
       let acc = '';
       const raw = await runCompletion({
-        system: buildAssistantSystem(project, cfg.assistantPersona, state, cfg.userProfile),
+        system: buildAssistantSystem(project, cfg.assistantPersona, state, cfg.userProfile, cfg.assistantInstructions, stateReadOnly, presetCtx()),
         messages,
         temperature: Math.min(cfg.temperature, 1),
         maxTokens: 4000,
@@ -166,6 +213,26 @@ export function AssistantChat(props?: {
         } else if (hasMemoryOps(parsed.ops)) {
           logEvent('warn', 'prompt', 'Ассистент прислал правки памяти вне игры — пропущены (меморибук есть только у прохождения)');
         }
+        // Пресет промпта — глобальный, не часть проекта: пишем в ячейку того
+        // пресета, что реально уходит в запрос режима этого проекта.
+        if (hasPresetOps(parsed.ops)) {
+          const ps = getPresetSettings();
+          const slot = presetSlotFor(ps, projectMode);
+          const before = readPresetSlot(ps, slot);
+          if (before) {
+            const res = applyAssistantPresetOps(before, parsed.ops);
+            if (res.labels.length) {
+              writePresetSlot(slot, res.preset);
+              changes = [
+                ...changes,
+                ...res.labels.map((label, i) => ({
+                  label,
+                  revert: i === 0 ? { kind: 'restorePreset' as const, slot, before } : { kind: 'presetNote' as const },
+                })),
+              ];
+            }
+          }
+        }
         if (changes.length) logEvent('info', 'prompt', `Ассистент внёс правок: ${changes.length}`);
       }
       setChat([
@@ -189,6 +256,7 @@ export function AssistantChat(props?: {
 
   // Откат правок одного ответа: проектные — в проекте, памяти — в прохождении.
   function revertChanges(changes: NonNullable<AssistantMessage['changes']>) {
+    for (const c of changes) if (c.revert.kind === 'restorePreset') writePresetSlot(c.revert.slot, c.revert.before);
     const mem = changes.filter(isMemoryChange);
     if (mem.length && memoryApi) {
       for (const c of mem) if (c.revert.kind === 'dropJob') memoryApi.dropJob?.(c.revert.jobId);
@@ -442,6 +510,50 @@ export function AssistantChat(props?: {
           )}
         </div>
 
+        {/* ПОСТОЯННЫЕ ИНСТРУКЦИИ — правила работы ассистента, которые действуют в
+            каждом ответе. По умолчанию — директива о персонажах, лоре и сюжете. */}
+        <div className="card">
+          <button
+            className="w-full text-left font-semibold text-sm flex items-center justify-between"
+            onClick={() => setInstrOpen((v) => !v)}
+          >
+            <span>Постоянные инструкции</span>
+            <span className="text-gray-500">{instrOpen ? '▲' : '▼'}</span>
+          </button>
+          <p className="text-xs text-gray-500 mt-1">
+            {cfg.assistantInstructions.trim()
+              ? `Действуют во всём, что ассистент придумывает и правит: персонажи, лорбук, мир, сюжет (${cfg.assistantInstructions.trim().length} симв.).`
+              : 'Пусто — ассистент работает без постоянных инструкций.'}
+          </p>
+          {instrOpen && (
+            <>
+              <textarea
+                className="input h-72 text-xs font-mono mt-2"
+                value={cfg.assistantInstructions}
+                placeholder="Например: как придумывать персонажей, чего избегать, каких правил держаться…"
+                onChange={(e) => patchCfg({ assistantInstructions: e.target.value })}
+              />
+              <div className="flex gap-2 mt-2">
+                <button
+                  className="btn-ghost !py-1 !px-2.5 text-xs"
+                  onClick={() => patchCfg({ assistantInstructions: NARRATIVE_DIRECTIVE })}
+                  title="Вписать директиву о персонажах, лоре и сюжете заново"
+                >
+                  Вернуть директиву
+                </button>
+                {!!cfg.assistantInstructions && (
+                  <button
+                    className="btn-ghost !py-1 !px-2.5 text-xs"
+                    onClick={() => confirm('Стереть постоянные инструкции?') && patchCfg({ assistantInstructions: '' })}
+                  >
+                    Очистить
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="card">
           <h4 className="font-semibold text-sm mb-1">Что он видит</h4>
           <p className="text-xs text-gray-500">
@@ -451,9 +563,11 @@ export function AssistantChat(props?: {
           </p>
           {state && (
             <p className="text-xs text-gray-500 mt-1.5">
-              Плюс <b>текущая партия</b>: часы и место, досье движка на всех, кто в ней появился,
-              меморибук с главами и эволюция персонажей, ключевые события, связи, открытые линии и последние ходы. Отдельной
-              пометкой — кто уже есть в истории, но карточки в проекте не имеет.
+              Плюс {stateReadOnly ? <b>последнее прохождение проекта (только чтение)</b> : <b>текущая партия</b>}: часы и место,
+              саммари, ключевые факты, досье движка на всех, кто в ней появился, меморибук с главами и эволюция персонажей,
+              ключевые события, связи, открытые линии и последние ходы. Отдельной пометкой — кто уже есть в истории, но
+              карточки в проекте не имеет.
+              {stateReadOnly && ' Править память отсюда нельзя — это делается из игры (меню → 🪄 Ассистент).'}
             </p>
           )}
         </div>
@@ -465,6 +579,7 @@ export function AssistantChat(props?: {
             <li>• добавлять и править записи лорбука</li>
             <li>• заменять описание мира, арку, стартовую сцену, правила</li>
             <li>• заводить статы</li>
+            <li>• видеть и править пресет промпта ({projectMode === 'rp' ? 'РП' : 'новеллы'}, тот, что сейчас выбран): текст блоков, вкл/выкл, свои блоки, порядок</li>
           </ul>
           {state && (
             <p className="text-[11px] text-gray-500 mt-2">

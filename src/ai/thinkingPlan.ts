@@ -53,6 +53,11 @@ export function composeThinkingPlan(inp: PlanInput): string {
       : 'PUBLIC vs PRIVATE: what the hero made visible or audible; narration and thought beats are not heard.');
     add(on.has('info_hygiene'), 'KNOWLEDGE: anyone about to use a fact they could not know → fix.');
     add(on.has('realistic_conduct'), `FRICTION: who does not simply go along with ${hero}, and why.`);
+    // Пресет «Открытый мир» — шаги из его самопроверки, каждый за своим тумблером.
+    add(on.has('ow_core') || on.has('ow_selfcheck'), 'OBVIOUS: the predictable option → take the second or third idea.');
+    add(on.has('ow_characters'), 'WANT: what each present character wants right now.');
+    add(on.has('ow_open_world'), `WORLD: what moved offscreen; follow ${hero}'s choice, no rails.`);
+    add(on.has('ow_plot'), 'CAUSE: this happens because of what earlier.');
     const story = [
       on.has('plot') ? 'what changes' : '',
       on.has('drama') ? 'the hook' : '',
@@ -88,6 +93,14 @@ export function composeThinkingPlan(inp: PlanInput): string {
   add(on.has('info_hygiene'), "KNOWLEDGE: for each acting character, the fact they use and its source (witnessed / told in a scene / tags / common knowledge). No source → they don't know; adjust.");
   add(on.has('living_npcs'), 'INITIATIVE: who acts on their own this turn, and what they want.');
   add(on.has('realistic_conduct'), `FRICTION: who does not simply go along with ${hero}, and why ("nobody" only if earned).`);
+  // Пресет «Открытый мир» (директива автора): каждый шаг — за своим тумблером.
+  add(on.has('ow_core') || on.has('ow_selfcheck'), 'OBVIOUS: the most predictable continuation → discard it; take the second or third idea.');
+  add(on.has('ow_characters'), 'WANT/NEED: what each present character wants right now, and the need or wound under it.');
+  add(on.has('ow_characters'), 'GREY: anyone here purely good or purely evil → add the missing side.');
+  add(on.has('ow_open_world'), `WORLD MOVES: what changed offscreen since ${hero} last looked (people, places, time); follow ${hero}'s choice, never steer back to a plot.`);
+  add(on.has('ow_world'), 'TEXTURE: one concrete real-life detail (price, job, queue, weather, gossip) that shows the place.');
+  add(on.has('ow_plot'), 'CAUSE: what earlier in the story makes this happen ("therefore/but", never "and then").');
+  add(on.has('ow_dialogue'), 'VOICE: each line could be said only by its speaker.');
   add(on.has('plot'), 'CHANGE: what is different by the end of this reply (a fact, the situation, a stake, a relationship)?');
   add(on.has('drama'), "DRAMA: the scene's want → obstacle → turn; a setup to plant or pay off; the hook to end on.");
   add(on.has('twists'), 'TWIST: the obvious continuation → the stronger, less expected one the story has earned.');

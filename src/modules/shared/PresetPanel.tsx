@@ -11,6 +11,7 @@ import { usePresetSettings, MODEL_PROFILES, activeAltPreset, type PresetSettings
 import { importSillyTavernPreset, isSillyTavernPreset, loadDrD } from '../../ai/stPresetImport';
 import type { AltRpPreset } from '../../ai/altPresets';
 import { engineBlockContent } from '../../ai/engineBlocks';
+import { defaultOpenWorldPreset, openWorldBlockContent, OPEN_WORLD_PRESET_NAME } from '../../ai/openWorldPreset';
 import { defaultRpPreset, defaultRpBlockContent } from '../../ai/rpPreset';
 import { defaultLocalPreset, defaultLocalBlockContent } from '../../ai/localPreset';
 import {
@@ -88,7 +89,9 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   const resetBlock = (b: PromptBlock) => {
     if (!b.builtinKey) return;
     const content = alt
-      ? engineBlockContent(isRp ? 'rp' : 'vn', b.builtinKey)
+      ? alt.source === 'omaya'
+        ? openWorldBlockContent(b.builtinKey)
+        : engineBlockContent(isRp ? 'rp' : 'vn', b.builtinKey)
       : isLocal
       ? defaultLocalBlockContent(b.builtinKey)
       : isDs
@@ -100,6 +103,11 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
   };
   const resetPreset = async () => {
     if (alt) {
+      if (alt.source === 'omaya') {
+        if (!confirm(`Вернуть «${alt.name}» к исходному? Правки блоков будут потеряны.`)) return;
+        saveAlt({ ...alt, preset: { ...defaultOpenWorldPreset(), id: alt.preset.id } });
+        return;
+      }
       if (alt.source !== 'drd') {
         alert('Импортированный пресет возвращается к исходному повторным импортом файла.');
         return;
@@ -576,7 +584,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
       </div>
 
       <RegexRulesEditor rules={cfg.regexRules} onChange={(next) => patch({ regexRules: next })} />
-      {alt && (
+      {alt && alt.source !== 'omaya' && (
         <RegexRulesEditor
           title={`Регулярки пресета «${alt.name}»`}
           hint="Пришли вместе с пресетом: виджеты (HUD, твиты, заметки) на свежих сообщениях и чистка их из старых, чтобы не ехали в контекст. Работают, пока выбран этот пресет, — после ваших правил."
@@ -608,7 +616,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
           <h4 className="font-semibold">Параметры генерации</h4>
           <ContextSizeBadge />
         </div>
-        {alt && (
+        {alt && alt.source !== 'omaya' && (
           <p className="text-[11px] text-amber-300 mb-3">
             Пока выбран «{alt.name}», часть этих настроек за него решает сам пресет:{' '}
             {isRp ? 'длина хода — его тумблерами (у Dr. D — «size»), ' : ''}размышление — его собственное
@@ -1205,6 +1213,18 @@ function AltPresetCard({
   const key = isRp ? 'activeRpPreset' : 'activeVnPreset';
   const mine = cfg.altRpPresets.filter((a) => a.mode === mode);
   const hasDrd = mine.some((a) => a.source === 'drd');
+  const hasOw = mine.some((a) => a.source === 'omaya');
+  const addOpenWorld = () =>
+    onAdd({
+      id: `alt_${Date.now().toString(36)}`,
+      name: OPEN_WORLD_PRESET_NAME,
+      source: 'omaya',
+      mode: 'rp',
+      preset: defaultOpenWorldPreset(),
+      regexRules: [],
+      sampling: {},
+      importedAt: Date.now(),
+    });
   const profLabel = MODEL_PROFILES.find((p) => p.id === cfg.modelProfile)?.label;
   const addDrd = async () => {
     setBusy(true);
@@ -1235,6 +1255,11 @@ function AltPresetCard({
         ))}
       </select>
       <div className="flex gap-2 flex-wrap mt-2">
+        {isRp && !hasOw && (
+          <button className="btn-ghost !px-3 !py-1 text-xs" onClick={addOpenWorld} title="OmayaEngine с директивой о персонажах, лоре и сюжете — открытый мир в реальной жизни">
+            + Открытый мир (реал-лайф)
+          </button>
+        )}
         {!hasDrd && (
           <button className="btn-ghost !px-3 !py-1 text-xs" disabled={busy} onClick={() => void addDrd()}>
             {busy ? 'Добавляю…' : '+ Dr. D v3.5'}
@@ -1258,7 +1283,14 @@ function AltPresetCard({
           : 'JSON-контракт ответа (последним перед историей), эмоции спрайтов, музыка, отношения, правила хода и выборов, ассеты, мир, персонажи, память и Game Master.'}{' '}
         Стандартный пресет не меняется: альтернативный работает, только пока выбран.
       </p>
-      {alt && sm && (
+      {alt?.source === 'omaya' && (
+        <p className="text-[11px] text-emerald-300/90 mt-1">
+          Наш пресет на основе OmayaEngine: вместо сюжетных модулей — директива о персонажах, лоре и сюжете, по одному
+          набору правил в тумблере (◆), с уклоном в открытый мир в реальной жизни. Всё остальное — как у стандартного:
+          длина хода, управляемое размышление (шаги берутся из тумблеров ◆), генерация, сводка для Game Master.
+        </p>
+      )}
+      {alt && sm && alt.source !== 'omaya' && (
         <p className="text-[11px] text-emerald-300/90 mt-1">
           Выборка пресета: температура {sm.temperature ?? cfg.temperature}
           {sm.topP !== undefined ? `, top_p ${sm.topP}` : ''}
