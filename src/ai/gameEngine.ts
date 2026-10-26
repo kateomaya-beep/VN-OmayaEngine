@@ -8,13 +8,12 @@ import { syncRegistry, findRegistryMatch, newRegistryId, normName, resolvePerson
 import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion, modelTakesPrefill } from './providers';
-import { markMainUsage, takeLastUsage } from './tokenCalibration';
 import { activeAltPreset, getPresetSettings, presetForMode, settingsForMode, type PresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, forcedEvent, rollRandomSms } from './randomEvents';
-import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock, stripThinkingBlocks, repairChunkBreaks } from './rpResponse';
+import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock, stripThinkingBlocks } from './rpResponse';
 import { choiceModeOf, validateChoices } from './choiceMode';
 import { RP_STATE_OPEN, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { protagonistName } from './macros';
@@ -709,24 +708,6 @@ export async function applyTurn(
 // Ждём ли мы служебную сводку в конце ответа. Ровно тот же вопрос, на который
 // отвечает сборка промпта: блок сводки включён в пресете — значит контракт ушёл
 // модели, и её молчание в ответ это сбой, а не выбор автора.
-// Сколько запрос стоил на самом деле — по счёту провайдера (если шлюз его отдал).
-// Рядом — прикидка движка: по их расхождению видно, честен ли потолок контекста,
-// а по «из кэша» — работает ли скидка на повторяющееся начало запроса.
-function logTurnUsage(req: { estimatedTokens?: number }): void {
-  const u = takeLastUsage();
-  if (!u || Date.now() - u.at > 10_000) return;
-  markMainUsage(u, req.estimatedTokens);
-  logEvent(
-    'info',
-    'llm',
-    `Запрос по счёту провайдера: ${u.promptTokens.toLocaleString('ru')} ток.` +
-      (u.cachedTokens ? ` (из кэша ${u.cachedTokens.toLocaleString('ru')})` : '') +
-      (req.estimatedTokens ? ` · прикидка движка ${req.estimatedTokens.toLocaleString('ru')}` : '') +
-      (u.completionTokens ? ` · ответ ${u.completionTokens.toLocaleString('ru')}` : '') +
-      (u.reasoningTokens ? ` · из них размышление ${u.reasoningTokens.toLocaleString('ru')}` : '')
-  );
-}
-
 function stateExpected(ps: PresetSettings): boolean {
   const blocks = presetForMode(ps, 'rp').blocks;
   return blocks.some((b) => b.builtinKey === RP_STATE_BLOCK_KEY && b.enabled);
@@ -897,21 +878,13 @@ export async function runTurn(
       });
     };
 
-    // Шлюз мог прислать поток «лесенкой» (перенос после каждого куска) — склеиваем
-    // до разбора и до записи в историю.
-    const unseam = (t: string) => {
-      const fixed = repairChunkBreaks(t);
-      if (fixed !== t) logEvent('warn', 'llm', 'Ответ пришёл с переносами строк посреди слов (так отдал шлюз) — склеено.');
-      return fixed;
-    };
-    let rawRp = unseam(await ask());
-    logTurnUsage(req);
+    let rawRp = await ask();
     let rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard, prefill: hidePf });
     // Пустой текст — единственная настоящая ошибка этого режима: обычно весь бюджет
     // ушёл в reasoning или сработал фильтр. Один повтор, дальше честная ошибка.
     if (!rp.prose.trim()) {
       logEvent('warn', 'llm', 'Ответ пустой — повторяю запрос с явным напоминанием формата');
-      rawRp = unseam(await ask(RP_RETRY_HINT));
+      rawRp = await ask(RP_RETRY_HINT);
       rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard, prefill: hidePf });
     }
     if (!rp.prose.trim()) throw new Error('Модель вернула пустой ответ');
@@ -1006,7 +979,6 @@ export async function runTurn(
     names,
     signal,
   });
-  logTurnUsage(req);
 
   // Состояние отдаём разбору: модель называет людей так, как их зовёт ростер, —
   // в том числе прозвищем. Без опознания «Дэм» не связывался с «Дэмианом».

@@ -84,8 +84,6 @@ export function stripIllustrationMarks(text: string): string {
   return text.replace(ILLUSTRATION_RE, '').replace(/<illustration>[\s\S]*$/i, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-export { repairChunkBreaks } from './chunkSeams';
-
 /** Без закрытых блоков размышления (<thinking>, <think>) — для истории в промпте. */
 export function stripThinkingBlocks(raw: string): string {
   return raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();

@@ -1,5 +1,3 @@
-import { repairChunkBreaks } from '../chunkSeams';
-import { noteActiveModel, parseUsage, recordUsage } from '../tokenCalibration';
 import type { LlmMessage, ApiConnection } from '../../shared/types';
 import { postProcessPrompt, type PromptNames } from '../promptPostProcess';
 import { getPresetSettings } from '../presetSettings';
@@ -759,16 +757,6 @@ function rememberNoPrefill(key: string): void {
 // шлюз такой запрос отвергает, префилл ОТКЛЮЧАЕТСЯ для этой модели — честно и
 // заметно (тост + лог), а не подделывается.
 
-// Сколько символов уехало в запросе — для калибровки счёта токенов (см.
-// tokenCalibration.ts). Картинки-вложения не считаем: их токены считаются иначе.
-function promptCharsOf(messages: { content: unknown }[], system = ''): number {
-  return messages.reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : 0), system.length);
-}
-
-// Шлюзы, которые не поняли stream_options (просьбу прислать usage в конце потока).
-const NO_STREAM_USAGE_LS_KEY = 'nf_no_stream_usage';
-const noStreamUsage = loadLsSet(NO_STREAM_USAGE_LS_KEY);
-
 const openAiCompatible: Provider = {
   async complete(conn, apiKey, req) {
     const base = (conn.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
@@ -960,8 +948,6 @@ const openAiCompatible: Provider = {
     const choice = data?.choices?.[0];
     const content = normalizeContent(choice?.message?.content);
     if (content === null) throw new Error('Пустой ответ провайдера');
-    const usage = parseUsage(model, data?.usage, promptCharsOf(messages));
-    if (usage) recordUsage(usage);
     if (offSent) {
       const r = normalizeContent(choice?.message?.reasoning_content ?? choice?.message?.reasoning) || '';
       const rTok = Number(data?.usage?.completion_tokens_details?.reasoning_tokens ?? 0);
@@ -1018,9 +1004,6 @@ const openAiCompatible: Provider = {
             temperature: req.temperature,
             messages,
             stream: true,
-            // Цифры запроса (usage) в последнем кадре — по ним калибруется счёт
-            // токенов. Шлюз, который этого поля не знает, запоминаем и больше не просим.
-            ...(noStreamUsage.has(target) ? {} : { stream_options: { include_usage: true } }),
             ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
             ...(e ? { reasoning_effort: e } : {}),
             ...samplingFields(req, target),
@@ -1030,14 +1013,6 @@ const openAiCompatible: Provider = {
         })
       );
     let res = await postStream(effort);
-    if (res.status === 400 && !noStreamUsage.has(target)) {
-      const t = await res.clone().text().catch(() => '');
-      if (/stream_options|include_usage/i.test(t)) {
-        noStreamUsage.add(target);
-        saveLsSet(NO_STREAM_USAGE_LS_KEY, noStreamUsage);
-        res = await postStream(effort);
-      }
-    }
     // Не принял выключение думалки — убираем его и переспрашиваем потоком же.
     if (res.status === 400 && hasOffFields(off)) {
       await res.text().catch(() => '');
@@ -1088,7 +1063,6 @@ const openAiCompatible: Provider = {
     let firstTextAt = 0;
     const openedAt = Date.now();
     let finishReason: string | undefined;
-    let streamUsage: any = null;
     try {
       await readSse(res, (data) => {
         if (data === '[DONE]') return;
@@ -1098,7 +1072,6 @@ const openAiCompatible: Provider = {
         } catch {
           return; // мусорная строка в потоке — пропускаем, ход из-за неё не теряем
         }
-        if (ev?.usage) streamUsage = ev.usage;
         const fr = ev?.choices?.[0]?.finish_reason;
         if (typeof fr === 'string') finishReason = fr;
         const delta = ev?.choices?.[0]?.delta;
@@ -1134,16 +1107,6 @@ const openAiCompatible: Provider = {
       logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти: ' + (e as Error).message);
     }
     if (!started) throw new StreamNotStarted('Поток закрылся, не прислав ни одного куска текста');
-    // Поток пришёл «лесенкой» (перенос после каждого куска). Первый подозреваемый —
-    // наша просьба прислать usage в конце потока (stream_options): часть прокси на
-    // неё переключается на другой режим отдачи. Больше её этому шлюзу не шлём.
-    if (!noStreamUsage.has(target) && repairChunkBreaks(out) !== out) {
-      noStreamUsage.add(target);
-      saveLsSet(NO_STREAM_USAGE_LS_KEY, noStreamUsage);
-      logEvent('warn', 'llm', `«${model}»: поток пришёл с переносами посреди слов — больше не просим у шлюза stream_options (счёт токенов от провайдера может пропасть).`);
-    }
-    const usage = parseUsage(model, streamUsage, promptCharsOf(messages));
-    if (usage) recordUsage(usage);
     // Ожидание до первого слова — это обработка запроса у провайдера плюс скрытое
     // размышление; дальше идёт уже сама генерация текста.
     logEvent(
@@ -1234,8 +1197,6 @@ const anthropic: Provider = {
     const data = await res.json();
     const content = data?.content?.[0]?.text;
     if (typeof content !== 'string') throw new Error('Пустой ответ провайдера');
-    const usage = parseUsage(model, data?.usage, promptCharsOf(messages, req.system));
-    if (usage) recordUsage(usage);
     return pf ? pf + content : content;
   },
   async listModels(conn, apiKey) {
@@ -1387,8 +1348,6 @@ export function getProvider(name: ApiConnection['provider']): Provider {
 export async function runCompletion(req: CompletionRequest): Promise<string> {
   const conn = req.connection?.conn ?? getConnection();
   const model = req.model || conn.model || '(модель не выбрана)';
-  // Калибровка счёта токенов — по модели основного подключения, не чужого.
-  if (!req.connection) noteActiveModel(conn.model);
   const method = getPresetSettings().promptProcessing;
   const shaped = postProcessPrompt(req.system, req.messages, method, req.names || {});
   req = { ...req, system: shaped.system, messages: shaped.messages };
