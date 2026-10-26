@@ -14,7 +14,7 @@ import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThi
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
 import { rollRandomEvent, forcedEvent, rollRandomSms } from './randomEvents';
-import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock, stripThinkingBlocks } from './rpResponse';
+import { dropPrefill, parseRpResponse, rpTurn, streamingProse, streamingThinking, stripStateBlock, stripThinkingBlocks, repairChunkBreaks } from './rpResponse';
 import { choiceModeOf, validateChoices } from './choiceMode';
 import { RP_STATE_OPEN, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { protagonistName } from './macros';
@@ -897,14 +897,21 @@ export async function runTurn(
       });
     };
 
-    let rawRp = await ask();
+    // Шлюз мог прислать поток «лесенкой» (перенос после каждого куска) — склеиваем
+    // до разбора и до записи в историю.
+    const unseam = (t: string) => {
+      const fixed = repairChunkBreaks(t);
+      if (fixed !== t) logEvent('warn', 'llm', 'Ответ пришёл с переносами строк посреди слов (так отдал шлюз) — склеено.');
+      return fixed;
+    };
+    let rawRp = unseam(await ask());
     logTurnUsage(req);
     let rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard, prefill: hidePf });
     // Пустой текст — единственная настоящая ошибка этого режима: обычно весь бюджет
     // ушёл в reasoning или сработал фильтр. Один повтор, дальше честная ошибка.
     if (!rp.prose.trim()) {
       logEvent('warn', 'llm', 'Ответ пустой — повторяю запрос с явным напоминанием формата');
-      rawRp = await ask(RP_RETRY_HINT);
+      rawRp = unseam(await ask(RP_RETRY_HINT));
       rp = parseRpResponse(rawRp, { userName, guard: ps.impersonationGuard, prefill: hidePf });
     }
     if (!rp.prose.trim()) throw new Error('Модель вернула пустой ответ');

@@ -3,7 +3,7 @@ import { AUDIO_MOODS, DEFAULT_TURN_LENGTH, DEFAULT_BAN_WORDS, PHONE_BALANCE_STAT
 import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
-import { stripStateBlock, stripThinkingBlocks } from './rpResponse';
+import { repairChunkBreaks, stripStateBlock, stripThinkingBlocks } from './rpResponse';
 import { illustrationDirective, illustrationDue } from './illustrations';
 import { applyRegexRules } from './regexRules';
 import { getPresetSettings, presetForMode, settingsForMode } from './presetSettings';
@@ -1338,7 +1338,9 @@ export async function buildRequest(
             mode === 'rp'
               ? // Размышление прошлых ходов (<thinking> плана, <think> цепочки
                 // пресета) модели второй раз ни к чему — в Таверне оно тоже не едет.
-                stripThinkingBlocks(stripStateBlock(m.content))
+                // Сохранённые «лесенкой» ответы модели не показываем такими —
+                // иначе она начнёт подражать рваному тексту.
+                stripThinkingBlocks(stripStateBlock(repairChunkBreaks(m.content)))
               : condenseAssistantTurn(m.content, project, state) ?? m.content,
             'ai',
             histSlice.length - i

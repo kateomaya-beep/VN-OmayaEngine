@@ -10,7 +10,7 @@ import { settingsForMode, usePresetSettings } from '../../../ai/presetSettings';
 import type { Choice, WorldStateUpdate } from '../../../shared/types';
 import { StateInfobox } from './StateInfobox';
 import { IllustrationCard } from './IllustrationCard';
-import { stripIllustrationMarks } from '../../../ai/rpResponse';
+import { repairChunkBreaks, stripIllustrationMarks } from '../../../ai/rpResponse';
 import { messageIllustrationKey } from '../../../ai/illustrations';
 import { MessageMenu, type MessageMenuItem } from '../../../shared/MessageMenu';
 import { copyToClipboard } from '../../../shared/utils';
@@ -106,7 +106,8 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
         prefill: cfg.hidePrefill ? cfg.prefill : undefined,
       });
       return {
-        text: applyRegexRules(rp.prose, cfg.regexRules, { role: 'ai', scope: 'display', depth, expand, widgets }),
+        // Ответы, сохранённые «лесенкой» до починки, — склеиваем и на показе.
+        text: applyRegexRules(repairChunkBreaks(rp.prose), cfg.regexRules, { role: 'ai', scope: 'display', depth, expand, widgets }),
         world: rp.worldState,
         widgets,
       };
@@ -115,7 +116,7 @@ export function RpChat({ hasNotes, onOpenNotes }: { hasNotes: boolean; onOpenNot
   const streamWidgets: string[] = [];
   const streamText =
     s.thinking && s.streamingText
-      ? applyRegexRules(s.streamingText, cfg.regexRules, { role: 'ai', scope: 'display', depth: 0, expand, widgets: streamWidgets })
+      ? applyRegexRules(repairChunkBreaks(s.streamingText), cfg.regexRules, { role: 'ai', scope: 'display', depth: 0, expand, widgets: streamWidgets })
       : '';
 
   // Прокрутка вниз при новом сообщении и по мере набора текста. useLayoutEffect, а

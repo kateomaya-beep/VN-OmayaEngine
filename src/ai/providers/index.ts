@@ -1,3 +1,4 @@
+import { repairChunkBreaks } from '../chunkSeams';
 import { noteActiveModel, parseUsage, recordUsage } from '../tokenCalibration';
 import type { LlmMessage, ApiConnection } from '../../shared/types';
 import { postProcessPrompt, type PromptNames } from '../promptPostProcess';
@@ -1133,6 +1134,14 @@ const openAiCompatible: Provider = {
       logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти: ' + (e as Error).message);
     }
     if (!started) throw new StreamNotStarted('Поток закрылся, не прислав ни одного куска текста');
+    // Поток пришёл «лесенкой» (перенос после каждого куска). Первый подозреваемый —
+    // наша просьба прислать usage в конце потока (stream_options): часть прокси на
+    // неё переключается на другой режим отдачи. Больше её этому шлюзу не шлём.
+    if (!noStreamUsage.has(target) && repairChunkBreaks(out) !== out) {
+      noStreamUsage.add(target);
+      saveLsSet(NO_STREAM_USAGE_LS_KEY, noStreamUsage);
+      logEvent('warn', 'llm', `«${model}»: поток пришёл с переносами посреди слов — больше не просим у шлюза stream_options (счёт токенов от провайдера может пропасть).`);
+    }
     const usage = parseUsage(model, streamUsage, promptCharsOf(messages));
     if (usage) recordUsage(usage);
     // Ожидание до первого слова — это обработка запроса у провайдера плюс скрытое
