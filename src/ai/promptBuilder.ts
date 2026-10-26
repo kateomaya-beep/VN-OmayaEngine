@@ -22,6 +22,10 @@ import { pastRecall } from './pastRecall';
 import { chaptersOf, isLiveChapter, pickMemorybook, type MemorybookPick } from './chapters';
 import { normName, resolvePerson, type Person } from './characterRegistry';
 import { estimateTokens } from '../shared/utils';
+import { activeTokenizer, prefetchTokens } from './tokenCount';
+
+// Служебные токены роли вокруг каждого сообщения (Gemini, OpenAI — около 4).
+const MSG_OVERHEAD = 4;
 
 // Builds the full request as a system string (layered core → style → jailbreak →
 // dynamic context) plus the live-window history and the player's move.
@@ -1029,6 +1033,8 @@ export interface BuiltRequest {
   estimatedTokens?: number;
   /** Что сколько занимает — для счётчика токенов. */
   breakdown?: { label: string; tokens: number }[];
+  /** Посчитано словарём модели (а не прикидкой). */
+  exactTokens?: boolean;
   // Системная часть больше всего бюджета. Свёртку в этом случае форсировать
   // вредно (она наращивает журнал) — надо уплотнять память, а не историю.
   systemOverBudget?: boolean;
@@ -1121,8 +1127,9 @@ export async function buildRequest(
   // Блоки с глубиной вставки — уходят внутрь истории, на N сообщений от конца.
   const depthBlocks: { depth: number; msg: LlmMessage }[] = [];
   // СОСТАВ ЗАПРОСА — для счётчика токенов в пресете: что сколько занимает.
-  const parts = new Map<string, number>();
-  const count = (label: string, text: string) => parts.set(label, (parts.get(label) || 0) + estimateTokens(text));
+  // Тексты копим, а считаем в конце — когда точные числа словаря уже в кэше.
+  const parts = new Map<string, string[]>();
+  const count = (label: string, text: string) => parts.set(label, [...(parts.get(label) || []), text]);
   const DYN_LABEL: Record<DynamicSource, string> = {
     world: 'Мир и правила',
     plot: 'Сюжетная арка',
@@ -1361,18 +1368,22 @@ export async function buildRequest(
   // размышления, вставки на глубине (у Dr. D там вся цепочка рассуждений) — легко
   // полторы-две тысячи. Бюджет от этого протекал: «потолок 80 000», а запрос больше.
   // Считаем по тем же источникам, из которых хвост потом соберётся.
+  const tailTexts = [
+    [...getGlobalNotes(), ...state.authorNotes].map((n) => n.text).join('\n'),
+    ps.banWords ?? (foreign ? '' : DEFAULT_BAN_WORDS),
+    state.oocNote || '',
+    opts?.extraDirective || '',
+    ...depthBlocks.map((d) => d.msg.content),
+    ...(ps.advancedBlocks || []).filter((b) => b.content.trim() && (!b.mode || b.mode === mode)).map((b) => b.content),
+  ];
+  // ТОЧНЫЙ СЧЁТ — до бюджета: словарь модели считает всё, что пойдёт в запрос, и
+  // дальше estimateTokens отдаёт эти числа из кэша (см. ai/tokenCount.ts). Модели
+  // без опубликованного словаря — по прикидке, подстроенной под счёт провайдера.
+  await prefetchTokens([system, ...presetMessages.map((m) => m.content), playerMove, ...tailTexts, ...window.map((m) => m.content)]);
   function tailReserve(): number {
-    const notesText = [...getGlobalNotes(), ...state.authorNotes].map((n) => n.text).join('\n');
-    const ban = ps.banWords ?? (foreign ? '' : DEFAULT_BAN_WORDS);
-    const adv = (ps.advancedBlocks || []).filter((b) => b.content.trim() && (!b.mode || b.mode === mode));
     return (
       900 + // «состояние сейчас», формат, каркас сводки, режим выбора, иллюстрации
-      estimateTokens(notesText) +
-      estimateTokens(ban) +
-      estimateTokens(state.oocNote || '') +
-      estimateTokens(opts?.extraDirective || '') +
-      depthBlocks.reduce((n, d) => n + estimateTokens(d.msg.content), 0) +
-      adv.reduce((n, b) => n + estimateTokens(b.content), 0) +
+      tailTexts.reduce((n, t) => n + estimateTokens(t), 0) +
       (ps.guidedThinking ? 500 : 0)
     );
   }
@@ -1703,8 +1714,14 @@ export async function buildRequest(
   // хвоста выше могла ошибиться; если запрос всё же вылез за бюджет, снимаем
   // самые старые сообщения живой истории (по ходу за раз, не меньше минимума).
   // Что снято — ещё не свёрнуто, поэтому счётчик dropped ведёт к свёртке.
+  // Каждое сообщение провайдер ещё обрамляет служебными токенами роли (~4 на
+  // сообщение у Gemini и OpenAI) — их тоже в счёт.
+  await prefetchTokens([system, ...withMove.map((m) => m.content), prefill || '']);
   const sizeOf = () =>
-    estimateTokens(system) + withMove.reduce((n, m) => n + estimateTokens(m.content), 0) + estimateTokens(prefill || '');
+    estimateTokens(system) +
+    withMove.reduce((n, m) => n + estimateTokens(m.content) + MSG_OVERHEAD, 0) +
+    estimateTokens(prefill || '') +
+    MSG_OVERHEAD;
   let total = sizeOf();
   if (total > budget) {
     let alive = window.filter((m) => withMove.includes(m));
@@ -1713,7 +1730,7 @@ export async function buildRequest(
       for (const m of cut) {
         const at = withMove.indexOf(m);
         if (at >= 0) withMove.splice(at, 1);
-        total -= estimateTokens(m.content);
+        total -= estimateTokens(m.content) + MSG_OVERHEAD;
         dropped++;
       }
       alive = alive.slice(cut.length);
@@ -1728,14 +1745,18 @@ export async function buildRequest(
     droppedUnfolded: dropped,
     fixedTokens,
     estimatedTokens: total,
-    breakdown: (() => {
+    breakdown: await (async () => {
       const hist = window.filter((m) => withMove.includes(m));
-      count(`История дословно (${hist.length} сообщ.)`, hist.map((m) => m.content).join(''));
-      count('Ход игрока', playerMove);
-      const named = [...parts.values()].reduce((a, b) => a + b, 0);
-      if (total > named) parts.set('Служебное движка (директивы, хвост хода)', total - named);
-      return [...parts.entries()].map(([label, tokens]) => ({ label, tokens })).filter((x) => x.tokens > 0).sort((a, b) => b.tokens - a.tokens);
+      await prefetchTokens([...parts.values()].flat());
+      const out = new Map<string, number>();
+      for (const [label, texts] of parts) out.set(label, texts.reduce((n, t) => n + estimateTokens(t), 0));
+      out.set(`История дословно (${hist.length} сообщ.)`, hist.reduce((n, m) => n + estimateTokens(m.content), 0));
+      out.set('Ход игрока', estimateTokens(playerMove));
+      const named = [...out.values()].reduce((a, b) => a + b, 0);
+      if (total > named) out.set('Служебное движка (директивы, хвост хода, обрамление сообщений)', total - named);
+      return [...out.entries()].map(([label, tokens]) => ({ label, tokens })).filter((x) => x.tokens > 0).sort((a, b) => b.tokens - a.tokens);
     })(),
+    exactTokens: activeTokenizer() !== null,
     systemOverBudget: overloaded,
     mode,
     expectStateBlock: stateOn,
@@ -1747,10 +1768,10 @@ export async function estimateContextBreakdown(
   project: Project,
   state: RuntimeState,
   playerMove: string
-): Promise<{ total: number; parts: { label: string; tokens: number }[] } | null> {
+): Promise<{ total: number; parts: { label: string; tokens: number }[]; exact: boolean } | null> {
   try {
     const req = await buildRequest(project, state, playerMove || '(next turn)', { skipVector: true, preview: true });
-    return { total: req.estimatedTokens ?? 0, parts: req.breakdown ?? [] };
+    return { total: req.estimatedTokens ?? 0, parts: req.breakdown ?? [], exact: !!req.exactTokens };
   } catch {
     return null;
   }
@@ -1768,8 +1789,7 @@ export async function estimateContextTokens(
       skipVector: true,
       preview: true,
     });
-    const text = req.system + req.messages.map((m) => m.content).join('\n');
-    return estimateTokens(text);
+    return req.estimatedTokens ?? 0;
   } catch {
     return 0;
   }

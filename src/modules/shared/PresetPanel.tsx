@@ -29,6 +29,7 @@ import { uid } from '../../shared/utils';
 import { downloadBlob } from '../../storage/zip';
 import type { AdvancedPromptBlock, LlmRole } from '../../shared/types';
 import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, TURN_LENGTH_PRESETS, DEFAULT_BAN_WORDS, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
+import { ExactTokensNote, TokenBadge } from '../../shared/TokenBadge';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
 // отделён от настроек API. Каждый блок: порядок (drag&drop), роль system/user/assistant
@@ -271,11 +272,18 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
           лишилась главного. Держим её сразу под выбором профиля: профиль решает,
           КАКОЙ пресет правится, и этот ответ должен быть на виду. */}
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-        <input
-          className="input !py-1 text-sm max-w-xs"
-          value={preset.name}
-          onChange={(e) => savePreset({ ...preset, name: e.target.value })}
-        />
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            className="input !py-1 text-sm max-w-xs"
+            value={preset.name}
+            onChange={(e) => savePreset({ ...preset, name: e.target.value })}
+          />
+          <TokenBadge
+            className="nf-preset-total !text-xs text-gray-300"
+            text={preset.blocks.filter((b) => b.enabled && !b.dynamic).map((b) => b.content)}
+            title="Сколько весят включённые блоки с текстом. Блоки ↳ (мир, персонажи, память) наполняет движок — их вес в счётчике вверху игры."
+          />
+        </div>
         <div className="flex gap-2 flex-wrap">
           <button className="btn-ghost !px-3 !py-1 text-xs" onClick={addBlock}>
             + Блок
@@ -380,6 +388,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
                 value={b.name}
                 onChange={(e) => patchBlock(b.id, { name: e.target.value })}
               />
+              {!b.dynamic && <TokenBadge className={b.enabled ? '' : 'line-through opacity-60'} text={b.content} />}
               {/* Роль блока S/U/A */}
               <div className="inline-flex rounded-lg overflow-hidden border border-white/10 text-xs">
                 {ROLES.map((r) => (
@@ -467,6 +476,9 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
           в конец). Стабилизирует формат — напр. <code>{isRp ? '*' : '{"scene":'}</code> — и часто
           используется как «затравка» для джейлбрейка. Пусто — не используется.
         </p>
+        <div className="flex justify-end">
+          <TokenBadge text={cfg.prefill || ''} />
+        </div>
         <textarea
           className="input h-20 font-mono text-sm"
           value={cfg.prefill || ''}
@@ -771,9 +783,9 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
               128k контекста (Gemini, Claude, GPT-4o и новее). Если провайдер отвечает «не
               помещается в контекст» — снизьте бюджет. Выше ~120 000 прибавка почти незаметна.
             </p>
-            <p className="text-[11px] text-emerald-300/90 mt-1">
-              Потолок считается по токенайзеру вашей модели: движок сверяет прикидку с тем, сколько насчитал
-              провайдер, и подстраивается. Состав запроса и счёт провайдера — по нажатию на счётчик вверху.
+            <ExactTokensNote />
+            <p className="text-[11px] text-gray-500 mt-1">
+              Состав запроса и счёт провайдера — по нажатию на счётчик вверху.
             </p>
           </Field>
         </div>
@@ -794,7 +806,8 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
           Вставляются в историю сообщений. Глубина = сколько сообщений от конца (0 — в самый конец).
         </p>
         {(cfg.advancedBlocks || []).map((b, i) => (
-          <div key={i} className="flex gap-2 mb-2">
+          <div key={i} className="flex gap-2 mb-2 items-start">
+            <TokenBadge className="mt-1 w-14 text-right" text={b.content} />
             <textarea
               className="input h-16 flex-1"
               value={b.content}
@@ -927,8 +940,11 @@ function GuidedThinkingField({
               плане по имени. Начнёте править текст — он станет вашим.</>
             )}
           </p>
+          <div className="flex justify-end mt-2">
+            <TokenBadge text={cfg.thinkingPlan ?? auto} />
+          </div>
           <textarea
-            className="input h-40 mt-2 text-sm font-mono"
+            className="input h-40 text-sm font-mono"
             value={cfg.thinkingPlan ?? auto}
             onChange={(e) => patch({ thinkingPlan: e.target.value })}
           />
@@ -985,6 +1001,9 @@ function BanWordsField({
         синонимом той же картинки. Через запятую или с новой строки, на любом языке. Пустое поле —
         блок вообще не уходит в запрос.
       </p>
+      <div className="flex justify-end">
+        <TokenBadge text={value} />
+      </div>
       <textarea
         className="input h-28 text-sm"
         value={value}

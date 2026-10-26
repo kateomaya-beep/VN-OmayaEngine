@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useProjectStore } from '../projectStore';
 import { AssetImage, Field, Modal } from '../../../shared/ui';
+import { TokenBadge } from '../../../shared/TokenBadge';
+import { characterSheetTexts } from '../../../ai/tokenSummary';
 import { uid } from '../../../shared/utils';
 import {
   EMOTIONS,
@@ -152,6 +154,7 @@ export function CharacterEditor() {
                   className="w-8 h-8 rounded-full object-cover shrink-0"
                 />
                 <span className="truncate flex-1">{c.name}</span>
+                <TokenBadge className={selected?.id === c.id ? '!text-white/70' : ''} text={characterSheetTexts(c)} />
                 <span className="text-xs" title={ROLE_META[c.role].label}>
                   {ROLE_META[c.role].icon}
                 </span>
@@ -191,7 +194,11 @@ export function CharacterEditor() {
               </div>
             </div>
 
-            <Field label="Описание персонажа" hint="Внешность, характер, предыстория — всё в одном поле. Поддерживаются макросы {{protagonist}} и др.">
+            <div className="nf-char-total flex items-center justify-between gap-2 mb-3 rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2 text-xs text-gray-400">
+              <span>Анкета целиком — столько она занимает в запросе, когда персонаж в фокусе сцены</span>
+              <TokenBadge className="!text-xs text-gray-200" text={characterSheetTexts(selected)} />
+            </div>
+            <Field tokens={selected.card.personality} label="Описание персонажа" hint="Внешность, характер, предыстория — всё в одном поле. Поддерживаются макросы {{protagonist}} и др.">
               <textarea
                 className="input h-48"
                 placeholder="Кто это: внешность, характер, привычки, прошлое, мотивация…"
@@ -199,7 +206,7 @@ export function CharacterEditor() {
                 onChange={(e) => patchChar(selected.id, (c) => (c.card.personality = e.target.value))}
               />
             </Field>
-            <Field label="Манера речи" hint="Словами: лексика, тон, темп, речевые привычки. Макросы поддерживаются.">
+            <Field tokens={selected.card.speechStyle} label="Манера речи" hint="Словами: лексика, тон, темп, речевые привычки. Макросы поддерживаются.">
               <textarea
                 className="input h-20"
                 placeholder="Коротко и по делу, без вежливых оборотов. Ругается сквозь зубы. Никогда не говорит «спасибо» прямо."
@@ -214,6 +221,7 @@ export function CharacterEditor() {
                 хвост, вплотную к ходу. По описанию модель понимает, КАКОЙ у героя
                 голос; по образцам — слышит его, и следующая реплика подстраивается. */}
             <Field
+              tokens={selected.card.speechExamples || ''}
               label="Примеры реплик"
               hint="Настоящие фразы персонажа, по одной на строку. Уходят в конец запроса, вплотную к ходу — там модель слышит голос лучше всего. Дословно повторять их она не будет."
             >
@@ -230,14 +238,14 @@ export function CharacterEditor() {
             {(showExtraFields || selected.card.appearance.trim() || selected.card.backstory.trim()) ? (
               <div className="space-y-3 rounded-lg border border-white/10 p-3">
                 <div className="text-xs uppercase tracking-wide text-gray-500">Отдельные поля (опционально)</div>
-                <Field label="Внешность">
+                <Field tokens={selected.card.appearance} label="Внешность">
                   <textarea
                     className="input h-16"
                     value={selected.card.appearance}
                     onChange={(e) => patchChar(selected.id, (c) => (c.card.appearance = e.target.value))}
                   />
                 </Field>
-                <Field label="Предыстория">
+                <Field tokens={selected.card.backstory} label="Предыстория">
                   <textarea
                     className="input h-16"
                     value={selected.card.backstory}
@@ -254,7 +262,7 @@ export function CharacterEditor() {
               </button>
             )}
             {selected.role === 'love_interest' && (
-              <Field label="Арка отношений" hint="Как развивается роман с этим персонажем.">
+              <Field tokens={selected.card.relationshipArc || ''} label="Арка отношений" hint="Как развивается роман с этим персонажем.">
                 <textarea
                   className="input h-16"
                   value={selected.card.relationshipArc || ''}

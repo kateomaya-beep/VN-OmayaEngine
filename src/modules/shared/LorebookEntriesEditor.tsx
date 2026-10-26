@@ -4,6 +4,8 @@ import { matchLorebook } from '../../ai/lorebookEngine';
 import { parseWorldInfo, exportWorldInfo } from '../../storage/worldInfo';
 import { downloadBlob } from '../../storage/zip';
 import type { LorebookEntry, Project } from '../../shared/types';
+import { TokenBadge } from '../../shared/TokenBadge';
+import { lorebookEntryText } from '../../ai/tokenSummary';
 
 // Полноценный редактор лорбука (как в конструкторе) на props — используется и во
 // вкладке «Лорбук» конструктора, и в панели «Расширения».
@@ -62,9 +64,24 @@ export function LorebookEntriesEditor({
     <div className="grid lg:grid-cols-[1fr_280px] gap-4">
       <div>
         <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
-          <p className="text-sm text-gray-400">
-            Записи инъектятся в контекст, когда их ключи встречаются в тексте (или всегда).
-          </p>
+          <div>
+            <p className="text-sm text-gray-400">
+              Записи инъектятся в контекст, когда их ключи встречаются в тексте (или всегда).
+            </p>
+            <p className="nf-lb-total text-xs text-gray-500 mt-1 flex flex-wrap gap-x-3">
+              <span>
+                Всего: <TokenBadge className="!text-xs text-gray-300" text={project.lorebook.map(lorebookEntryText)} />
+              </span>
+              <span title="Уходят в каждый запрос">
+                постоянные:{' '}
+                <TokenBadge className="!text-xs text-gray-300" text={project.lorebook.filter((e) => e.alwaysActive).map(lorebookEntryText)} />
+              </span>
+              <span title="Уходят, только когда ключ прозвучал в тексте">
+                по ключам:{' '}
+                <TokenBadge className="!text-xs text-gray-300" text={project.lorebook.filter((e) => !e.alwaysActive).map(lorebookEntryText)} />
+              </span>
+            </p>
+          </div>
           <div className="flex gap-2">
             <input
               ref={fileRef}
@@ -104,6 +121,7 @@ export function LorebookEntriesEditor({
                   value={e.title}
                   onChange={(ev) => patch(e.id, (x) => (x.title = ev.target.value))}
                 />
+                <TokenBadge className="self-center" text={lorebookEntryText(e)} />
                 <input
                   type="number"
                   className="input w-20"

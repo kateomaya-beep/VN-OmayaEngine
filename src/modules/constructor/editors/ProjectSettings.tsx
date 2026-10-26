@@ -4,6 +4,7 @@ import { AssetImage, Field } from '../../../shared/ui';
 import { uploadAsset } from '../../../storage/assetOps';
 import { pushToast } from '../../../shared/toast';
 import { defaultFinanceConfig, normalizeNarrativeMode } from '../../../shared/types';
+import { StoryTokenSummary } from './StoryTokenSummary';
 
 export function ProjectSettings() {
   const { project, update } = useProjectStore();
@@ -211,6 +212,9 @@ export function ProjectSettings() {
             })}
           </div>
         )}
+      </div>
+      <div className="md:col-span-2">
+        <StoryTokenSummary project={project} />
       </div>
     </div>
   );

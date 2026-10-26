@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { getAssetUrl } from '../storage/assetUrls';
+import { TokenBadge } from './TokenBadge';
 
 // Renders an asset blob by its blobKey (image types).
 export function AssetImage({
@@ -94,15 +95,25 @@ export function Field({
   children,
   hint,
   className,
+  tokens,
 }: {
   label: string;
   children: ReactNode;
   hint?: string;
   className?: string;
+  /** Текст поля — у заголовка покажется, сколько он весит в токенах. */
+  tokens?: string | string[];
 }) {
   return (
     <div className={`mb-3 ${className ?? ''}`}>
-      <label className="label">{label}</label>
+      {tokens !== undefined ? (
+        <div className="flex items-baseline justify-between gap-2">
+          <label className="label">{label}</label>
+          <TokenBadge text={tokens} />
+        </div>
+      ) : (
+        <label className="label">{label}</label>
+      )}
       {children}
       {hint && <p className="text-xs text-gray-500 mt-1">{hint}</p>}
     </div>

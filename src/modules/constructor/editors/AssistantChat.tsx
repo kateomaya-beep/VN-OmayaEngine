@@ -30,6 +30,7 @@ import {
   DEFAULT_ASSISTANT_PERSONA,
   type AssistantMessage,
 } from '../../../ai/assistant';
+import { TokenBadge } from '../../../shared/TokenBadge';
 
 // ЧАТ С АССИСТЕНТОМ-СОАВТОРОМ.
 //
@@ -487,8 +488,11 @@ export function AssistantChat(props?: {
           </p>
           {personaOpen && (
             <>
+              <div className="flex justify-end mt-2">
+                <TokenBadge text={cfg.assistantPersona || DEFAULT_ASSISTANT_PERSONA} />
+              </div>
               <textarea
-                className="input h-44 text-sm mt-2"
+                className="input h-44 text-sm"
                 placeholder={DEFAULT_ASSISTANT_PERSONA}
                 value={cfg.assistantPersona}
                 onChange={(e) => patchCfg({ assistantPersona: e.target.value })}
@@ -522,11 +526,14 @@ export function AssistantChat(props?: {
             onClick={() => setInstrOpen((v) => !v)}
           >
             <span>Постоянные инструкции</span>
-            <span className="text-gray-500">{instrOpen ? '▲' : '▼'}</span>
+            <span className="flex items-center gap-2">
+              <TokenBadge text={cfg.assistantInstructions} />
+              <span className="text-gray-500">{instrOpen ? '▲' : '▼'}</span>
+            </span>
           </button>
           <p className="text-xs text-gray-500 mt-1">
             {cfg.assistantInstructions.trim()
-              ? `Действуют во всём, что ассистент придумывает и правит: персонажи, лорбук, мир, сюжет (${cfg.assistantInstructions.trim().length} симв.).`
+              ? 'Действуют во всём, что ассистент придумывает и правит: персонажи, лорбук, мир, сюжет.'
               : 'Пусто — ассистент работает без постоянных инструкций.'}
           </p>
           {instrOpen && (

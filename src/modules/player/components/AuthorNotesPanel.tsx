@@ -5,6 +5,7 @@ import { uid } from '../../../shared/utils';
 import { usePlayerStore } from '../playerStore';
 import { useGlobalNotes } from '../../../shared/globalNotes';
 import type { AuthorNote } from '../../../shared/types';
+import { TokenBadge } from '../../../shared/TokenBadge';
 
 // Менеджер авторских заметок для ИИ. Записи создаются/правятся/удаляются/копируются.
 // Настройки случайных событий переехали в панель «Расширения» → «События».
@@ -63,9 +64,12 @@ export function AuthorNotesPanel({ open, onClose }: { open: boolean; onClose: ()
           есть в этой панели, она действует строже всего, и искать её под списком
           заметок было бы странно. */}
       <div className="mb-4 rounded-xl border border-emerald-400/25 bg-emerald-500/[0.06] p-3">
-        <label className="label !text-emerald-300">
-          {L('Невидимая OOC-записка', 'Invisible OOC note')}
-        </label>
+        <div className="flex items-baseline justify-between gap-2">
+          <label className="label !text-emerald-300">
+            {L('Невидимая OOC-записка', 'Invisible OOC note')}
+          </label>
+          <TokenBadge text={ooc} />
+        </div>
         <p className="text-[11px] text-gray-400 mb-2">
           {L(
             'Уходит в запрос ровно перед вашим ходом — последним, что модель читает перед тем, как писать. В ленте не показывается и в переписку не попадает. Сюда пишут условия, а не события: «прямая речь строго в кавычках», «не заканчивай ход вопросом», «сегодня он простужен».',
@@ -156,6 +160,9 @@ export function AuthorNotesPanel({ open, onClose }: { open: boolean; onClose: ()
                     🗑
                   </button>
                 </div>
+              </div>
+              <div className="flex justify-end -mt-1 mb-1">
+                <TokenBadge text={editing ? drafts[n.id] || '' : n.text} />
               </div>
               {editing ? (
                 <textarea

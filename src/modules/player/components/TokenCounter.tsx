@@ -3,12 +3,13 @@ import type { Project, RuntimeState } from '../../../shared/types';
 import { estimateContextBreakdown } from '../../../ai/promptBuilder';
 import { getPresetSettings } from '../../../ai/presetSettings';
 import { isCalibrated, lastTurnUsage } from '../../../ai/tokenCalibration';
+import { activeTokenizer, TOKENIZER_LABEL } from '../../../ai/tokenCount';
 
 // Живой счётчик токенов/контекста (см. CR v2 §J) — пересчитывается после каждого
 // хода (не на каждый рендер), чтобы не грузить лишний раз. По нажатию — состав
 // запроса: что сколько занимает, и сколько насчитал провайдер на прошлом ходу.
 export function TokenCounter({ project, state }: { project: Project; state: RuntimeState }) {
-  const [data, setData] = useState<{ total: number; parts: { label: string; tokens: number }[] } | null>(null);
+  const [data, setData] = useState<{ total: number; parts: { label: string; tokens: number }[]; exact: boolean } | null>(null);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -34,7 +35,8 @@ export function TokenCounter({ project, state }: { project: Project; state: Runt
         title="Размер запроса к ИИ — нажмите, чтобы увидеть состав"
         onClick={() => setOpen((v) => !v)}
       >
-        ~{data.total.toLocaleString('ru')} / {budget.toLocaleString('ru')} ток. {open ? '▴' : '▾'}
+        {data.exact ? '' : '≈'}
+        {data.total.toLocaleString('ru')} / {budget.toLocaleString('ru')} ток. {open ? '▴' : '▾'}
       </button>
       {open && (
         <div className="nf-tok-breakdown absolute right-0 z-20 mt-1 w-72 max-w-[85vw] rounded-xl border border-white/10 bg-panel p-3 shadow-xl text-[11px] text-gray-300">
@@ -63,9 +65,11 @@ export function TokenCounter({ project, state }: { project: Project; state: Runt
               <div>Счёт провайдера появится после хода (если шлюз его отдаёт).</div>
             )}
             <div>
-              {isCalibrated()
-                ? 'Прикидка подстроена под токенайзер вашей модели — потолок держится по счёту провайдера.'
-                : 'Прикидка пока по символам; после первого хода подстроится под вашу модель.'}
+              {data.exact
+                ? `Посчитано точно — ${TOKENIZER_LABEL[activeTokenizer() ?? 'gemma3']}, как у провайдера. Бюджет держится по этому счёту.`
+                : isCalibrated()
+                  ? 'У этой модели словарь не опубликован — счёт приблизительный (≈), подстроен под счёт провайдера.'
+                  : 'У этой модели словарь не опубликован — счёт приблизительный (≈); после первого хода подстроится под счёт провайдера.'}
             </div>
             <div>
               Бюджет — цель, а не только потолок: живая история растёт до него, потом сворачивается в память. Меньше бюджет —

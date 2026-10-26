@@ -22,6 +22,7 @@ import { MemorybookTab, ArcsTab } from './MemorybookTab';
 import { useChapterJob, runChapterJob } from '../player/chapterJob';
 import { getPresetSettings } from '../../ai/presetSettings';
 import { estimateTokens } from '../../shared/utils';
+import { TokenBadge } from '../../shared/TokenBadge';
 
 // Game Master (вдохновлено Horae): динамическое состояние мира — персонажи с
 // автозаполнением по контексту («волшебная палочка»), события=меморибук, сетка
@@ -207,7 +208,14 @@ function CharactersTab({
 
   const field = (label: string, value: string, onChange: (v: string) => void, area = false) => (
     <div>
-      <label className="label">{label}</label>
+      {area ? (
+        <div className="flex items-baseline justify-between gap-2">
+          <label className="label">{label}</label>
+          <TokenBadge text={value} />
+        </div>
+      ) : (
+        <label className="label">{label}</label>
+      )}
       {area ? (
         <textarea className="input h-16 text-sm" value={value} onChange={(e) => onChange(e.target.value)} />
       ) : (
@@ -616,7 +624,7 @@ function SheetsTab({ L, project }: { L: Lf; project?: Project | null }) {
       {sheet && (
         <div className="card space-y-2">
           {(['name', 'appearance', 'personality', 'backstory', 'speechStyle', 'scenario'] as (keyof GeneratedSheet)[]).map((k) => (
-            <Field key={k as string} label={k as string}>
+            <Field key={k as string} label={k as string} tokens={k === 'name' ? undefined : (sheet[k] as string) || ''}>
               {k === 'name' ? (
                 <input className="input !py-1 text-sm" value={(sheet[k] as string) || ''} onChange={(e) => upd(k, e.target.value)} />
               ) : (
@@ -741,6 +749,7 @@ function LocationsTab({ gm, patchGm, L }: { gm: GM; patchGm: PatchGm; L: Lf }) {
               value={l.name}
               onChange={(e) => patchGm((g) => (g.locations[i].name = e.target.value))}
             />
+            <TokenBadge text={l.description} />
             <button className="btn-danger !px-2 !py-1 text-xs" onClick={() => patchGm((g) => g.locations.splice(i, 1))}>✕</button>
           </div>
           <textarea
@@ -964,6 +973,9 @@ function SummaryTab({ project, onPatch, L }: { project?: Project | null; onPatch
               'Not a retelling of turns but "where everything stands now": who is who, relationships and their causes, resolved arcs, open hooks, key items, the current scene. Replaced wholesale on each fold. "Rebuild" reassembles it from all chapters. Hand edits are kept — this is authoritative for future turns.'
             )}
           </p>
+          <div className="flex justify-end">
+            <TokenBadge text={memory.storyState || ''} />
+          </div>
           <textarea
             className="input !py-1 text-xs font-mono h-40"
             placeholder={L('появится после первой свёртки…', 'appears after the first fold…')}
@@ -1322,7 +1334,7 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
           )}
         </p>
       </Field>
-      <Field label={L('Кастомный промпт саммарайзера (опц.)', 'Custom summarizer prompt (opt.)')}>
+      <Field label={L('Кастомный промпт саммарайзера (опц.)', 'Custom summarizer prompt (opt.)')} tokens={mc.summaryPrompt || ''}>
         <p className="text-[11px] text-gray-500 mb-1">
           {mc.summaryPrompt?.trim()
             ? L(

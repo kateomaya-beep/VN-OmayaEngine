@@ -5,6 +5,7 @@ import { chaptersOf, isLiveChapter, trackedCharacters } from '../../ai/chapters'
 import { selectMemory } from '../../ai/promptBuilder';
 import { uid } from '../../shared/utils';
 import type { ArcStage, MemoryBookEntry, MemoryEntryKind, MemoryEntryMode, MemoryState, Project } from '../../shared/types';
+import { TokenBadge } from '../../shared/TokenBadge';
 
 type Lf = (ru: string, en: string) => string;
 
@@ -166,6 +167,9 @@ function EntryEditor({
               onBlur={() => gist !== (entry.gist || '') && save({ gist })}
             />
           )}
+          <div className="flex justify-end">
+            <TokenBadge text={`${entry.title}\n${text}`} />
+          </div>
           <textarea
             className="input !py-1 text-sm h-40"
             value={text}
