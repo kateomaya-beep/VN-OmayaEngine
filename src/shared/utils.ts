@@ -1,3 +1,4 @@
+import { charsPerToken } from '../ai/tokenCalibration';
 import { pushToast } from './toast';
 
 export function uid(prefix = ''): string {
@@ -41,8 +42,10 @@ export function clamp(n: number, min: number, max: number): number {
 }
 
 // Rough token estimate: ~3.5 chars/token for Russian text (see ТЗ §10)
+// Прикидка по символам — с поправкой на токенайзер текущей модели, выученной по
+// ответам провайдера (см. ai/tokenCalibration.ts). Без калибровки — 3,5 символа.
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3.5);
+  return Math.ceil(text.length / charsPerToken());
 }
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
