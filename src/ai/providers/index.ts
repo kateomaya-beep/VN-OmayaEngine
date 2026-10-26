@@ -10,6 +10,10 @@ import { pushToast } from '../../shared/toast';
 export interface CompletionRequest {
   system: string;
   messages: LlmMessage[];
+  // Своё подключение вместо основного (ассистент на другой, например более дешёвой
+  // модели). keyRole — под каким именем лежит его ключ. Всё остальное — поток,
+  // починки капризов шлюзов, журнал — работает так же, как у основного.
+  connection?: { conn: ApiConnection; keyRole: string };
   model?: string;
   temperature: number;
   // Опциональный префилл: начало ответа ассистента (напр. '{"scene":') для
@@ -1372,9 +1376,10 @@ export function getProvider(name: ApiConnection['provider']): Provider {
 // конкретный шлюз он подгоняется в последний момент. Дополнительные запросы
 // (саммари, эмбеддинги) через это не идут — у них и так одно user-сообщение.
 export async function runCompletion(req: CompletionRequest): Promise<string> {
-  const conn = getConnection();
+  const conn = req.connection?.conn ?? getConnection();
   const model = req.model || conn.model || '(модель не выбрана)';
-  noteActiveModel(conn.model);
+  // Калибровка счёта токенов — по модели основного подключения, не чужого.
+  if (!req.connection) noteActiveModel(conn.model);
   const method = getPresetSettings().promptProcessing;
   const shaped = postProcessPrompt(req.system, req.messages, method, req.names || {});
   req = { ...req, system: shaped.system, messages: shaped.messages };
@@ -1401,7 +1406,7 @@ export async function runCompletion(req: CompletionRequest): Promise<string> {
   const started = Date.now();
   try {
     const provider = getProvider(conn.provider);
-    const apiKey = getApiKey(conn.provider);
+    const apiKey = getApiKey(req.connection ? req.connection.keyRole : conn.provider);
     let out: string;
     if (req.onDelta && provider.completeStream) {
       try {

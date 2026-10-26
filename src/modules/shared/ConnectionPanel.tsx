@@ -6,6 +6,7 @@ import { useConnectionPresets } from '../../ai/connectionPresets';
 import { isProxyActive, recheckProxy, forgetLearnedModelQuirks } from '../../ai/providers';
 import { pushToast } from '../../shared/toast';
 import { ImageConnectionField } from './ImageConnectionField';
+import { useAssistantConnection, ASSISTANT_KEY_ROLE } from '../../ai/assistantConnection';
 import { usePlayerStore } from '../player/playerStore';
 
 // Глобальное основное подключение к LLM (Batch 3 §2): единый источник истины для
@@ -13,6 +14,7 @@ import { usePlayerStore } from '../player/playerStore';
 export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   // Открытая история — чтобы её старое подключение картинок переехало в общее.
   const playerProject = usePlayerStore((s) => s.project);
+  const asst = useAssistantConnection();
   const { connection, setConnection } = useConnection();
   const { presets, activeId, saveCurrent, apply, remove } = useConnectionPresets();
   const [proxy, setProxy] = useState<boolean | null>(null);
@@ -159,6 +161,41 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
         keyRole={connection.provider}
         onChange={(conn) => setConnection(conn)}
       />
+
+      {/* Ассистенту-соавтору — своё подключение, например на модели подешевле.
+          Выключено — ассистент ходит через основное, как раньше. */}
+      <details className="card !bg-panel2 !p-3 mt-4" open={asst.enabled || undefined}>
+        <summary className="cursor-pointer text-sm font-semibold select-none">
+          🪄 Ассистент {asst.enabled && asst.conn.model ? `· ${asst.conn.model}` : '· через основное'}
+        </summary>
+        <div className="mt-3">
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <input type="checkbox" className="mt-1" checked={asst.enabled} onChange={(e) => asst.set({ enabled: e.target.checked })} />
+            <span>
+              Отдельное подключение для ассистента
+              <span className="block text-[11px] text-gray-500">
+                Карточки, лорбук, правки пресета и разборы истории нормально делает и модель подешевле — история при этом
+                пишется основной. Ключ свой, хранится только в этом браузере.
+              </span>
+            </span>
+          </label>
+          {asst.enabled && (
+            <div className="mt-3">
+              <button
+                className="btn-ghost !px-3 !py-1 text-xs mb-2"
+                onClick={() => asst.set({ conn: { provider: connection.provider, baseUrl: connection.baseUrl, model: asst.conn.model } })}
+                title="Тот же провайдер и адрес, что у основного, — останется выбрать модель (и ключ, если он другой)"
+              >
+                Взять адрес из основного
+              </button>
+              <ApiConnectionField conn={asst.conn} keyRole={ASSISTANT_KEY_ROLE} onChange={(conn) => asst.set({ conn })} />
+              {!asst.conn.model && (
+                <p className="text-[11px] text-amber-300 mt-1">Пока модель не выбрана, ассистент ходит через основное подключение.</p>
+              )}
+            </div>
+          )}
+        </div>
+      </details>
 
       {/* Картинки — тоже общее подключение, рядом с основным: настроить один раз
           на все истории. То же самое открывается в студии. */}

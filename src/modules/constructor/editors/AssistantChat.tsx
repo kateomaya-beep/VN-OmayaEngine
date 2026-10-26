@@ -10,6 +10,7 @@ import { normalizeRuntimeState } from '../../../shared/factory';
 import { applyAssistantPresetOps, hasPresetOps } from '../../../ai/assistantPreset';
 import { getPresetSettings, presetSlotFor, readPresetSlot, writePresetSlot } from '../../../ai/presetSettings';
 import { normalizeNarrativeMode } from '../../../shared/types';
+import { assistantConnection, useAssistantConnection } from '../../../ai/assistantConnection';
 import { usePresetSettings, type UserProfile } from '../../../ai/presetSettings';
 import { pushToast } from '../../../shared/toast';
 import { logEvent } from '../../../shared/logStore';
@@ -125,6 +126,7 @@ export function AssistantChat(props?: {
   const [stream, setStream] = useState('');
   const [personaOpen, setPersonaOpen] = useState(false);
   const [instrOpen, setInstrOpen] = useState(false);
+  const asstConn = useAssistantConnection();
   const [editing, setEditing] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -189,6 +191,8 @@ export function AssistantChat(props?: {
         messages,
         temperature: Math.min(cfg.temperature, 1),
         maxTokens: 4000,
+        // Своё подключение ассистента (🔌 → «Ассистент»), если включено; иначе основное.
+        connection: assistantConnection() ?? undefined,
         signal: controller.signal,
         onDelta: (chunk) => {
           acc += chunk;
@@ -553,6 +557,16 @@ export function AssistantChat(props?: {
             </>
           )}
         </div>
+
+        <p className="text-[11px] text-gray-500 px-1">
+          Модель ассистента:{' '}
+          {asstConn.enabled && asstConn.conn.model ? (
+            <b className="text-gray-300">{asstConn.conn.model}</b>
+          ) : (
+            'та же, что пишет историю'
+          )}{' '}
+          — меняется в «🔌 Подключение к ИИ» → «🪄 Ассистент».
+        </p>
 
         <div className="card">
           <h4 className="font-semibold text-sm mb-1">Что он видит</h4>
