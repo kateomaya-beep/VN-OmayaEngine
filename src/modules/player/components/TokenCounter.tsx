@@ -9,7 +9,7 @@ import { activeTokenizer, TOKENIZER_LABEL } from '../../../ai/tokenCount';
 // хода (не на каждый рендер), чтобы не грузить лишний раз. По нажатию — состав
 // запроса: что сколько занимает, и сколько насчитал провайдер на прошлом ходу.
 export function TokenCounter({ project, state }: { project: Project; state: RuntimeState }) {
-  const [data, setData] = useState<{ total: number; parts: { label: string; tokens: number }[]; exact: boolean } | null>(null);
+  const [data, setData] = useState<{ total: number; parts: { label: string; tokens: number }[]; exact: boolean; factor: number } | null>(null);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -24,7 +24,11 @@ export function TokenCounter({ project, state }: { project: Project; state: Runt
 
   if (!data) return null;
   const budget = getPresetSettings().contextBudget;
-  const over = data.total > budget;
+  // Шлюз считает своим токенайзером — показываем запрос в ЕГО единицах: именно с
+  // ними сравнивается бюджет и именно по ним шлюз решает, принять ли запрос.
+  const shown = Math.round(data.total * data.factor);
+  const gw = data.factor > 1.01;
+  const over = shown > budget;
   const real = lastTurnUsage();
   const max = Math.max(1, ...data.parts.map((p) => p.tokens));
 
@@ -35,8 +39,8 @@ export function TokenCounter({ project, state }: { project: Project; state: Runt
         title="Размер запроса к ИИ — нажмите, чтобы увидеть состав"
         onClick={() => setOpen((v) => !v)}
       >
-        {data.exact ? '' : '≈'}
-        {data.total.toLocaleString('ru')} / {budget.toLocaleString('ru')} ток. {open ? '▴' : '▾'}
+        {data.exact && !gw ? '' : '≈'}
+        {shown.toLocaleString('ru')} / {budget.toLocaleString('ru')} ток. {open ? '▴' : '▾'}
       </button>
       {open && (
         <div className="nf-tok-breakdown absolute right-0 z-20 mt-1 w-72 max-w-[85vw] rounded-xl border border-white/10 bg-panel p-3 shadow-xl text-[11px] text-gray-300">
@@ -63,6 +67,12 @@ export function TokenCounter({ project, state }: { project: Project; state: Runt
               </div>
             ) : (
               <div>Счёт провайдера появится после хода (если шлюз его отдаёт).</div>
+            )}
+            {gw && (
+              <div className="text-amber-300/90">
+                Ваш шлюз считает токены по-своему — в {data.factor.toFixed(2)} раза больше словаря модели (узнали
+                из его отказа). Число вверху — по счёту шлюза, потолок держится по нему.
+              </div>
             )}
             <div>
               {data.exact

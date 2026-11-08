@@ -10,6 +10,7 @@ import {
   tokenizerFor,
 } from '../ai/tokenCount';
 import { useConnection } from '../ai/connection';
+import { gatewayFix, resetGatewayFix } from '../ai/gatewayLimit';
 
 // СЧЁТЧИКИ ТОКЕНОВ У ПОЛЕЙ — как в Таверне: пишешь анкету или блок пресета и тут же
 // видишь, сколько он весит. Число точное (словарь модели из подключения), пока
@@ -68,6 +69,7 @@ export function ExactTokensNote() {
   const tok = activeTokenizer();
   const own = tokenizerFor(model);
   const on = exactTokensEnabled();
+  const fix = gatewayFix();
   return (
     <div className="nf-exact-tokens text-[11px] mt-1 space-y-1">
       <p className={tok ? 'text-emerald-300/90' : 'text-gray-500'}>
@@ -79,6 +81,26 @@ export function ExactTokensNote() {
               ? 'Словарь модели не загрузился — числа приблизительные (≈), подстроены под счёт провайдера.'
               : `У модели «${model || '—'}» словарь не опубликован — числа приблизительные (≈), подстроены под то, сколько насчитал провайдер. Точно считаются Gemini, GPT, DeepSeek и Qwen.`}
       </p>
+      {fix.learned && fix.factor > 1.01 && (
+        <div className="nf-gateway-fix text-amber-300/90 space-y-1">
+          <p>
+            Шлюз считает токены по-своему: в {fix.factor.toFixed(2)} раза больше
+            {tok ? ' словаря модели' : ' нашего счёта'}
+            {fix.max ? `, его лимит — ${fix.max.toLocaleString('ru')} (вместе с ответом)` : ''}. Узнали из его отказа —
+            бюджет пересчитан так, чтобы запрос не выходил за {'«'}Бюджет контекста{'»'} по счёту шлюза.
+          </p>
+          <button
+            className="btn-ghost !px-2 !py-0.5 text-[11px]"
+            onClick={() => {
+              resetGatewayFix();
+              setExactTokensEnabled(exactTokensEnabled());
+            }}
+            title="Сменили прокси или модель — забыть поправку; если шлюз снова откажет, она выучится заново"
+          >
+            Сбросить поправку шлюза
+          </button>
+        </div>
+      )}
       {own && (
         <label className="flex items-center gap-2 text-gray-400 cursor-pointer">
           <input type="checkbox" checked={on} onChange={(e) => setExactTokensEnabled(e.target.checked)} />

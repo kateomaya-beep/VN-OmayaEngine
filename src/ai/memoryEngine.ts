@@ -27,6 +27,7 @@ import { estimateTokens, uid } from '../shared/utils';
 import { pushToast, updateToast } from '../shared/toast';
 import { useLang } from '../shared/i18n';
 import { logEvent } from '../shared/logStore';
+import { effectiveContextBudget } from './gatewayLimit';
 
 // Двуязычные тексты тостов саммари (язык — из глобального переключателя UI).
 function tt(ru: string, en: string): string {
@@ -448,7 +449,7 @@ export async function maybeCompress(
   // он уже был. Теперь память сворачивается ровно тогда, когда живая история
   // перестаёт помещаться в отведённую ей долю бюджета — то есть до того, как
   // хоть один ход выпадет из контекста.
-  const allowance = liveHistoryAllowance(ps.contextBudget || 80000);
+  const allowance = liveHistoryAllowance(effectiveContextBudget(ps.contextBudget || 80000));
   const liveTokens = liveHistoryTokens(project, state);
 
   // ГИСТЕРЕЗИС. Свернуть надо, когда живая история переросла лимит, но оставить

@@ -7,6 +7,8 @@ import { getApiKey } from '../keys';
 import { getConnection } from '../connection';
 import { logEvent } from '../../shared/logStore';
 import { pushToast } from '../../shared/toast';
+import { estimateTokens } from '../../shared/utils';
+import { ContextOverflowError, gatewayKey, isProxyErrorReply, learnOverflow, overflowMessage, parseContextOverflow } from '../gatewayLimit';
 
 export interface CompletionRequest {
   system: string;
@@ -1389,6 +1391,14 @@ export async function runCompletion(req: CompletionRequest): Promise<string> {
   const model = req.model || conn.model || '(модель не выбрана)';
   // Калибровка счёта токенов — по модели основного подключения, не чужого.
   if (!req.connection) noteActiveModel(conn.model);
+  // Наш счёт запроса — ДО подгонки под шлюз: по нему же держится бюджет, и с ним
+  // сравнивается счёт шлюза, если тот откажет по размеру (см. gatewayLimit).
+  const ourTokens = req.connection
+    ? 0
+    : estimateTokens(req.system) +
+      req.messages.reduce((n, m) => n + estimateTokens(m.content) + 4, 0) +
+      estimateTokens(req.prefill || '') +
+      4;
   const method = getPresetSettings().promptProcessing;
   const shaped = postProcessPrompt(req.system, req.messages, method, req.names || {});
   req = { ...req, system: shaped.system, messages: shaped.messages };
@@ -1431,9 +1441,32 @@ export async function runCompletion(req: CompletionRequest): Promise<string> {
     } else {
       out = await provider.complete(conn, apiKey, req);
     }
+    // Прокси для Таверны присылают свою ошибку как обычный ответ модели (чтобы
+    // Таверна её показала). Ходом это не считаем — иначе отказ шлюза ляжет в
+    // историю как реплика персонажа.
+    if (isProxyErrorReply(out)) {
+      const text = out.replace(/<!--[\s\S]*?-->/g, '').trim();
+      const ov = parseContextOverflow(text);
+      if (ov) throw new ContextOverflowError(`${overflowMessage(ov)}\nОтвет шлюза: ${text.slice(0, 600)}`, ov);
+      throw new Error(`Шлюз вернул ошибку вместо ответа модели:\n${text.slice(0, 800)}`);
+    }
     logEvent('info', 'llm', `Ответ получен за ${Date.now() - started} мс (${out.length} симв.)`);
     return out;
   } catch (e) {
+    // Отказ по размеру — запоминаем счёт шлюза: следующая сборка уложится в его
+    // лимит, а ход повторит runTurn.
+    const ov = e instanceof ContextOverflowError ? e.info : parseContextOverflow((e as Error)?.message || '');
+    if (ov && !req.connection) {
+      const fix = learnOverflow(ov, ourTokens, gatewayKey(model));
+      logEvent(
+        'warn',
+        'llm',
+        `${overflowMessage(ov)} Наш счёт того же запроса — ${ourTokens.toLocaleString('ru')} ток.: шлюз считает ` +
+          `в ${fix.factor.toFixed(2)} раза больше${fix.max ? `, его лимит ${fix.max.toLocaleString('ru')}` : ''}. ` +
+          'Потолок пересчитан под счёт шлюза.'
+      );
+      if (!(e instanceof ContextOverflowError)) throw new ContextOverflowError((e as Error).message, ov);
+    }
     if ((e as Error)?.name === 'AbortError') {
       logEvent('info', 'llm', 'Генерация отменена пользователем');
     } else {

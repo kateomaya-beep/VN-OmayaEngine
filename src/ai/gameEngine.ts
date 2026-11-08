@@ -21,6 +21,7 @@ import { protagonistName } from './macros';
 import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
 import { uid } from '../shared/utils';
+import { ContextOverflowError, learnUsage } from './gatewayLimit';
 
 export interface TurnResult {
   turn: AiTurn;
@@ -716,6 +717,7 @@ function logTurnUsage(req: { estimatedTokens?: number }): void {
   const u = takeLastUsage();
   if (!u || Date.now() - u.at > 10_000) return;
   markMainUsage(u, req.estimatedTokens);
+  if (req.estimatedTokens) learnUsage(u.promptTokens, req.estimatedTokens);
   logEvent(
     'info',
     'llm',
@@ -732,7 +734,22 @@ function stateExpected(ps: PresetSettings): boolean {
   return blocks.some((b) => b.builtinKey === RP_STATE_BLOCK_KEY && b.enabled);
 }
 
-export async function runTurn(
+// Шлюз отказал по размеру — runCompletion уже запомнил его счёт (gatewayLimit), и
+// новая сборка уложится в лимит: повторяем ход один раз сами, чтобы игрок не
+// получал отказ шлюза вместо ответа. Второй отказ подряд — честная ошибка.
+export async function runTurn(...args: Parameters<typeof runTurnOnce>): Promise<TurnResult> {
+  try {
+    return await runTurnOnce(...args);
+  } catch (e) {
+    const signal = args[3];
+    if (!(e instanceof ContextOverflowError) || signal?.aborted) throw e;
+    logEvent('warn', 'turn', 'Запрос не влез в лимит шлюза — история подрезана под его счёт, повторяю ход.');
+    pushToast('info', 'Запрос не влез в лимит шлюза — подрезала историю под его счёт и повторяю ход');
+    return await runTurnOnce(...args);
+  }
+}
+
+async function runTurnOnce(
   project: Project,
   state: RuntimeState,
   playerMove: string,

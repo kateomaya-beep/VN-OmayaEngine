@@ -23,6 +23,7 @@ import { chaptersOf, isLiveChapter, pickMemorybook, type MemorybookPick } from '
 import { normName, resolvePerson, type Person } from './characterRegistry';
 import { estimateTokens } from '../shared/utils';
 import { activeTokenizer, prefetchTokens } from './tokenCount';
+import { effectiveContextBudget, gatewayFix } from './gatewayLimit';
 
 // Служебные токены роли вокруг каждого сообщения (Gemini, OpenAI — около 4).
 const MSG_OVERHEAD = 4;
@@ -544,7 +545,7 @@ export interface MemorySelection {
  */
 export function selectMemory(project: Project, state: RuntimeState, playerMove: string): MemorySelection {
   const m = state.memory;
-  const budgets = memoryBudgets(getPresetSettings().contextBudget || 80000);
+  const budgets = memoryBudgets(effectiveContextBudget(getPresetSettings().contextBudget || 80000));
 
   // --- Снапшот «где мы сейчас» ---
   let snapText = '';
@@ -1035,6 +1036,8 @@ export interface BuiltRequest {
   breakdown?: { label: string; tokens: number }[];
   /** Посчитано словарём модели (а не прикидкой). */
   exactTokens?: boolean;
+  /** Во сколько раз шлюз считает больше нашего (1 — как мы). */
+  gatewayFactor?: number;
   // Системная часть больше всего бюджета. Свёртку в этом случае форсировать
   // вредно (она наращивает журнал) — надо уплотнять память, а не историю.
   systemOverBudget?: boolean;
@@ -1362,7 +1365,9 @@ export async function buildRequest(
   // ошибки сыплются»). Теперь бюджет реально ограничивает ЖИВУЮ ИСТОРИЮ: системная
   // часть и ход игрока неприкосновенны, старые сообщения срезаются с начала, пока
   // запрос не уложится. Что срезано — уже в саммари (журнал эпизодов + снапшот).
-  const budget = Math.max(2000, ps.contextBudget || 8000);
+  // Бюджет — в единицах нашего счёта, но так, чтобы и по счёту ШЛЮЗА запрос не
+  // вышел за бюджет из пресета и за лимит самого шлюза (см. gatewayLimit).
+  const budget = effectiveContextBudget(ps.contextBudget || 8000);
   // ХВОСТ ПОСЛЕ ИСТОРИИ — сколько он займёт. Раньше здесь стояли круглые 400
   // токенов «на всё», а в хвост едут заметки автора, записка OOC, стоп-слова, план
   // размышления, вставки на глубине (у Dr. D там вся цепочка рассуждений) — легко
@@ -1401,12 +1406,24 @@ export async function buildRequest(
   if (!opts?.preview) lastFixed = fixedTokens;
   let overloaded = false;
   const MIN_WINDOW = 12;
+  // Потолок важнее минимума: 12 сообщений держим, пока они влезают, а не влезают —
+  // режем дальше, до последнего обмена. Раньше минимум был неприкосновенным, и на
+  // длинных ответах запрос уходил за бюджет — а шлюз отвечал отказом.
+  const MIN_HARD = 2;
   let winTokens = window.reduce((n, m) => n + estimateTokens(m.content), 0);
   let dropped = 0;
   while (window.length > MIN_WINDOW && fixedTokens + winTokens > budget) {
     winTokens -= estimateTokens(window[0].content);
     window = window.slice(1);
     dropped++;
+  }
+  if (window.length > MIN_HARD && fixedTokens + winTokens > budget) {
+    while (window.length > MIN_HARD && fixedTokens + winTokens > budget) {
+      winTokens -= estimateTokens(window[0].content);
+      window = window.slice(1);
+      dropped++;
+    }
+    logEvent('warn', 'prompt', `Даже ${MIN_WINDOW} сообщений истории не влезали в бюджет — оставлено ${window.length}. Старое уйдёт в свёртку памяти.`);
   }
   // Первым в диалоге должно идти сообщение игрока: Gemini (и часть шлюзов) отвечают
   // 400/пустотой, если история начинается с assistant. Срез сверху может оставить
@@ -1725,7 +1742,7 @@ export async function buildRequest(
   let total = sizeOf();
   if (total > budget) {
     let alive = window.filter((m) => withMove.includes(m));
-    while (total > budget && alive.length > MIN_WINDOW) {
+    while (total > budget && alive.length > MIN_HARD) {
       const cut = alive.slice(0, alive[1]?.role === 'assistant' && alive[0].role === 'user' ? 2 : 1);
       for (const m of cut) {
         const at = withMove.indexOf(m);
@@ -1757,6 +1774,7 @@ export async function buildRequest(
       return [...out.entries()].map(([label, tokens]) => ({ label, tokens })).filter((x) => x.tokens > 0).sort((a, b) => b.tokens - a.tokens);
     })(),
     exactTokens: activeTokenizer() !== null,
+    gatewayFactor: gatewayFix().factor,
     systemOverBudget: overloaded,
     mode,
     expectStateBlock: stateOn,
@@ -1768,10 +1786,10 @@ export async function estimateContextBreakdown(
   project: Project,
   state: RuntimeState,
   playerMove: string
-): Promise<{ total: number; parts: { label: string; tokens: number }[]; exact: boolean } | null> {
+): Promise<{ total: number; parts: { label: string; tokens: number }[]; exact: boolean; factor: number } | null> {
   try {
     const req = await buildRequest(project, state, playerMove || '(next turn)', { skipVector: true, preview: true });
-    return { total: req.estimatedTokens ?? 0, parts: req.breakdown ?? [], exact: !!req.exactTokens };
+    return { total: req.estimatedTokens ?? 0, parts: req.breakdown ?? [], exact: !!req.exactTokens, factor: req.gatewayFactor ?? 1 };
   } catch {
     return null;
   }
