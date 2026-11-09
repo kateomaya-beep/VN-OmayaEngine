@@ -137,7 +137,11 @@ export interface PresetSettings {
   // повтор не действуют вовсе — принимаются молча и игнорируются. Пока думалка
   // включена, всё, что ниже, не работает.
   disableNativeThinking: boolean;
+  // Сколько ходов (обменов) остаётся дословно сразу после свёртки памяти. До
+  // свёртки в запрос идёт вся несвёрнутая история — это не окно, а «остаток».
   liveWindow: number;
+  /** Отметка, что liveWindow уже в новом смысле (дефолт 3, а не 12). */
+  liveWindowV2?: boolean;
   contextBudget: number;
   turnLength: { min: number; max: number };
   choiceMinGap: number; // 0 = без ограничения
@@ -182,7 +186,8 @@ function defaults(): PresetSettings {
     narrativeLanguage: 'ru',
     temperature: 0.9,
     disableNativeThinking: false,
-    liveWindow: 12,
+    liveWindow: 3,
+    liveWindowV2: true,
     // Бюджет контекста ЖЁСТКО ограничивает запрос (см. promptBuilder), а не только
     // красит счётчик. Он же задаёт, сколько истории живёт дословно: память
     // сворачивается, когда живая история перестаёт помещаться в свою долю бюджета.
@@ -270,7 +275,11 @@ function load(): PresetSettings {
       frequencyPenalty: typeof v.frequencyPenalty === 'number' ? v.frequencyPenalty : undefined,
       presencePenalty: typeof v.presencePenalty === 'number' ? v.presencePenalty : undefined,
       disableNativeThinking: !!v.disableNativeThinking,
-      liveWindow: num(v.liveWindow, d.liveWindow),
+      // Прежний дефолт 12 считаем «не настраивали» и ставим новый (3): между свёртками
+      // история всё равно копится до потолка, а после свёртки длинный остаток лишь
+      // съедает место и сбивает кэш провайдера. Свои 12 после этого — ставятся заново.
+      liveWindow: v.liveWindowV2 ? num(v.liveWindow, d.liveWindow) : num(v.liveWindow, 12) === 12 ? d.liveWindow : num(v.liveWindow, d.liveWindow),
+      liveWindowV2: true,
       // Прежние дефолты (8000, 24000, 40000) считаем «пользователь не настраивал» и
       // поднимаем до нового: на них живая история была заметно короче.
       contextBudget: [8000, 24000, 40000].includes(num(v.contextBudget, d.contextBudget))

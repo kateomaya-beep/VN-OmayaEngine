@@ -1258,17 +1258,26 @@ function SummaryConfig({ project, onPatch, L }: { project: Project; onPatch: (m:
   return (
     <div className="card !bg-panel2 !p-3 space-y-3">
       <h4 className="font-semibold text-sm">{L('Настройки саммари', 'Summary settings')}</h4>
-      <Field label={L(`Частота: каждые ${mc.summaryEveryN} ходов`, `Every ${mc.summaryEveryN} turns`)}>
-        <div className="flex gap-2">
+      <Field
+        label={
+          mc.summaryEveryN > 0
+            ? L(`Ещё и по числу ходов: каждые ${mc.summaryEveryN}`, `Also by turn count: every ${mc.summaryEveryN}`)
+            : L('По числу ходов: выключено — только по объёму', 'By turn count: off — by size only')
+        }
+      >
+        <div className="flex gap-2 flex-wrap">
+          <button className={`chip !px-3 !py-1.5 nf-every-off ${mc.summaryEveryN <= 0 ? 'bg-accent2 text-white' : ''}`} onClick={() => patchMem({ summaryEveryN: 0 })}>
+            {L('Выкл', 'Off')}
+          </button>
           {[20, 30, 40].map((n) => (
             <button key={n} className={`chip !px-3 !py-1.5 ${mc.summaryEveryN === n ? 'bg-accent2 text-white' : ''}`} onClick={() => patchMem({ summaryEveryN: n })}>{n}</button>
           ))}
-          <input type="number" min={4} className="input w-24" value={mc.summaryEveryN} onChange={(e) => patchMem({ summaryEveryN: Number(e.target.value) })} />
+          <input type="number" min={0} className="input w-24" value={mc.summaryEveryN} onChange={(e) => patchMem({ summaryEveryN: Math.max(0, Number(e.target.value) || 0) })} />
         </div>
         <p className="text-[11px] text-gray-500 mt-1">
           {L(
-            'Это ПОТОЛОК, а не единственный триггер: память сворачивается и раньше — как только живая история перестаёт помещаться в бюджет контекста. Так ходы не зависают между контекстом и саммари.',
-            'This is a CAP, not the only trigger: memory also folds earlier — as soon as the live history stops fitting the context budget. That keeps turns from getting stranded between the context and the summary.'
+            'Главный триггер — объём: память сворачивается, как только запрос подходит к бюджету контекста (с анкетами, лорбуком, пресетом и памятью). Этот — дополнительный: свернуть и раньше, раз в N ходов, даже если место есть. «Выкл» — только по объёму: история копится до потолка, потом одна свёртка.',
+            'The main trigger is size: memory folds as soon as the request nears the context budget. This one is extra: also fold every N turns even if there is room. "Off" — by size only.'
           )}
         </p>
       </Field>

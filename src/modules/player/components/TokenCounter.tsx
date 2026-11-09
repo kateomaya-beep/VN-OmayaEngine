@@ -4,6 +4,8 @@ import { estimateContextBreakdown } from '../../../ai/promptBuilder';
 import { getPresetSettings } from '../../../ai/presetSettings';
 import { isCalibrated, lastTurnUsage } from '../../../ai/tokenCalibration';
 import { activeTokenizer, TOKENIZER_LABEL } from '../../../ai/tokenCount';
+import { liveHistoryAllowance, liveHistoryTokens } from '../../../ai/memoryEngine';
+import { effectiveContextBudget } from '../../../ai/gatewayLimit';
 
 // Живой счётчик токенов/контекста (см. CR v2 §J) — пересчитывается после каждого
 // хода (не на каждый рендер), чтобы не грузить лишний раз. По нажатию — состав
@@ -27,6 +29,17 @@ export function TokenCounter({ project, state }: { project: Project; state: Runt
   // Шлюз считает своим токенайзером — показываем запрос в ЕГО единицах: именно с
   // ними сравнивается бюджет и именно по ним шлюз решает, принять ли запрос.
   const shown = Math.round(data.total * data.factor);
+  // До свёртки: сколько ещё может вырасти живая история, пока не сработает свёртка
+  // по объёму (тот же расчёт, что в maybeCompress), — в единицах шлюза.
+  const allowance = liveHistoryAllowance(effectiveContextBudget(budget));
+  const live = liveHistoryTokens(project, state);
+  const left = Math.round((allowance - live) * data.factor);
+  const exchanges = Math.max(1, Math.floor(state.history.length / 2));
+  // Сразу после свёртки в истории один-два обмена — по ним средний ход не оценить.
+  // Нижняя граница — длина хода из пресета (~2,5 токена на русское слово).
+  const ps0 = getPresetSettings();
+  const perTurn = Math.max(live / exchanges, (ps0.turnLength?.min ?? 300) * 2.5);
+  const turnsLeft = perTurn > 0 ? Math.floor((allowance - live) / perTurn) : null;
   const gw = data.factor > 1.01;
   const over = shown > budget;
   const real = lastTurnUsage();
@@ -44,6 +57,19 @@ export function TokenCounter({ project, state }: { project: Project; state: Runt
       </button>
       {open && (
         <div className="nf-tok-breakdown absolute right-0 z-20 mt-1 w-72 max-w-[85vw] rounded-xl border border-white/10 bg-panel p-3 shadow-xl text-[11px] text-gray-300">
+          <div className="nf-fold-left mb-2.5 rounded-lg bg-white/[0.04] px-2.5 py-1.5">
+            {left > 0 ? (
+              <>
+                До свёртки памяти: <b className="text-gray-100">≈{left.toLocaleString('ru')}</b> ток.
+                {turnsLeft !== null && turnsLeft > 0 ? ` (примерно ${turnsLeft} ход.)` : ''}
+              </>
+            ) : (
+              <>Свёртка памяти — сразу после следующего ответа.</>
+            )}
+            <div className="text-gray-500">
+              После неё дословно останутся последние {Math.max(1, getPresetSettings().liveWindow) * 2} сообщ.
+            </div>
+          </div>
           <div className="font-semibold text-xs mb-2">Из чего состоит запрос</div>
           <div className="space-y-1.5">
             {data.parts.map((p) => (

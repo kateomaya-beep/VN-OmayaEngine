@@ -436,8 +436,9 @@ export async function maybeCompress(
   pass = 0
 ): Promise<RuntimeState> {
   const ps = getPresetSettings();
-  const K = Math.max(2, ps.liveWindow);
-  const everyN = Math.max(4, project.memoryConfig.summaryEveryN) * 2;
+  const K = Math.max(1, ps.liveWindow);
+  // 0 — свёртка по числу ходов выключена, остаётся только по объёму.
+  const everyN = project.memoryConfig.summaryEveryN > 0 ? Math.max(4, project.memoryConfig.summaryEveryN) * 2 : Infinity;
   const dueByCount = state.memory.messagesSinceSummary >= everyN;
 
   // ТРИГГЕР ПО ОБЪЁМУ — главный (фикс «глобальной шизофрении»).
@@ -755,9 +756,11 @@ export async function maybeCompress(
       }),
     };
     // Не дошли до цели за один заход (вход саммарайзера ограничен) — доворачиваем
-    // сразу, а не через несколько ходов.
-    const stillOver = liveHistoryTokens(project, next) > target;
-    if (stillOver && pass + 1 < MAX_FOLD_PASSES && next.history.length > keep + 4) {
+    // сразу, а не через несколько ходов. Цель — остаток «После свёртки оставлять»:
+    // свёртка началась, значит, сбрасываем до него, а не останавливаемся на полпути
+    // с парой лишних сообщений (они бы съедали место до следующей свёртки).
+    const stillOver = liveHistoryTokens(project, next) > target || next.history.length > keep;
+    if (stillOver && pass + 1 < MAX_FOLD_PASSES && next.history.length > keep) {
       logEvent(
         'info',
         'memory',

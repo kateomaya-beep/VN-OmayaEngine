@@ -1326,8 +1326,10 @@ export async function buildRequest(
   // выпадают из контекста, и игра ведёт себя так, будто событий не было. История уже
   // ограничена свёрткой (~summaryEveryN + liveWindow ходов), а ходы ассистента идут
   // сжатой прозой (лёгкие по токенам). Кап — на случай сбоя саммаризации.
-  const K = Math.max(2, ps.liveWindow);
-  const everyN = Math.max(4, project.memoryConfig.summaryEveryN);
+  const K = Math.max(1, ps.liveWindow);
+  // Свёртка по числу ходов выключена (0) — кап считаем от 100 ходов: историю и так
+  // держит свёртка по объёму, кап — только страховка от сломанного саммарайзера.
+  const everyN = project.memoryConfig.summaryEveryN > 0 ? Math.max(4, project.memoryConfig.summaryEveryN) : 100;
   const histCap = (everyN + K + 6) * 2; // сообщений (2 на ход)
   // Ходы ассистента едут в контекст сжатыми: в новелле — прозой, вынутой из JSON;
   // в РП проза и так лежит в истории, но со служебной сводкой <state> на хвосте —
