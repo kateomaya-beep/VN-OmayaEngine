@@ -3,8 +3,7 @@ import { Modal, AssetImage } from '../../../shared/ui';
 import { useLang } from '../../../shared/i18n';
 import { usePlayerStore } from '../playerStore';
 import { composeCgPrompt } from '../../../ai/imagePrompt';
-import { supportsReferences } from '../../../ai/imageProvider';
-import { renderImage } from '../../../ai/imageCast';
+import { renderImage, resolveCast, type RefReport } from '../../../ai/imageCast';
 import { resolvePerson, type Person } from '../../../ai/characterRegistry';
 import { useStylePresets } from '../../../ai/imageStyles';
 import { scenePeople, DEFAULT_ILLUSTRATE } from '../../../ai/illustrations';
@@ -31,6 +30,7 @@ interface Result {
   blobKey: string;
   blob: Blob;
   url: string;
+  refs?: RefReport;
 }
 
 function downloadBlob(blob: Blob, name: string) {
@@ -183,9 +183,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           .map((id) => resolvePerson(project, state, { id }))
           .filter((x): x is Person => !!x);
       } else if (cast) {
-        inFrame = cast
-          .map((name) => resolvePerson(project, state, { name }))
-          .filter((x): x is Person => !!x);
+        inFrame = resolveCast(project, state, cast);
       } else {
         inFrame = rp
           ? people
@@ -199,7 +197,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
 
       // Стиль, описания людей в кадре и их референсы — общей сборкой (та же,
       // что у селфи, фото от ботов и быстрых действий).
-      const { blob } = await renderImage(project, state, {
+      const { blob, refs } = await renderImage(project, state, {
         prompt: p,
         cast: uniq,
         withOutfit: true,
@@ -210,7 +208,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
       if (controller.signal.aborted) return;
       const blobKey = uid('blob');
       await putAsset(blobKey, blob);
-      setResult({ blobKey, blob, url: URL.createObjectURL(blob) });
+      setResult({ blobKey, blob, url: URL.createObjectURL(blob), refs });
       setStage('done');
     } catch (e) {
       if (controller.signal.aborted) return;
@@ -339,6 +337,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
         {result && (
           <div className="rounded-2xl overflow-hidden border border-[rgba(180,150,255,0.25)] bg-gradient-to-b from-[#241d33] to-[#0a0912] p-3 animate-[fadein_400ms]">
             <img src={result.url} alt="CG" className="w-full rounded-xl object-contain max-h-[52vh]" />
+            {result.refs && <RefReportLine L={L} r={result.refs} />}
             <div className="flex gap-2 justify-end mt-3 flex-wrap">
               <button className="btn-ghost text-sm" onClick={() => downloadBlob(result.blob, 'cg.png')}>
                 ⬇ {L('Скачать', 'Download')}
@@ -555,14 +554,15 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
             </label>
           </div>
           <p className="text-[11px] text-gray-500 mb-2">
-            {supportsReferences(ig)
-              ? L(
-                  'На каждого — два слота. ВНЕШНОСТЬ: лицо, волосы, телосложение. По умолчанию берётся нейтральный спрайт, но можно загрузить свою картинку — она заменит спрайт везде (CG, селфи, фото от ботов, аватарки в мессенджере). ОДЕЖДА: отдельная картинка наряда — уходит вторым изображением с пометкой «отсюда только одежда». В списке не только персонажи проекта: те, кого нашёл Game Master, и контакты телефона без карточки тоже здесь.',
-                  'Two slots each. APPEARANCE: face, hair, build. Defaults to the neutral sprite, but you can upload your own image — it replaces the sprite everywhere (CG, selfies, bot photos, messenger avatars). OUTFIT: a separate clothing image, sent as a second reference marked "clothes only". The list covers more than project characters: people found by the Game Master and phone contacts without a card are here too.'
-                )
-              : L(
-                  'Выбранный провайдер (images/generations) рефы не принимает — картинка рисуется только по тексту. Рефы работают на Google напрямую и на шлюзах через chat/completions.',
-                  'The selected provider (images/generations) takes no references — text only. References work with Google direct and with gateways via chat/completions.'
+            {L(
+              'На каждого — два слота. ВНЕШНОСТЬ: если задана только она — это дизайн персонажа целиком (лицо, причёска, костюм, цвета), модель повторяет его как есть. Если задана и ОДЕЖДА — с первой картинки берутся лицо и телосложение, со второй — наряд. По умолчанию внешность — нейтральный спрайт, но своя картинка заменит его везде (CG, селфи, фото от ботов, аватарки). В списке не только персонажи проекта: те, кого нашёл Game Master, и контакты телефона без карточки тоже здесь. Под готовой картинкой написано, какие рефы ушли.',
+              'Two slots each. APPEARANCE alone is the whole character design (face, hair, costume, colours) and is reproduced as is. With an OUTFIT image too, the first gives face and build, the second the clothes. Appearance defaults to the neutral sprite; a custom image replaces it everywhere. The list covers project characters, people found by the Game Master and phone contacts. Under a finished picture you can see which references were sent.'
+            )}
+            {ig.providerKind === 'openai' &&
+              ' ' +
+                L(
+                  'У этого провайдера рефы уходят через /images/edits (gpt-image-1 и совместимые). Не примет шлюз — нарисует по тексту, и под картинкой будет так и написано.',
+                  'With this provider references go through /images/edits (gpt-image-1 and compatible). If the gateway refuses, it draws from text and says so under the picture.'
                 )}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -760,6 +760,33 @@ function StyleControls({
         value={style}
         onChange={(e) => onStyle(e.target.value)}
       />
+    </div>
+  );
+}
+
+// Какие рефы реально ушли художнику. Без этой строки «модель не слушается рефа»
+// и «реф вообще не ушёл» выглядели одинаково.
+function RefReportLine({ r, L }: { r: RefReport; L: (ru: string, en: string) => string }) {
+  return (
+    <div className="nf-ref-report mt-2 text-[11px] space-y-0.5">
+      {r.sent.length > 0 && (
+        <div className="text-emerald-300/90">
+          {L('Рефы ушли: ', 'References sent: ')}
+          {r.sent.join('; ')}
+        </div>
+      )}
+      {r.note && <div className="text-amber-300/90">{L('Рефы не ушли: ', 'References not sent: ') + r.note}</div>}
+      {r.missing.length > 0 && (
+        <div className="text-amber-300/90">
+          {L(
+            `Без рефа (нет ни своей картинки, ни спрайта): ${r.missing.join(', ')} — загрузите реф ниже, в «Референсы».`,
+            `No reference (no custom image or sprite): ${r.missing.join(', ')} — upload one below under "References".`
+          )}
+        </div>
+      )}
+      {!r.sent.length && !r.note && !r.missing.length && (
+        <div className="text-gray-500">{L('В кадре никого из известных персонажей — рефы не нужны.', 'No known characters in frame — no references needed.')}</div>
+      )}
     </div>
   );
 }

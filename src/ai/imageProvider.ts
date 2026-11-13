@@ -7,7 +7,7 @@ import { logEvent } from '../shared/logStore';
 // Генерация изображений для CG-студии. Три бэкенда (выбор в CG-студии):
 //  • gemini      — родной Google generateContent («Nano Banana»): принимает РЕФЕРЕНСЫ
 //    (инлайн-картинки) → консистентные персонажи. Модель напр. gemini-2.5-flash-image.
-//  • openai      — OpenAI-совместимый /images/generations (текст→картинка, без рефов).
+//  • openai      — OpenAI-совместимый /images/generations; с рефами — /images/edits.
 //  • openai_chat — OpenAI-совместимый /chat/completions с картинкой В ОТВЕТЕ: так
 //    устроены роутеры-агрегаторы (OpenRouter и клоны), где ручки /images/generations
 //    нет вовсе, а рисует модель вида google/gemini-…-image. Рефы работают.
@@ -36,6 +36,8 @@ export interface ImageGenInput {
   aspectRatio?: ImageAspectRatio;
   size?: string; // явный WxH (побеждает расчёт по соотношению) — редко нужен
   signal?: AbortSignal;
+  /** Рефы были, но провайдер их не принял — для подписи в студии. */
+  onRefsDropped?: (why: string) => void;
 }
 
 // Кадр запроса: соотношение из вызова (воркер / фон / селфи) → из настроек
@@ -148,9 +150,10 @@ export async function generateImage(cfg: ImageGenConfig, input: ImageGenInput): 
   return generateOpenAI(cfg, input);
 }
 
-// Рефы поддерживают родной Gemini и чат-путь (картинка уходит частью сообщения).
+// Рефы поддерживают все три пути: родной Gemini и чат — частями сообщения, OpenAI —
+// через /images/edits (если шлюз её не знает, рисуем по тексту и пишем об этом).
 export function supportsReferences(cfg: ImageGenConfig): boolean {
-  return cfg.providerKind === 'gemini' || cfg.providerKind === 'openai_chat';
+  return cfg.providerKind === 'gemini' || cfg.providerKind === 'openai_chat' || cfg.providerKind === 'openai';
 }
 
 // Сборка финального текста для художника — одна на все вызовы (CG-студия, фоны,
@@ -170,19 +173,34 @@ export function composeFinalPrompt(
   if (cfg.negativePrompt?.trim()) parts.push(`Avoid: ${cfg.negativePrompt.trim()}`);
   const refs = opts?.refs || [];
   if (refs.length) {
-    const lines = refs.map((r, i) => {
-      const who = r.who || 'the character';
-      return r.kind === 'outfit'
-        ? `${i + 1}. ${who} — OUTFIT reference: reproduce this clothing on them (cut, colour, fabric, details, accessories). Take the clothes from here, nothing else.`
-        : `${i + 1}. ${who} — APPEARANCE reference: match their face, hair and body type.`;
-    });
+    const lines = refs.map((r, i) => `${i + 1}. ${refLabel(r, refs)}`);
     parts.push(
       `Attached reference images, in order:\n${lines.join('\n')}\n` +
-        'Use them for identity and clothing ONLY. Do NOT copy their pose, camera angle, framing or background — ' +
-        'build the pose described above, with natural anatomy and believable weight.'
+        'These are EXISTING, established character designs: the reference decides how the character looks, ' +
+        'over any description in the text. Do NOT redesign or reinterpret them. ' +
+        'Do NOT copy their pose, camera angle, framing or background — build the pose described above, ' +
+        'with natural anatomy and believable weight.'
     );
   }
   return parts.join('\n\n');
+}
+
+// Что брать с картинки. Реф внешности без отдельного рефа одежды — это весь
+// дизайн персонажа (персонаж из игры, арт автора): лицо, причёска, костюм,
+// палитра. Раньше он подписывался «бери только лицо и волосы», а одежду модель
+// придумывала сама — и каждый кадр выходил новым дизайном. С рефом одежды —
+// разделяем: здесь лицо и телосложение, одежда со второй картинки.
+export function refLabel(r: ImageRef, all: ImageRef[]): string {
+  const who = r.who || 'the character';
+  if (r.kind === 'outfit') {
+    return `${who} — OUTFIT reference: reproduce this clothing on them exactly (cut, colour, fabric, details, accessories). Take only the clothes from this image.`;
+  }
+  const hasOutfit = all.some((x) => x.kind === 'outfit' && x.who === r.who);
+  return hasOutfit
+    ? `${who} — APPEARANCE reference: match their face, hairstyle and hair colour, eye colour, body type and distinctive marks exactly.`
+    : `${who} — CHARACTER DESIGN reference: reproduce this character exactly as designed — face, hairstyle and hair colour, ` +
+        'eye colour, body type, outfit/costume, colour palette, distinctive marks and accessories. ' +
+        'Change the clothing only if the scene text explicitly says they wear something else.';
 }
 
 // ---- Gemini (Nano Banana) ----
@@ -191,10 +209,16 @@ async function generateGemini(cfg: ImageGenConfig, input: ImageGenInput): Promis
   const base = effectiveImageBase(cfg);
   const model = effectiveImageModel(cfg);
 
-  const parts: any[] = [{ text: input.prompt }];
-  for (const r of input.references || []) {
+  // Рефы — ПЕРЕД текстом, у каждой картинки своя подпись: так модель надёжнее
+  // связывает картинку с человеком и следует ей, чем когда пачка картинок идёт
+  // после длинного промпта без пометок.
+  const refs = input.references || [];
+  const parts: any[] = [];
+  refs.forEach((r, i) => {
+    parts.push({ text: `Reference image ${i + 1}: ${refLabel(r, refs)}` });
     parts.push({ inline_data: { mime_type: r.mime, data: r.b64 } });
-  }
+  });
+  parts.push({ text: input.prompt });
 
   // Кадр — родными параметрами Nano Banana: imageConfig.aspectRatio + imageSize
   // (2K/4K умеет только Pro-модель, поэтому на отказ повторяем без размера).
@@ -252,12 +276,14 @@ async function generateOpenAiChat(cfg: ImageGenConfig, input: ImageGenInput): Pr
   // Единого поля кадра у роутеров нет: просим соотношение и текстом (модель его
   // понимает), и полем image_config — а если шлюз поля не знает, повторяем без него.
   const { ratio, tier } = frame(cfg, input);
-  const parts: any[] = [
-    { type: 'text', text: `${input.prompt}\n\nOutput image aspect ratio: ${ratio} (${tier} resolution).` },
-  ];
-  for (const r of input.references || []) {
+  // Рефы — перед текстом, каждая с подписью (см. generateGemini).
+  const refs = input.references || [];
+  const parts: any[] = [];
+  refs.forEach((r, i) => {
+    parts.push({ type: 'text', text: `Reference image ${i + 1}: ${refLabel(r, refs)}` });
     parts.push({ type: 'image_url', image_url: { url: `data:${r.mime};base64,${r.b64}` } });
-  }
+  });
+  parts.push({ type: 'text', text: `${input.prompt}\n\nOutput image aspect ratio: ${ratio} (${tier} resolution).` });
   const url = `${base}/chat/completions`;
   const body: Record<string, unknown> = {
     model,
@@ -327,10 +353,74 @@ function extractChatImage(msg: any): Blob | null {
 }
 
 // ---- OpenAI-совместимый /images/generations ----
+// Рефы на OpenAI-пути — через /images/edits: ручка принимает картинки-образцы
+// (gpt-image-1 и совместимые) вместе с промптом. /images/generations их не
+// принимает вовсе, и раньше рефы здесь молча терялись. Шлюз ручку не знает
+// (404/405) или модель не умеет правку — рисуем по тексту и честно пишем в журнал.
+class EditsUnsupported extends Error {}
+
+async function generateOpenAIEdit(cfg: ImageGenConfig, input: ImageGenInput): Promise<Blob> {
+  const key = getApiKey('image');
+  const base = effectiveImageBase(cfg);
+  const model = effectiveImageModel(cfg);
+  const refs = input.references || [];
+  const url = `${base}/images/edits`;
+  const form = new FormData();
+  form.append('model', model);
+  const labels = refs.map((r, i) => `Reference image ${i + 1}: ${refLabel(r, refs)}`).join('\n');
+  form.append('prompt', `${labels}\n\n${input.prompt}`);
+  form.append('n', '1');
+  form.append('size', input.size || pixelSize(frame(cfg, input).ratio, frame(cfg, input).tier));
+  refs.forEach((r, i) => {
+    const ext = /jpe?g/i.test(r.mime) ? 'jpg' : /webp/i.test(r.mime) ? 'webp' : 'png';
+    form.append('image[]', b64ToBlob(r.b64, r.mime), `ref${i + 1}.${ext}`);
+  });
+  const res = await withTransientRetry(
+    () =>
+      netFetch(url, {
+        method: 'POST',
+        signal: input.signal,
+        headers: key ? { Authorization: `Bearer ${key}` } : {},
+        body: form,
+      }),
+    input.signal
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    if ([404, 405, 415, 501].includes(res.status) || (res.status === 400 && /image|edit|unsupported|not support|unknown/i.test(text))) {
+      throw new EditsUnsupported(`${res.status} ${cleanErr(text)}`);
+    }
+    throw imageHttpError(res.status, url, text, cfg);
+  }
+  const data = await res.json();
+  const item = data?.data?.[0];
+  if (item?.b64_json) return b64ToBlob(item.b64_json);
+  if (item?.url) {
+    const img = await netFetch(item.url, {});
+    if (!img.ok) throw new Error('Не удалось загрузить сгенерированное изображение по URL');
+    return img.blob();
+  }
+  throw new Error('Пустой ответ image-провайдера');
+}
+
 async function generateOpenAI(cfg: ImageGenConfig, input: ImageGenInput): Promise<Blob> {
   const key = getApiKey('image');
   const base = effectiveImageBase(cfg);
   const model = effectiveImageModel(cfg);
+  if (input.references?.length) {
+    try {
+      return await generateOpenAIEdit(cfg, input);
+    } catch (e) {
+      if (!(e instanceof EditsUnsupported)) throw e;
+      input.onRefsDropped?.(`шлюз не принял картинки-образцы (/images/edits: ${e.message})`);
+      logEvent(
+        'warn',
+        'image',
+        `Рефы не ушли: шлюз не принял /images/edits (${e.message}). Рисую только по тексту. ` +
+          'Рефы точно работают на Google напрямую и на шлюзах через «OpenAI-совместимый чат».'
+      );
+    }
+  }
 
   const url = `${base}/images/generations`;
   const res = await netFetch(url, {

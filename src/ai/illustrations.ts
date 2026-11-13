@@ -2,7 +2,7 @@ import type { LlmMessage, Project, RuntimeState } from '../shared/types';
 import { normalizeNarrativeMode } from '../shared/types';
 import { composeCgPrompt } from './imagePrompt';
 import { imageGenFor } from './imageConnection';
-import { renderImage } from './imageCast';
+import { renderImage, resolveCast } from './imageCast';
 import { resolvePerson, type Person } from './characterRegistry';
 import { ILLUSTRATION_RE, stripStateBlock } from './rpResponse';
 
@@ -140,7 +140,7 @@ export async function drawIllustration(
     });
     prompt = res.prompt;
     if (!aspect) aspect = res.aspectRatio;
-    if (res.cast) cast = res.cast.map((name) => resolvePerson(project, state, { name })).filter((x): x is Person => !!x);
+    if (res.cast) cast = resolveCast(project, state, res.cast);
   }
   if (opts.signal?.aborted) throw new Error('Отменено');
   const { blob } = await renderImage(project, state, {

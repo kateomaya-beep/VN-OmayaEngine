@@ -65,6 +65,34 @@ export interface RenderedImage {
   /** Кто в итоге поехал в кадр — для лога и UI. */
   cast: Person[];
   finalPrompt: string;
+  /** Какие рефы реально ушли художнику — чтобы было видно, а не гадать. */
+  refs: RefReport;
+}
+
+export interface RefReport {
+  /** «Старк — дизайн», «Кейт — одежда». */
+  sent: string[];
+  /** Кто в кадре, но рефа у него нет (ни своей картинки, ни спрайта). */
+  missing: string[];
+  /** Почему рефы не ушли вовсе (выключены, провайдер не принял). */
+  note?: string;
+}
+
+/**
+ * Имена из строки CAST воркера → люди. Воркер пишет имя как ему удобно («Тони
+ * Старк» при карточке «Старк», «Старка»), и при точном сравнении человек
+ * становился «безбумажным» — без записей, а значит, и без рефа: картинка шла по
+ * тексту, и дизайн каждый раз выходил новым. Неузнанное имя ищем по словам
+ * среди известных людей.
+ */
+export function resolveCast(project: Project, state: RuntimeState, names: string[]): Person[] {
+  const out: Person[] = [];
+  for (const name of names) {
+    let p = resolvePerson(project, state, { name });
+    if (p && !p.ids.length) p = personsInText(project, state, name)[0] || p;
+    if (p && !out.some((x) => x.id === p!.id)) out.push(p);
+  }
+  return out;
 }
 
 /**
@@ -103,13 +131,21 @@ export async function renderImage(
 
   const maxRefs = opts.maxRefs ?? 4;
   const refs: ImageRef[] = [];
+  const report: RefReport = { sent: [], missing: [] };
+  if (!supportsReferences(ig)) report.note = 'этот провайдер картинок рефы не принимает';
+  else if (!ig.sendReferences) report.note = 'отправка рефов выключена (галочка «Отправлять рефы»)';
   for (const p of people) {
     if (refs.length >= maxRefs) break;
     const got = await personRefs(project, p, { withOutfit: !!opts.withOutfit });
+    if (!got.length && !report.note) report.missing.push(p.name);
     for (const r of got) {
       if (refs.length >= maxRefs) break;
       refs.push(r);
     }
+  }
+  for (const r of refs) {
+    const solo = r.kind === 'outfit' ? 'одежда' : refs.some((x) => x.kind === 'outfit' && x.who === r.who) ? 'внешность' : 'дизайн целиком';
+    report.sent.push(`${r.who || '?'} — ${solo}`);
   }
 
   const finalPrompt = composeFinalPrompt(ig, `${opts.prompt.trim()}${whoBlock}`, { refs });
@@ -118,6 +154,10 @@ export async function renderImage(
     references: refs,
     aspectRatio: opts.aspectRatio,
     signal: opts.signal,
+    onRefsDropped: (why) => {
+      report.note = why;
+      report.sent = [];
+    },
   });
-  return { blob, cast: people, finalPrompt };
+  return { blob, cast: people, finalPrompt, refs: report };
 }
