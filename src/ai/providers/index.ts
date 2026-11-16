@@ -26,6 +26,9 @@ export interface CompletionRequest {
   // Потолок токенов ответа. Без него многие шлюзы режут ответ по своему низкому
   // дефолту (512/1024) — отсюда «всегда короткий ход». Считаем от длины хода.
   maxTokens?: number;
+  // Ход рассказчика: если ответ обрежется по потолку, сказать игроку прямо (тостом),
+  // а не только в журнале. У служебных запросов (саммари, сводка) свои сообщения.
+  reportCut?: boolean;
   // Глубина размышления reasoning-моделей → reasoning_effort. Меньше = быстрее.
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'max';
   // Ядерная выборка и штрафы за повтор (−2…2). Уходят, только если заданы:
@@ -969,6 +972,9 @@ const openAiCompatible: Provider = {
       const rTok = Number(data?.usage?.completion_tokens_details?.reasoning_tokens ?? 0);
       settleThinkOff(target, model, !!r.trim() || rTok > 0 || /<think>/i.test(content));
     }
+    if (content.trim() && (choice?.finish_reason === 'length' || choice?.finish_reason === 'max_tokens')) {
+      noteCut(req, `finish_reason: ${choice.finish_reason}`);
+    }
     // Пустая строка при finish_reason=length — модель израсходовала бюджет на скрытое
     // «размышление» и до видимого текста не дошла. Логируем причину: иначе наверху
     // виден лишь пустой ответ (в мессенджере это выглядело как «три точки»).
@@ -1164,15 +1170,8 @@ const openAiCompatible: Provider = {
     // Диагностика для «модель обрывает ответ»: finish_reason из последнего кадра
     // прямо называет причину, а не оставляет гадать. length/max_tokens — упёрлись
     // в потолок ответа (лечится длиной хода в пресете), остальное — как есть.
-    if (finishReason && finishReason !== 'stop') {
-      logEvent(
-        'warn',
-        'llm',
-        finishReason === 'length' || finishReason === 'max_tokens'
-          ? `Ответ обрезан по лимиту токенов (finish_reason: ${finishReason}) — уменьшите длину хода в пресете или возьмите модель с бо́льшим max_tokens.`
-          : `Поток завершился с finish_reason: ${finishReason}`
-      );
-    }
+    if (finishReason === 'length' || finishReason === 'max_tokens') noteCut(req, `finish_reason: ${finishReason}`);
+    else if (finishReason && finishReason !== 'stop') logEvent('warn', 'llm', `Поток завершился с finish_reason: ${finishReason}`);
     return prefill ? prefill + out : out;
   },
   async listModels(conn, apiKey) {
@@ -1236,6 +1235,7 @@ const anthropic: Provider = {
     const data = await res.json();
     const content = data?.content?.[0]?.text;
     if (typeof content !== 'string') throw new Error('Пустой ответ провайдера');
+    if (data?.stop_reason === 'max_tokens') noteCut(req, 'stop_reason: max_tokens');
     const usage = parseUsage(model, data?.usage, promptCharsOf(messages, req.system));
     if (usage) recordUsage(usage);
     return pf ? pf + content : content;
@@ -1323,14 +1323,9 @@ anthropic.completeStream = async function completeStream(conn, apiKey, req, onDe
     logEvent('warn', 'llm', 'Поток оборвался на середине — отдаю то, что успело прийти: ' + (e as Error).message);
   }
   if (!started) throw new StreamNotStarted('Поток закрылся, не прислав ни одного куска текста');
-  if (stopReason && stopReason !== 'end_turn' && stopReason !== 'stop_sequence') {
-    logEvent(
-      'warn',
-      'llm',
-      stopReason === 'max_tokens'
-        ? `Ответ обрезан по лимиту токенов (stop_reason: max_tokens) — уменьшите длину хода в пресете или возьмите модель с бо́льшим max_tokens.`
-        : `Поток завершился с stop_reason: ${stopReason}`
-    );
+  if (stopReason === 'max_tokens') noteCut(req, 'stop_reason: max_tokens');
+  else if (stopReason && stopReason !== 'end_turn' && stopReason !== 'stop_sequence') {
+    logEvent('warn', 'llm', `Поток завершился с stop_reason: ${stopReason}`);
   }
   return pf ? pf + out : out;
 };
@@ -1373,6 +1368,22 @@ function parseModelList(data: any): string[] {
     );
   }
   return Array.from(new Set(ids)).sort();
+}
+
+// Ответ упёрся в потолок max_tokens. Пишем в журнал всегда, а ходу рассказчика —
+// ещё и тост: обрыв на полуслове иначе выглядит как «модель сломалась», хотя
+// лечится одной настройкой.
+function noteCut(req: CompletionRequest, why: string): void {
+  const cap = req.maxTokens ? ` (${req.maxTokens.toLocaleString('ru')} ток.)` : '';
+  logEvent(
+    'warn',
+    'llm',
+    `Ответ обрезан: модель упёрлась в потолок ответа${cap}, ${why}. В этот потолок входят и её размышление, и план, и сводка. ` +
+      'Поднимите «Потолок ответа» в пресете (🎚 → Параметры генерации) или сократите длину хода.'
+  );
+  if (req.reportCut) {
+    pushToast('error', `Ответ обрезан по потолку ответа${cap}. Поднимите «Потолок ответа» в пресете (🎚 → Параметры генерации).`);
+  }
 }
 
 export function getProvider(name: ApiConnection['provider']): Provider {

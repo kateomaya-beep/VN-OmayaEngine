@@ -24,6 +24,7 @@ import { normName, resolvePerson, type Person } from './characterRegistry';
 import { estimateTokens } from '../shared/utils';
 import { activeTokenizer, prefetchTokens } from './tokenCount';
 import { effectiveContextBudget, gatewayFix } from './gatewayLimit';
+import { turnMaxTokens } from './turnLimits';
 
 // Служебные токены роли вокруг каждого сообщения (Gemini, OpenAI — около 4).
 const MSG_OVERHEAD = 4;
@@ -1369,7 +1370,7 @@ export async function buildRequest(
   // запрос не уложится. Что срезано — уже в саммари (журнал эпизодов + снапшот).
   // Бюджет — в единицах нашего счёта, но так, чтобы и по счёту ШЛЮЗА запрос не
   // вышел за бюджет из пресета и за лимит самого шлюза (см. gatewayLimit).
-  const budget = effectiveContextBudget(ps.contextBudget || 8000);
+  const budget = effectiveContextBudget(ps.contextBudget || 8000, undefined, turnMaxTokens(getPresetSettings(), mode).value);
   // ХВОСТ ПОСЛЕ ИСТОРИИ — сколько он займёт. Раньше здесь стояли круглые 400
   // токенов «на всё», а в хвост едут заметки автора, записка OOC, стоп-слова, план
   // размышления, вставки на глубине (у Dr. D там вся цепочка рассуждений) — легко

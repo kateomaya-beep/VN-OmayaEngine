@@ -78,10 +78,12 @@ export function resetGatewayFix(key = gatewayKey()): void {
  * Бюджет в НАШИХ единицах счёта, при котором запрос уложится и в бюджет из
  * пресета по счёту шлюза, и в лимит самого шлюза (вместе с ответом).
  */
-export function effectiveContextBudget(nominal: number, key = gatewayKey()): number {
+export function effectiveContextBudget(nominal: number, key = gatewayKey(), output?: number): number {
   const fix = gatewayFix(key);
   let b = Math.max(2000, nominal || 8000);
-  if (fix.max) b = Math.min(b, fix.max - (fix.output ?? 4096) - 256);
+  // Шлюз считает в свой лимит и потолок ответа — берём больший из запомненного
+  // по его отказу и нынешнего (потолок мог вырасти с тех пор).
+  if (fix.max) b = Math.min(b, fix.max - Math.max(fix.output ?? 4096, output ?? 0) - 256);
   return Math.max(2000, Math.floor(b / fix.factor));
 }
 

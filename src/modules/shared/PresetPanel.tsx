@@ -33,6 +33,7 @@ import { downloadBlob } from '../../storage/zip';
 import type { AdvancedPromptBlock, LlmRole } from '../../shared/types';
 import { DEFAULT_TURN_LENGTH, TURN_LENGTH_BOUNDS, TURN_LENGTH_PRESETS, DEFAULT_BAN_WORDS, normalizeNarrativeMode, type NarrativeMode } from '../../shared/types';
 import { ExactTokensNote, TokenBadge } from '../../shared/TokenBadge';
+import { turnMaxTokens } from '../../ai/turnLimits';
 
 // Редактор пресета промпта (Batch 3 §8) — вынесен в отдельное окно верхней панели,
 // отделён от настроек API. Каждый блок: порядок (drag&drop), роль system/user/assistant
@@ -728,6 +729,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
         )}
         <div className="grid sm:grid-cols-2 gap-3">
           <TurnLengthField cfg={cfg} patch={patch} />
+          <MaxOutputField cfg={cfg} patch={patch} mode={mode} />
           {/* Выборов в текстовом РП нет вовсе — настраивать их частоту незачем. */}
           {!isRp && <ChoiceFrequencyField cfg={cfg} patch={patch} />}
           <div className="sm:col-span-2">
@@ -1172,6 +1174,66 @@ function ChoiceFrequencyField({
       <p className="text-xs text-gray-500 mt-1">
         0 — каждый ход заканчивается выборами (если ИИ их не прислал, движок подставит
         нейтральные). N — не чаще одного раза в N ходов (лишние выборы движок убирает сам).
+      </p>
+    </div>
+  );
+}
+
+// ПОТОЛОК ОТВЕТА (max_tokens): авто — по длине хода с запасом на размышление,
+// или своё число. Видно, сколько уходит сейчас и откуда это число.
+function MaxOutputField({
+  cfg,
+  patch,
+  mode,
+}: {
+  cfg: PresetSettings;
+  patch: (p: Partial<PresetSettings>) => void;
+  mode: NarrativeMode;
+}) {
+  const m = turnMaxTokens(cfg, mode);
+  const manual = !!cfg.maxOutputTokens;
+  return (
+    <div className="nf-max-output">
+      <label className="label">
+        Потолок ответа (max_tokens): {m.value.toLocaleString('ru')} ток.{' '}
+        {m.source === 'auto' ? '— авто' : m.source === 'manual' ? '— свой' : `— задан пресетом «${m.altName}»`}
+      </label>
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          className={`chip !px-3 !py-1.5 text-xs ${!manual ? 'bg-accent2 text-white' : ''}`}
+          onClick={() => patch({ maxOutputTokens: undefined })}
+        >
+          Авто ({m.auto.toLocaleString('ru')})
+        </button>
+        {[4000, 8000, 12000, 16000].map((n) => (
+          <button
+            key={n}
+            className={`chip !px-3 !py-1.5 text-xs ${cfg.maxOutputTokens === n ? 'bg-accent2 text-white' : ''}`}
+            onClick={() => patch({ maxOutputTokens: n })}
+          >
+            {n / 1000}k
+          </button>
+        ))}
+        <input
+          type="number"
+          min={256}
+          step={500}
+          className="input !py-1 w-28"
+          placeholder="своё"
+          value={cfg.maxOutputTokens ?? ''}
+          onChange={(e) => {
+            const n = Math.round(Number(e.target.value));
+            patch({ maxOutputTokens: Number.isFinite(n) && n >= 256 ? n : undefined });
+          }}
+        />
+      </div>
+      <p className="text-xs text-gray-500 mt-1">
+        Сколько токенов модели можно потратить на ответ. В этот потолок входит не только текст хода, но и её
+        размышление (у Gemini 3, GLM, Kimi его не выключить совсем), план размышления и служебная сводка. Авто
+        считает: длина хода + сводка{cfg.guidedThinking ? ' + план размышления' : ''} + запас на родное размышление,
+        если оно включено. Обрывается ответ на полуслове — поднимите потолок. Платите вы за реально написанные
+        токены, а не за потолок.
+        {m.source === 'alt' && ' Пока выбран альтернативный пресет, действует его собственный потолок.'}
       </p>
     </div>
   );

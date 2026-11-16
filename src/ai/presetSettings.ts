@@ -146,6 +146,8 @@ export interface PresetSettings {
   turnLength: { min: number; max: number };
   choiceMinGap: number; // 0 = без ограничения
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'max';
+  /** Потолок ответа (max_tokens). 0 / нет — авто: по длине хода с запасом на размышление. */
+  maxOutputTokens?: number;
   guidedThinking: boolean;
   thinkingPlan?: string;
   // Стоп-слова: обороты, которые модель не должна писать. undefined = список по
@@ -294,6 +296,7 @@ function load(): PresetSettings {
         ? v.reasoningEffort
         : d.reasoningEffort,
       guidedThinking: !!v.guidedThinking,
+      maxOutputTokens: typeof v.maxOutputTokens === 'number' && v.maxOutputTokens >= 256 ? Math.round(v.maxOutputTokens) : undefined,
       // План размышления: если лежит РОВНО прежний дефолт — автор его не писал, он
       // просто сохранился при открытии панели; обновляем на новый чек-лист. Всё,
       // что отличается хоть символом, считаем авторским и не трогаем.

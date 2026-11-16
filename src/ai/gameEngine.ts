@@ -1,5 +1,5 @@
 import type { Project, RuntimeState, AiTurn, CanonicalFact, AudioMood, MemoryBookEntry, PhoneState, InventoryItem, RandomEventType } from '../shared/types';
-import { RELATIONSHIP_META, DEFAULT_TURN_LENGTH, PHONE_BALANCE_STAT, initialPhoneState, RANDOM_EVENT_LABELS, normalizeNarrativeMode } from '../shared/types';
+import { RELATIONSHIP_META, PHONE_BALANCE_STAT, initialPhoneState, RANDOM_EVENT_LABELS, normalizeNarrativeMode } from '../shared/types';
 import { pushToast } from '../shared/toast';
 import { logEvent } from '../shared/logStore';
 import { resolveEmoji } from '../shared/emojiDict';
@@ -9,7 +9,7 @@ import { findItemForAdd, findItemForRemove } from './inventory';
 import { buildRequest, condenseAssistantTurn } from './promptBuilder';
 import { runCompletion, modelTakesPrefill } from './providers';
 import { markMainUsage, takeLastUsage } from './tokenCalibration';
-import { activeAltPreset, getPresetSettings, presetForMode, settingsForMode, type PresetSettings } from './presetSettings';
+import { getPresetSettings, presetForMode, settingsForMode, type PresetSettings } from './presetSettings';
 import { parseAiResponse, applyStatChanges, applyRelationshipChanges, extractThinking } from './responseParser';
 import { mergeWorldState, recordChatEvent } from './gameMaster';
 import { selectAssets } from './assetSelector';
@@ -22,6 +22,7 @@ import { presentPersonIds } from './presence';
 import { generateIncomingSms, alreadyInChat } from './phoneChat';
 import { uid } from '../shared/utils';
 import { ContextOverflowError, learnUsage } from './gatewayLimit';
+import { turnMaxTokens } from './turnLimits';
 
 export interface TurnResult {
   turn: AiTurn;
@@ -807,23 +808,10 @@ async function runTurnOnce(
     logEvent('warn', 'turn', `Подготовка хода заняла ${buildSec.toFixed(1)} с — запрос к модели ушёл только после этого`);
   }
 
-  // Потолок токенов — под верхнюю границу длины хода (слова→токены ≈ ×2.2 для
-  // кириллицы) + запас на JSON-обвязку/worldState. Держим НЕ слишком большим,
-  // иначе модель выбирает весь бюджет и уходит в «полотно» (медленно). Но и не
-  // ниже дефолта шлюза, который иначе режет ход.
   // С альтернативным пресетом РП — его температура, top_p и штрафы.
   const ps = settingsForMode(getPresetSettings(), req.mode);
-  const tl = ps.turnLength || DEFAULT_TURN_LENGTH;
-  // Потолок ответа. 2.2 токена на слово хватало для английского, но кириллица у
-  // всех популярных токенайзеров стоит ~3 токена на слово, а JSON добавляет ключи,
-  // id и служебные биты на КАЖДЫЙ бит. При ходе в 900 слов ответ упирался в лимит,
-  // обрывался посреди JSON — и до пользователя это доходило как «ошибка ИИ»
-  // (с обязательными выборами заметнее: choices идут последними и срезались всегда).
-  const perWord = ps.narrativeLanguage === 'en' ? 1.8 : 3;
-  // У альтернативного пресета свой потолок: размышление в <think>, HUD и виджеты
-  // сверх самой прозы в расчёт по длине хода не влезают.
-  const altMax = activeAltPreset(getPresetSettings(), req.mode)?.sampling.maxTokens;
-  const maxTokens = altMax ?? Math.min(8000, Math.max(1500, Math.round(tl.max * perWord) + 900));
+  // Потолок ответа — с запасом на размышление и сводку (см. turnMaxTokens).
+  const maxTokens = turnMaxTokens(getPresetSettings(), req.mode).value;
   // При управляемом размышлении родную «думалку» глушим (none) — иначе она сложится
   // с нашим планом и станет только медленнее.
   //
@@ -891,6 +879,7 @@ async function runTurnOnce(
         prefill: req.prefill,
         temperature: extra ? Math.min(ps.temperature, 0.7) : ps.temperature,
         maxTokens,
+        reportCut: true,
         reasoningEffort,
         topP: ps.topP,
         frequencyPenalty: ps.frequencyPenalty,
@@ -1015,6 +1004,7 @@ async function runTurnOnce(
     prefill: req.prefill,
     temperature: ps.temperature,
     maxTokens,
+    reportCut: true,
     reasoningEffort,
     topP: ps.topP,
     frequencyPenalty: ps.frequencyPenalty,
@@ -1038,7 +1028,7 @@ async function runTurnOnce(
       'warn',
       'llm',
       tail && tail !== '}'
-        ? `Ответ не разобран и обрывается на «${tail}» — похоже, упёрся в лимит ответа (${maxTokens} ток.). Уменьшите длину хода в пресете.`
+        ? `Ответ не разобран и обрывается на «${tail}» — похоже, упёрся в лимит ответа (${maxTokens} ток.). Поднимите «Потолок ответа» в пресете или уменьшите длину хода.`
         : 'Ответ не разобран — повторяю запрос с пониженной температурой'
     );
     raw = await runCompletion({
@@ -1047,6 +1037,7 @@ async function runTurnOnce(
       prefill: req.prefill,
       temperature: Math.min(ps.temperature, 0.5),
       maxTokens,
+      reportCut: true,
       reasoningEffort,
       names,
       signal,
