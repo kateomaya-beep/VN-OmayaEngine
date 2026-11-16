@@ -7,7 +7,10 @@ import {
   type PromptPreset,
   type PromptBlock,
 } from '../../ai/promptPreset';
-import { usePresetSettings, MODEL_PROFILES, activeAltPreset, type PresetSettings, type ModelProfile } from '../../ai/presetSettings';
+import { usePresetSettings, MODEL_PROFILES, activeAltPreset, presetSlotFor, writePresetSlot, type PresetSettings, type ModelProfile } from '../../ai/presetSettings';
+import { copyPreset, presetTargets, sameBlockIn, transferBlock, type PresetTarget } from '../../ai/presetTransfer';
+import type { CopyBase } from '../../ai/altPresets';
+import { pushToast } from '../../shared/toast';
 import { importSillyTavernPreset, isSillyTavernPreset, loadDrD } from '../../ai/stPresetImport';
 import type { AltRpPreset } from '../../ai/altPresets';
 import { engineBlockContent } from '../../ai/engineBlocks';
@@ -42,6 +45,8 @@ const ROLES: { id: LlmRole; label: string }[] = [
 
 export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [dragId, setDragId] = useState<string | null>(null);
+  // Блок, для которого открыт выбор «в какой пресет перенести».
+  const [shareFor, setShareFor] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // ГЛОБАЛЬНЫЙ пресет — один на все истории, доступен везде и всегда.
   const cfg = usePresetSettings((s) => s.settings);
@@ -87,12 +92,49 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
       ...preset,
       blocks: [...preset.blocks, { id: uid('blk'), name: 'Новый блок', enabled: true, content: '', role: 'system' }],
     });
+  // Откуда этот пресет: копия помнит оригинал, от него и «↺», и «По умолчанию».
+  const base: CopyBase = alt ? alt.copyOf ?? alt.source : isLocal ? 'local' : isDs ? 'deepseek' : isRp ? 'rp' : 'vn';
+  const baseBlockContent = (key: string): string | null =>
+    base === 'rp'
+      ? defaultRpBlockContent(key)
+      : base === 'local'
+        ? defaultLocalBlockContent(key)
+        : base === 'deepseek'
+          ? defaultDeepseekBlockContent(key)
+          : base === 'vn'
+            ? defaultBlockContent(key)
+            : base === 'omaya'
+              ? openWorldBlockContent(key)
+              : engineBlockContent(isRp ? 'rp' : 'vn', key);
+  const currentSlot = presetSlotFor(cfg, mode);
+  const targets = presetTargets(cfg, mode, currentSlot);
+  const shareBlock = (b: PromptBlock, t: PresetTarget) => {
+    const twin = sameBlockIn(t.preset, b);
+    const replace = twin
+      ? confirm(
+          `В «${t.label}» уже есть блок «${twin.name}».\n\nОК — заменить его этим (на его же месте).\nОтмена — добавить этот рядом копией.`
+        )
+      : false;
+    const res = transferBlock(preset, b.id, t.preset, replace);
+    writePresetSlot(t.slot, res.preset);
+    setShareFor(null);
+    pushToast(
+      'success',
+      res.how === 'replaced'
+        ? `Блок «${b.name}» заменён в «${t.label}»`
+        : `Блок «${b.name}» перенесён в «${t.label}»${res.how === 'copied' ? ' копией' : ''}`
+    );
+  };
+  const copyCurrent = () => {
+    const name = prompt('Название нового пресета', `${alt?.name ?? preset.name} (копия)`);
+    if (!name?.trim()) return;
+    addAlt(copyPreset({ alt, preset, base, mode }, name.trim()));
+    pushToast('success', `Готово: «${name.trim()}» — копия, она уже выбрана. Оригинал не тронут.`);
+  };
   const resetBlock = (b: PromptBlock) => {
     if (!b.builtinKey) return;
     const content = alt
-      ? alt.source === 'omaya'
-        ? openWorldBlockContent(b.builtinKey)
-        : engineBlockContent(isRp ? 'rp' : 'vn', b.builtinKey)
+      ? baseBlockContent(b.builtinKey)
       : isLocal
       ? defaultLocalBlockContent(b.builtinKey)
       : isDs
@@ -103,10 +145,21 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
     if (content !== null) patchBlock(b.id, { content, enabled: true });
   };
   const resetPreset = async () => {
+    if (alt?.copyOf && alt.copyOf !== 'drd' && alt.copyOf !== 'omaya') {
+      if (alt.copyOf === 'sillytavern') {
+        alert('Копия импортированного пресета к исходному не возвращается — сделайте копию оригинала заново.');
+        return;
+      }
+      if (!confirm(`Вернуть «${alt.name}» к стандартному пресету OmayaEngine? Правки блоков будут потеряны.`)) return;
+      const fresh =
+        alt.copyOf === 'local' ? defaultLocalPreset() : alt.copyOf === 'deepseek' ? defaultDeepseekPreset() : alt.copyOf === 'vn' ? defaultPreset() : defaultRpPreset();
+      saveAlt({ ...alt, preset: { ...fresh, id: alt.preset.id, name: alt.name } });
+      return;
+    }
     if (alt) {
       if (alt.source === 'omaya') {
         if (!confirm(`Вернуть «${alt.name}» к исходному? Правки блоков будут потеряны.`)) return;
-        saveAlt({ ...alt, preset: { ...defaultOpenWorldPreset(), id: alt.preset.id } });
+        saveAlt({ ...alt, preset: { ...defaultOpenWorldPreset(), id: alt.preset.id, ...(alt.copyOf ? { name: alt.preset.name } : {}) } });
         return;
       }
       if (alt.source !== 'drd') {
@@ -115,7 +168,7 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
       }
       if (!confirm(`Вернуть «${alt.name}» к исходному? Правки блоков и регулярок будут потеряны.`)) return;
       const fresh = await loadDrD(cfg.narrativeLanguage, isRp ? 'rp' : 'vn');
-      saveAlt({ ...fresh, id: alt.id });
+      saveAlt({ ...fresh, id: alt.id, ...(alt.copyOf ? { copyOf: alt.copyOf, name: alt.name, preset: { ...fresh.preset, name: alt.name } } : {}) });
       return;
     }
     if (confirm('Вернуть весь пресет к OmayaEngine по умолчанию? Правки блоков будут потеряны.'))
@@ -288,6 +341,13 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
           <button className="btn-ghost !px-3 !py-1 text-xs" onClick={addBlock}>
             + Блок
           </button>
+          <button
+            className="btn-ghost !px-3 !py-1 text-xs nf-copy-preset"
+            onClick={copyCurrent}
+            title="Новый пресет на основе этого — со всеми блоками, их порядком и ролями. Оригинал не меняется."
+          >
+            ⧉ Копия
+          </button>
           <button className="btn-ghost !px-3 !py-1 text-xs" onClick={exportPreset}>
             Экспорт
           </button>
@@ -389,6 +449,16 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
                 onChange={(e) => patchBlock(b.id, { name: e.target.value })}
               />
               {!b.dynamic && <TokenBadge className={b.enabled ? '' : 'line-through opacity-60'} text={b.content} />}
+              {!b.dynamic && targets.length > 0 && (
+                <button
+                  className={`btn-ghost !px-2 !py-1 text-xs nf-share-block ${shareFor === b.id ? 'bg-accent2 text-white' : ''}`}
+                  title="Перенести этот блок в другой пресет — на то же место относительно постоянных блоков, с ролью и настройками"
+                  aria-label={`Перенести «${b.name}» в другой пресет`}
+                  onClick={() => setShareFor(shareFor === b.id ? null : b.id)}
+                >
+                  ⇪
+                </button>
+              )}
               {/* Роль блока S/U/A */}
               <div className="inline-flex rounded-lg overflow-hidden border border-white/10 text-xs">
                 {ROLES.map((r) => (
@@ -440,6 +510,27 @@ export function PresetPanel({ open, onClose }: { open: boolean; onClose: () => v
                 </button>
               )}
             </div>
+
+            {shareFor === b.id && (
+              <div className="nf-share-menu mt-2 rounded-lg border border-white/10 bg-panel p-2">
+                <div className="text-[11px] text-gray-400 mb-1.5">
+                  Перенести «{b.name}» в пресет — встанет на то же место относительно постоянных блоков (движок, история,
+                  встроенные модули), с ролью{b.injectDepth !== undefined ? ', глубиной' : ''} и вкл/выкл:
+                </div>
+                <div className="flex flex-col gap-1">
+                  {targets.map((t) => (
+                    <button
+                      key={t.slot.kind === 'alt' ? t.slot.id : t.slot.kind}
+                      className="btn-ghost !px-2.5 !py-1 text-xs text-left"
+                      onClick={() => shareBlock(b, t)}
+                    >
+                      → {t.label}
+                      {sameBlockIn(t.preset, b) ? <span className="text-amber-300/90"> · там уже есть такой</span> : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {b.flagged && (
               <p className="text-xs text-amber-400 mt-2">
@@ -1239,8 +1330,9 @@ function AltPresetCard({
   const isRp = mode === 'rp';
   const key = isRp ? 'activeRpPreset' : 'activeVnPreset';
   const mine = cfg.altRpPresets.filter((a) => a.mode === mode);
-  const hasDrd = mine.some((a) => a.source === 'drd');
-  const hasOw = mine.some((a) => a.source === 'omaya');
+  // Копии не в счёт: копия Dr. D или стандартного — не повод прятать кнопку оригинала.
+  const hasDrd = mine.some((a) => a.source === 'drd' && !a.copyOf);
+  const hasOw = mine.some((a) => a.source === 'omaya' && !a.copyOf);
   const addOpenWorld = () =>
     onAdd({
       id: `alt_${Date.now().toString(36)}`,
@@ -1310,7 +1402,24 @@ function AltPresetCard({
           : 'JSON-контракт ответа (последним перед историей), эмоции спрайтов, музыка, отношения, правила хода и выборов, ассеты, мир, персонажи, память и Game Master.'}{' '}
         Стандартный пресет не меняется: альтернативный работает, только пока выбран.
       </p>
-      {alt?.source === 'omaya' && (
+      {alt?.copyOf && (
+        <p className="text-[11px] text-emerald-300/90 mt-1">
+          Копия{' '}
+          {alt.copyOf === 'rp' || alt.copyOf === 'vn'
+            ? 'стандартного пресета OmayaEngine'
+            : alt.copyOf === 'local'
+              ? 'стандартного пресета для своей модели'
+              : alt.copyOf === 'deepseek'
+                ? 'стандартного пресета для DeepSeek'
+                : alt.copyOf === 'omaya'
+                  ? 'пресета «Открытый мир»'
+                  : alt.copyOf === 'drd'
+                    ? 'Dr. D'
+                    : 'импортированного пресета'}
+          : правьте как угодно — оригинал не меняется. «↺» у блока и «По умолчанию» возвращают тексты оригинала.
+        </p>
+      )}
+      {alt?.source === 'omaya' && (!alt.copyOf || alt.copyOf === 'omaya') && (
         <p className="text-[11px] text-emerald-300/90 mt-1">
           Наш пресет на основе OmayaEngine: вместо сюжетных модулей — директива о персонажах, лоре и сюжете, по одному
           набору правил в тумблере (◆), с уклоном в открытый мир в реальной жизни. Всё остальное — как у стандартного:

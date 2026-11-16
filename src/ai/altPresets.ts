@@ -20,6 +20,10 @@ export interface AltPresetSampling {
   maxTokens?: number;
 }
 
+/** Откуда сделана копия: стандартный пресет (по профилю/режиму) или вид альтернативного. */
+export type CopyBase = 'rp' | 'local' | 'deepseek' | 'vn' | 'omaya' | 'drd' | 'sillytavern';
+const COPY_BASES: CopyBase[] = ['rp', 'local', 'deepseek', 'vn', 'omaya', 'drd', 'sillytavern'];
+
 export interface AltRpPreset {
   id: string;
   name: string;
@@ -32,6 +36,8 @@ export interface AltRpPreset {
   sampling: AltPresetSampling;
   /** Префилл ответа из пресета (assistant_prefill). */
   prefill?: string;
+  /** Копия: от какого пресета сделана — для «↺» и «По умолчанию». */
+  copyOf?: CopyBase;
   importedAt: number;
 }
 
@@ -47,6 +53,7 @@ export function normalizeAltPresets(raw: unknown): AltRpPreset[] {
     const s = r.sampling && typeof r.sampling === 'object' ? r.sampling : {};
     const mode = r.mode === 'vn' ? 'vn' : 'rp';
     const source = r.source === 'drd' ? 'drd' : r.source === 'omaya' ? 'omaya' : 'sillytavern';
+    const copyOf: CopyBase | undefined = COPY_BASES.includes(r.copyOf) ? r.copyOf : undefined;
     out.push({
       id: r.id,
       name: typeof r.name === 'string' && r.name.trim() ? r.name : preset.name,
@@ -54,11 +61,13 @@ export function normalizeAltPresets(raw: unknown): AltRpPreset[] {
       mode,
       // Наш встроенный вариант — пресет движка, не чужой: недостающие встроенные
       // блоки доезжают на штатные места. Чужим — блоки движка при каждой загрузке.
+      // Копия стандартного пресета — тоже «наш» пресет, но блоки «Открытого мира»
+      // ей подкладывать нельзя: она про другое.
       preset:
         source === 'omaya'
           ? (() => {
               const { foreign: _f, ...own } = preset;
-              return insertMissingByOrder(own, openWorldBlocks());
+              return copyOf && copyOf !== 'omaya' ? own : insertMissingByOrder(own, openWorldBlocks());
             })()
           : ensureEngineBlocks({ ...preset, foreign: 'sillytavern' }, mode),
       regexRules: normalizeRegexRules(r.regexRules),
@@ -70,6 +79,7 @@ export function normalizeAltPresets(raw: unknown): AltRpPreset[] {
         maxTokens: num(s.maxTokens),
       },
       ...(typeof r.prefill === 'string' && r.prefill.trim() ? { prefill: r.prefill } : {}),
+      ...(copyOf ? { copyOf } : {}),
       importedAt: num(r.importedAt) ?? 0,
     });
   }
