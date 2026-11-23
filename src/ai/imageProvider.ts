@@ -95,7 +95,13 @@ function pixelSize(ratio: ImageAspectRatio, tier: ImageSizeTier): string {
 // generations не умеет и отвечает 404. Теперь адрес виден в UI и в тексте ошибки.
 export function effectiveImageBase(cfg: ImageGenConfig): string {
   const raw = (cfg.baseUrl || '').trim().replace(/\/+$/, '');
-  if (cfg.providerKind === 'novelai') return raw || NAI_BASE;
+  if (cfg.providerKind === 'novelai') {
+    // Картинки и подписка у NovelAI — на image.novelai.net. Адрес сайта
+    // (novelai.net) или старого API (api.novelai.net) на этих путях отвечает 404 / 500 —
+    // любой официальный адрес ведём туда. Свой прокси (другой домен) — как вписан.
+    if (!raw || /^(https?:\/\/)?([a-z0-9-]+\.)*novelai\.net(\/.*)?$/i.test(raw)) return NAI_BASE;
+    return raw;
+  }
   if (cfg.providerKind === 'gemini') {
     if (!raw) return DEFAULT_GEMINI_BASE;
     // Частая опечатка: адрес Google без версии — тогда любой путь даёт 404.
