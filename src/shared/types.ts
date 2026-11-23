@@ -960,8 +960,11 @@ export interface ImageGenConfig {
   chat?: ImageChatMsg[];
   /** Ассистент видит сцену (место, кто рядом, последний текст). По умолчанию — да. */
   chatSeeScene?: boolean;
-  /** Ассистенту уходят текстовые блоки активного пресета (как рассказчику). По умолчанию — да. */
-  chatSendPreset?: boolean;
+  /**
+   * Текстовые блоки активного пресета уходят во ВСЕ промпт-задачи студии: воркер
+   * «по сцене», иллюстрации в игре, фоны, ассистент ручного режима. По умолчанию — да.
+   */
+  sendPreset?: boolean;
 }
 
 // РУЧНОЙ РЕЖИМ СТУДИИ. Человек пишет по-простому, ассистент отвечает промптом
@@ -1217,7 +1220,8 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     ...(o.nai ? { nai: normalizeNaiConfig(o.nai) } : {}),
     ...(Array.isArray(o.chat) ? { chat: normalizeImageChat(o.chat) } : {}),
     ...(typeof o.chatSeeScene === 'boolean' ? { chatSeeScene: o.chatSeeScene } : {}),
-    ...(typeof o.chatSendPreset === 'boolean' ? { chatSendPreset: o.chatSendPreset } : {}),
+    // chatSendPreset — прежнее имя (галочка была только в ручном режиме).
+    ...(typeof (o.sendPreset ?? o.chatSendPreset) === 'boolean' ? { sendPreset: (o.sendPreset ?? o.chatSendPreset) as boolean } : {}),
     ...(o.illustrate && typeof o.illustrate === 'object'
       ? {
           illustrate: {

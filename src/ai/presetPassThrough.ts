@@ -82,3 +82,23 @@ export function withPresetTail<M extends { role: string; content: string }>(mess
   }
   return [...out, { role: 'user', content: tail } as M];
 }
+
+/**
+ * Запрос промпт-задачи студии с блоками пресета: начало — в системную часть
+ * перед задачей, хвост — к последнему сообщению. enabled=false — как есть.
+ */
+export function withPreset<R extends { system: string; messages: { role: any; content: string }[] }>(
+  req: R,
+  project: Project,
+  state: RuntimeState | null | undefined,
+  enabled: boolean
+): R {
+  if (!enabled) return req;
+  const pass = presetPassThrough(project, state);
+  if (!pass) return req;
+  return {
+    ...req,
+    system: [pass.system, req.system].filter(Boolean).join('\n\n---\n\n'),
+    messages: withPresetTail(req.messages, pass.tail),
+  };
+}

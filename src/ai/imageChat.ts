@@ -9,7 +9,7 @@ import { naiMaxCharacters, naiModel, splitNaiPrompt } from './novelai';
 import { NAI_TAG_RULES, appearanceTagsOf, naiModelRules, parseNaiWorker } from './novelaiPrompt';
 import { scenePeople } from './illustrations';
 import { stripStateBlock } from './rpResponse';
-import { presetPassThrough, withPresetTail } from './presetPassThrough';
+import { withPreset } from './presetPassThrough';
 
 // РУЧНОЙ РЕЖИМ СТУДИИ: ассистент картинок. Человек пишет по-простому («Тони и
 // Пеппер на крыше, закат, она смеётся»), ассистент отвечает промптом для
@@ -113,7 +113,7 @@ export async function imageChatTurn(
   state: RuntimeState,
   history: ImageChatMsg[],
   request: string,
-  opts: { seeScene: boolean; sendPreset?: boolean; signal?: AbortSignal }
+  opts: { seeScene: boolean; signal?: AbortSignal }
 ): Promise<ChatTurnResult> {
   const ig = imageGenFor(project);
   const nai = ig.nai ?? defaultNaiConfig();
@@ -152,14 +152,14 @@ export async function imageChatTurn(
 
   // Блоки пресета — те же правила, что у рассказчика (разрешения, тон); свою
   // задачу и формат ответа ассистент держит поверх них (см. presetPassThrough).
-  const pass = opts.sendPreset !== false ? presetPassThrough(project, state) : null;
-  const raw = await studioCompletion({
-    system: [pass?.system, imageChatSystem(ig)].filter(Boolean).join('\n\n---\n\n'),
-    messages: withPresetTail(merged, pass?.tail || ''),
-    model: project.aiConfig.summarizerModel || undefined,
-    temperature: 0.6,
-    maxTokens: 2000,
-  });
+  const raw = await studioCompletion(
+    withPreset(
+      { system: imageChatSystem(ig), messages: merged, model: project.aiConfig.summarizerModel || undefined, temperature: 0.6, maxTokens: 2000 },
+      project,
+      state,
+      ig.sendPreset !== false
+    )
+  );
   if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   return parseChatReply(raw, ig, people.map((x) => x.person), history);
 }

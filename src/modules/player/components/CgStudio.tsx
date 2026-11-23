@@ -364,6 +364,24 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
             {!!ig.chat?.length && <span className="opacity-70"> · {ig.chat.filter((m) => m.role === 'user').length}</span>}
           </button>
         </div>
+        {/* Блоки пресета — во все промпт-задачи студии (как рассказчику). */}
+        <label className="flex items-start gap-2 text-xs text-gray-300 cursor-pointer nf-studio-preset -mt-1">
+          <input
+            type="checkbox"
+            className="mt-0.5 nf-studio-preset-on"
+            checked={ig.sendPreset !== false}
+            onChange={(e) => patchIG({ sendPreset: e.target.checked })}
+          />
+          <span>
+            📜 {L('Отправлять блоки пресета', 'Send preset blocks')}
+            <span className="block text-[11px] text-gray-500">
+              {L(
+                'Включённые текстовые блоки активного пресета (правила, разрешения, тон) уходят с каждым промптом студии: «По сцене», иллюстрации во время игры, фоны, ручной режим. Формат ответа воркера главнее правил о ходе рассказчика.',
+                'Enabled text blocks of the active preset go with every studio prompt task: scene, in-game illustrations, backgrounds, manual mode.'
+              )}
+            </span>
+          </span>
+        </label>
         {mode === 'chat' && <ImageChat project={project} state={state} L={L} />}
 
         {/* Reveal результата */}

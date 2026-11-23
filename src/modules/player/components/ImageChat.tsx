@@ -25,7 +25,6 @@ export function ImageChat({ project, state, L }: { project: Project; state: Runt
   const ig = imageGenFor(project);
   const chat = ig.chat || [];
   const seeScene = ig.chatSeeScene !== false;
-  const sendPreset = ig.chatSendPreset !== false;
   const [text, setText] = useState('');
   const [thinking, setThinking] = useState(false);
   const [drawing, setDrawing] = useState<string | null>(null); // id сообщения
@@ -58,7 +57,7 @@ export function ImageChat({ project, state, L }: { project: Project; state: Runt
     abortRef.current = controller;
     try {
       const st = usePlayerStore.getState();
-      const r = await imageChatTurn(st.project || project, st.state || state, history, req, { seeScene, sendPreset, signal: controller.signal });
+      const r = await imageChatTurn(st.project || project, st.state || state, history, req, { seeScene, signal: controller.signal });
       if (controller.signal.aborted) return;
       await patchChat((c) => [
         ...c,
@@ -185,25 +184,6 @@ export function ImageChat({ project, state, L }: { project: Project; state: Runt
               }
             />
             {L('Видеть сцену', 'See the scene')}
-          </label>
-          <label
-            className="flex items-center gap-1.5 text-xs text-gray-300"
-            title={L(
-              'Включённые текстовые блоки активного пресета (правила, разрешения, тон) уходят ассистенту, как рассказчику. Свою задачу — писать промпт — он держит поверх них.',
-              'Enabled text blocks of the active preset go to the assistant, like to the narrator.'
-            )}
-          >
-            <input
-              type="checkbox"
-              className="nf-chat-preset"
-              checked={sendPreset}
-              onChange={(e) =>
-                s.patchProject((p) => {
-                  p.imageGen = { ...(p.imageGen ?? defaultImageGenConfig()), chatSendPreset: e.target.checked };
-                })
-              }
-            />
-            {L('Блоки пресета', 'Preset blocks')}
           </label>
           <button className="btn-ghost !px-2 !py-1 text-xs nf-chat-clear" disabled={!chat.length || thinking || !!drawing} onClick={() => void clearChat()}>
             🧹 {L('Очистить', 'Clear')}

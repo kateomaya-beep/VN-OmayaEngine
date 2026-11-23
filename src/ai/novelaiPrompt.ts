@@ -1,6 +1,7 @@
 import type { ImageAspectRatio, NaiImageConfig, Project, RuntimeState } from '../shared/types';
 import { IMAGE_ASPECT_RATIOS, defaultNaiConfig } from '../shared/types';
 import { studioCompletion } from './studioConnection';
+import { withPreset } from './presetPassThrough';
 import { extractJson } from './responseParser';
 import { describePerson, nameHit, personsInText, resolvePerson, type Person } from './characterRegistry';
 import { imageGenFor } from './imageConnection';
@@ -197,12 +198,20 @@ ${lines.join('\n') || '(no named characters — an environment / mood image)'}
 What is happening at this exact moment:
 ${recent || '(quiet beat — infer from location and characters)'}`;
 
-  const raw = await studioCompletion({
-    system: naiWorkerPrompt(nai),
-    messages: [{ role: 'user', content: user }],
-    model: project.aiConfig.summarizerModel || undefined,
-    temperature: 0.7,
-  });
+  // Блоки пресета — те же правила, что у рассказчика (галочка в студии, вкл по умолчанию).
+  const raw = await studioCompletion(
+    withPreset(
+      {
+        system: naiWorkerPrompt(nai),
+        messages: [{ role: 'user', content: user }],
+        model: project.aiConfig.summarizerModel || undefined,
+        temperature: 0.7,
+      },
+      project,
+      state,
+      imageGenFor(project).sendPreset !== false
+    )
+  );
   return parseNaiWorker(raw, people, nai, max);
 }
 
