@@ -532,6 +532,24 @@ export interface NaiAccount {
   /** Полоса лимита V5 у Opus ниже нуля — V5 сейчас за Anlas. */
   v5UsageNegative?: boolean;
   v5UsagePercent?: number;
+  /** /user/information: аккаунт на пробном доступе (картинки — только с капчей на сайте). */
+  trialActivated?: boolean;
+  trialImagesLeft?: number;
+}
+
+/** Дополнить сведениями /user/information (пробный доступ) — если сервер их отдал. */
+export function withNaiInformation(a: NaiAccount, info: any): NaiAccount {
+  if (!info || typeof info !== 'object') return a;
+  return {
+    ...a,
+    ...(typeof info.trialActivated === 'boolean' ? { trialActivated: info.trialActivated } : {}),
+    ...(typeof info.trialImagesLeft === 'number' ? { trialImagesLeft: info.trialImagesLeft } : {}),
+  };
+}
+
+/** Ответ NovelAI «нужна капча для пробной генерации»: аккаунт токена без подписки. */
+export function isNaiTrialError(text: string): boolean {
+  return /recaptcha|trial generation/i.test(text);
 }
 
 const TIER_NAMES = ['Paper (бесплатный)', 'Tablet', 'Scroll', 'Opus'];

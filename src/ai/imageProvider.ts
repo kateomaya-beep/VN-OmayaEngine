@@ -17,6 +17,8 @@ import {
   naiSupportsRefs,
   naiUcPresetText,
   normalizeNaiScene,
+  isNaiTrialError,
+  withNaiInformation,
   padDirectorRef,
   parseNaiAccount,
   withQuality,
@@ -561,7 +563,7 @@ export async function testImageConnection(
   if (cfg.providerKind === 'novelai') {
     try {
       const a = await novelAiAccount(cfg, apiKey);
-      return { ok: true, message: describeNaiAccount(a) };
+      return { ok: naiAccountUsable(a), message: describeNaiAccount(a) };
     } catch (e) {
       return { ok: false, message: (e as Error).message };
     }
@@ -694,7 +696,8 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
   }
   if ((res.status === 400 || res.status === 422) && !input.signal?.aborted) {
     const errText = await res.text().catch(() => '');
-    if (/anlas|insufficient|not enough/i.test(errText)) throw naiError(res.status, url, errText);
+    // Не формат: денег или подписки нет — второй формат ответит то же самое.
+    if (/anlas|insufficient|not enough/i.test(errText) || isNaiTrialError(errText)) throw naiError(res.status, url, errText);
     logEvent('warn', 'image', `NovelAI не принял запрос в формате ${first} (${cleanErr(errText)}) — пробую другой формат`);
     res = await send(first === 4 ? 3 : 4);
   }
@@ -710,8 +713,11 @@ function naiError(status: number, url: string, body: string): Error {
   } catch {
     /* не JSON */
   }
-  const hint =
-    status === 401
+  const hint = isNaiTrialError(msg)
+    ? 'NovelAI считает аккаунт этого токена ПРОБНЫМ (без подписки): пробные картинки он рисует только на своём сайте, с капчей, — через API нельзя. ' +
+      'Проверьте кнопкой «Подписка и Anlas» в подключении: если там не Opus/Scroll/Tablet или «не активна» — подписки на этом аккаунте нет ' +
+      '(частая причина — токен создан на другом аккаунте, не на том, где оплачена подписка). Токен берётся на novelai.net → Account Settings → Get Persistent API Token, войдя в аккаунт с подпиской.'
+    : status === 401
       ? 'токен не принят — нужен постоянный токен (pst-…) из настроек аккаунта NovelAI.'
       : status === 402
         ? 'не хватает Anlas (или подписки) на такую генерацию. Включите «Не тратить Anlas» в студии или пополните баланс.'
@@ -726,12 +732,33 @@ export async function novelAiAccount(cfg: ImageGenConfig, apiKey = getApiKey('im
   const url = `${effectiveImageBase(cfg)}/user/subscription`;
   const res = await netFetch(url, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
   if (!res.ok) throw naiError(res.status, url, await res.text().catch(() => ''));
-  return parseNaiAccount(await res.json());
+  const account = parseNaiAccount(await res.json());
+  // Пробный ли доступ — отдельным запросом; не ответил — не беда, подписка уже есть.
+  try {
+    const info = await netFetch(`${effectiveImageBase(cfg)}/user/information`, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
+    if (info.ok) return withNaiInformation(account, await info.json());
+  } catch {
+    /* ignore */
+  }
+  return account;
+}
+
+export function naiAccountUsable(a: NaiAccount): boolean {
+  return a.active && a.tier > 0;
 }
 
 export function describeNaiAccount(a: NaiAccount): string {
+  if (!naiAccountUsable(a)) {
+    return (
+      `Подписки на аккаунте этого токена нет (${a.tierName}${a.active ? '' : ', не активна'})` +
+      (a.trialActivated ? ` — он на пробном доступе${a.trialImagesLeft !== undefined ? `, пробных картинок: ${a.trialImagesLeft}` : ''}` : '') +
+      `. Anlas: ${a.anlas.toLocaleString('ru')}.\n` +
+      'Через API NovelAI такому аккаунту не рисует — просит капчу («Recaptcha token is required for trial generation»). ' +
+      'Если подписка у вас есть — токен создан на другом аккаунте: войдите на novelai.net в аккаунт с подпиской → Account Settings → Get Persistent API Token.'
+    );
+  }
   return (
-    `OK · подписка ${a.tierName}${a.active ? '' : ' (не активна)'} · Anlas: ${a.anlas.toLocaleString('ru')}` +
+    `OK · подписка ${a.tierName} · Anlas: ${a.anlas.toLocaleString('ru')}` +
     (a.tier >= 3 ? ' · генерации до 1 Мп и 28 шагов бесплатны' : ' · бесплатных генераций нет — каждая стоит Anlas') +
     (a.v5UsagePercent !== undefined
       ? ` · лимит V5: ${a.v5UsagePercent}%${a.v5UsageNegative ? ' — исчерпан, V5 сейчас за Anlas' : ''}`

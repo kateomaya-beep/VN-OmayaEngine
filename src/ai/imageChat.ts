@@ -1,6 +1,7 @@
 import type { ImageAspectRatio, ImageChatMsg, ImageGenConfig, Project, RuntimeState } from '../shared/types';
 import { IMAGE_ASPECT_RATIOS, defaultNaiConfig, normalizeNarrativeMode } from '../shared/types';
 import { runCompletion } from './providers';
+import { studioRequest } from './studioConnection';
 import { extractJson } from './responseParser';
 import { describePerson, personsInText, resolvePerson, type Person } from './characterRegistry';
 import { imageGenFor } from './imageConnection';
@@ -149,13 +150,13 @@ export async function imageChatTurn(
     else merged.push({ ...m });
   }
 
-  const raw = await runCompletion({
+  const raw = await runCompletion(studioRequest({
     system: imageChatSystem(ig),
     messages: merged,
     model: project.aiConfig.summarizerModel || undefined,
     temperature: 0.6,
     maxTokens: 2000,
-  });
+  }));
   if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   return parseChatReply(raw, ig, people.map((x) => x.person), history);
 }

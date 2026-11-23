@@ -11,6 +11,7 @@ import { imageGenFor, useImageConnection, type ImageConnection } from '../../ai/
 import type { ImageGenConfig, Project } from '../../shared/types';
 import { defaultImageGenConfig } from '../../shared/types';
 import { DEFAULT_NAI_MODEL, NAI_MODELS } from '../../ai/novelai';
+import { StudioTextConnection } from './StudioTextConnection';
 
 // Редактор подключения к image-API — как основное подключение: провайдер / Base URL /
 // модель со списком по ⟳ / ключ / тест. Подключение ОБЩЕЕ на все истории (см.
@@ -167,6 +168,7 @@ export function ImageConnectionField({ project }: { project?: Project | null }) 
       {status.msg && (
         <p className={`nf-img-status text-xs mt-1 whitespace-pre-wrap ${status.ok ? 'text-green-400' : 'text-red-400'}`}>{status.msg}</p>
       )}
+      <StudioTextConnection />
     </div>
   );
 }
