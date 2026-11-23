@@ -115,6 +115,8 @@ export interface PresetSettings {
   // ответе (по умолчанию — директива о персонажах, лоре и сюжете). Правится и
   // стирается на вкладке ассистента; пустая строка — осознанно выключено.
   assistantInstructions: string;
+  // Слать ассистенту текстовые блоки активного пресета (как рассказчику). Вкл по умолчанию.
+  assistantSendPreset: boolean;
   // Профиль автора — для ассистента, и только для него (в ход рассказчика не
   // уходит). Один на все проекты и чаты: кто ты, как к тебе обращаться, как с
   // тобой общаться, и справочные заметки, которые ассистент берёт только по просьбе.
@@ -184,6 +186,7 @@ function defaults(): PresetSettings {
     showStateInfobox: true,
     assistantPersona: '',
     assistantInstructions: NARRATIVE_DIRECTIVE,
+    assistantSendPreset: true,
     userProfile: emptyUserProfile(),
     narrativeLanguage: 'ru',
     temperature: 0.9,
@@ -270,6 +273,7 @@ function load(): PresetSettings {
       // Ключа нет (настройки до появления поля) — подставляем директиву; пустую
       // строку (автор стёр) оставляем пустой.
       assistantInstructions: typeof v.assistantInstructions === 'string' ? v.assistantInstructions : NARRATIVE_DIRECTIVE,
+      assistantSendPreset: typeof v.assistantSendPreset === 'boolean' ? v.assistantSendPreset : true,
       userProfile: normalizeUserProfile(v.userProfile),
       narrativeLanguage: v.narrativeLanguage === 'en' ? 'en' : 'ru',
       temperature: num(v.temperature, d.temperature),

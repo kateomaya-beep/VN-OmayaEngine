@@ -146,6 +146,13 @@ export function ApiConnectionField({
           <input
             className="input flex-1"
             type="password"
+            // Это ключ, не пароль: браузер не должен ни подставлять сохранённый
+            // пароль сайта, ни предлагать «сохранить пароль».
+            autoComplete="new-password"
+            name="api-key-no-autofill"
+            data-lpignore="true"
+            data-1p-ignore=""
+            spellCheck={false}
             value={key}
             placeholder="sk-..."
             onChange={(e) => {

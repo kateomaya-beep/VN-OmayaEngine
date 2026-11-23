@@ -1,6 +1,7 @@
 import { ApiConnectionField } from '../constructor/editors/ApiConnectionField';
-import { useStudioConnection, STUDIO_KEY_ROLE } from '../../ai/studioConnection';
+import { useStudioConnection, studioKeyRole, STUDIO_KEY_ROLE } from '../../ai/studioConnection';
 import { getConnection } from '../../ai/connection';
+import { getApiKey, setApiKey } from '../../ai/keys';
 
 // Отдельный текстовый API для студии картинок: кто пишет промпты к картинкам.
 // Галочка снята — основное подключение (как раньше).
@@ -24,14 +25,23 @@ export function StudioTextConnection() {
             className="btn-ghost !px-3 !py-1 text-xs mb-2"
             onClick={() => {
               const g = getConnection();
-              st.set({ conn: { provider: g.provider, baseUrl: g.baseUrl, model: st.conn.model } });
+              // Ключ — тоже: без него шлюз отвечает 401, хотя модели (часто без ключа) подтягиваются.
+              setApiKey(STUDIO_KEY_ROLE, getApiKey(g.provider));
+              st.set({ conn: { provider: g.provider, baseUrl: g.baseUrl, model: st.conn.model || g.model } });
             }}
-            title="Тот же провайдер и адрес, что у основного, — останется выбрать модель (и ключ, если он другой)"
+            title="Тот же провайдер, адрес и ключ, что у основного, — останется выбрать модель"
           >
-            Взять адрес из основного
+            Взять адрес и ключ из основного
           </button>
           <ApiConnectionField conn={st.conn} keyRole={STUDIO_KEY_ROLE} onChange={(conn) => st.set({ conn })} />
           {!st.conn.model && <p className="text-[11px] text-amber-300 mt-1">Пока модель не выбрана, студия ходит через основное подключение.</p>}
+          {!!st.conn.model && !getApiKey(STUDIO_KEY_ROLE).trim() && (
+            <p className="text-[11px] text-amber-300 mt-1 nf-studio-nokey">
+              {studioKeyRole(st.conn) !== STUDIO_KEY_ROLE
+                ? 'Свой ключ не вписан — берётся ключ основного подключения (адрес тот же).'
+                : 'Ключ не вписан — без него шлюз ответит 401, даже если список моделей подтянулся.'}
+            </p>
+          )}
         </div>
       )}
     </div>

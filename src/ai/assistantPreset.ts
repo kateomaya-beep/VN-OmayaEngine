@@ -11,7 +11,7 @@ import type { PresetSlot } from './presetSettings';
 const MAX_BLOCK_CHARS = 4000;
 const MAX_TOTAL_CHARS = 60000;
 
-export function presetDigest(preset: PromptPreset, slotLabel: string): string {
+export function presetDigest(preset: PromptPreset, slotLabel: string, sentAbove?: Set<string>): string {
   let budget = MAX_TOTAL_CHARS;
   const lines = preset.blocks.map((b) => {
     const kind = b.dynamic
@@ -23,6 +23,8 @@ export function presetDigest(preset: PromptPreset, slotLabel: string): string {
     const role = b.role && b.role !== 'system' ? `; role ${b.role}` : '';
     const head = `- #${b.id} [${b.enabled ? 'ON' : 'off'}] «${b.name}» (${kind}${role}${where})`;
     if (b.dynamic || !b.content.trim()) return head + (b.dynamic ? '' : ' — empty');
+    // Текст уже ушёл выше разделом «пресет автора» — второй копией не шлём.
+    if (sentAbove?.has(b.id)) return `${head} — text as in the «AUTHOR'S STORY PRESET» section above (macros expanded there)`;
     let body = b.content.trim();
     const cap = Math.min(MAX_BLOCK_CHARS, Math.max(300, budget));
     if (body.length > cap) body = body.slice(0, cap) + '\n[…truncated — ask the author before replacing this block whole]';

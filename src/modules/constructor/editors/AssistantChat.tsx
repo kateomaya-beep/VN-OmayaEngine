@@ -10,6 +10,7 @@ import { normalizeRuntimeState } from '../../../shared/factory';
 import { applyAssistantPresetOps, hasPresetOps } from '../../../ai/assistantPreset';
 import { getPresetSettings, presetSlotFor, readPresetSlot, writePresetSlot } from '../../../ai/presetSettings';
 import { normalizeNarrativeMode } from '../../../shared/types';
+import { presetPassThrough, withPresetTail } from '../../../ai/presetPassThrough';
 import { assistantConnection, useAssistantConnection } from '../../../ai/assistantConnection';
 import { usePresetSettings, type UserProfile } from '../../../ai/presetSettings';
 import { pushToast } from '../../../shared/toast';
@@ -182,13 +183,19 @@ export function AssistantChat(props?: {
     try {
       // Служебный блок правок в контекст не пересылаем: применённые изменения уже
       // видны в слепке проекта, а второй копией они только путают.
-      const messages = history.map((m) => ({
-        role: m.role,
-        content: m.role === 'assistant' ? stripApplyBlock(m.content) : m.content,
-      }));
+      const ctxPreset = presetCtx();
+      // Блоки пресета — те же правила, что у рассказчика (галочка ниже, вкл по умолчанию).
+      const pass = cfg.assistantSendPreset ? presetPassThrough(project, state, ctxPreset?.preset ?? null) : null;
+      const messages = withPresetTail(
+        history.map((m) => ({
+          role: m.role,
+          content: m.role === 'assistant' ? stripApplyBlock(m.content) : m.content,
+        })),
+        pass?.tail || ''
+      );
       let acc = '';
       const raw = await runCompletion({
-        system: buildAssistantSystem(project, cfg.assistantPersona, state, cfg.userProfile, cfg.assistantInstructions, stateReadOnly, presetCtx()),
+        system: buildAssistantSystem(project, cfg.assistantPersona, state, cfg.userProfile, cfg.assistantInstructions, stateReadOnly, ctxPreset, pass),
         messages,
         temperature: Math.min(cfg.temperature, 1),
         maxTokens: 4000,
@@ -564,6 +571,24 @@ export function AssistantChat(props?: {
             </>
           )}
         </div>
+
+        <label className="card flex items-start gap-2 text-sm cursor-pointer nf-asst-send-preset">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={cfg.assistantSendPreset}
+            onChange={(e) => patchCfg({ assistantSendPreset: e.target.checked })}
+          />
+          <span>
+            Отправлять блоки пресета
+            <span className="block text-xs text-gray-500 mt-0.5">
+              Включённые текстовые блоки активного пресета (правила, разрешения, тон) уходят ассистенту с каждым запросом — как
+              рассказчику, на тех же местах: выше «Истории переписки» — в начало, ниже — после вопроса. Блоки движка (мир, память,
+              история) не уходят — у ассистента свой контекст. Правила о том, как рассказчик пишет ход, ассистент не применяет к
+              своим ответам.
+            </span>
+          </span>
+        </label>
 
         <p className="text-[11px] text-gray-500 px-1">
           Модель ассистента:{' '}

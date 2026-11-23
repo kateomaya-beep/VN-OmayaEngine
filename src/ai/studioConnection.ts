@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type { ApiConnection } from '../shared/types';
-import type { CompletionRequest } from './providers';
+import { runCompletion, type CompletionRequest } from './providers';
+import { getApiKey } from './keys';
+import { getConnection } from './connection';
 
 // ОТДЕЛЬНЫЙ ТЕКСТОВЫЙ API ДЛЯ СТУДИИ КАРТИНОК. Промпты к картинкам (воркер сцены,
 // теги NovelAI, «✨ из анкеты», «✨ В теги NovelAI», ассистент ручного режима,
@@ -54,10 +56,24 @@ export const useStudioConnection = create<Store>((set, get) => ({
   },
 }));
 
+const sameBase = (a?: string, b?: string) => (a || '').trim().replace(/\/+$/, '') === (b || '').trim().replace(/\/+$/, '');
+
+/**
+ * Под какой ролью брать ключ. Свой ключ студии не вписан, а адрес тот же, что у
+ * основного, — берём ключ основного: иначе запрос уходит без ключа, и шлюз
+ * отвечает 401 («Invalid API key format»), хотя список моделей (часто без ключа)
+ * подтянулся и всё выглядит настроенным.
+ */
+export function studioKeyRole(conn: ApiConnection): string {
+  if (getApiKey(STUDIO_KEY_ROLE).trim()) return STUDIO_KEY_ROLE;
+  const main = getConnection();
+  return main.provider === conn.provider && sameBase(main.baseUrl, conn.baseUrl) ? main.provider : STUDIO_KEY_ROLE;
+}
+
 /** Подключение для текстовых задач студии; null — основное. */
 export function studioConnection(): { conn: ApiConnection; keyRole: string } | null {
   const { enabled, conn } = useStudioConnection.getState();
-  return enabled && conn.model ? { conn, keyRole: STUDIO_KEY_ROLE } : null;
+  return enabled && conn.model ? { conn, keyRole: studioKeyRole(conn) } : null;
 }
 
 /**
@@ -67,4 +83,24 @@ export function studioConnection(): { conn: ApiConnection; keyRole: string } | n
 export function studioRequest(req: CompletionRequest): CompletionRequest {
   const c = studioConnection();
   return c ? { ...req, connection: c, model: c.conn.model } : req;
+}
+
+/**
+ * Текстовая задача студии. Ошибка подписывается, через какое подключение шёл
+ * запрос: иначе «401 — неверный ключ» читается как беда основного подключения,
+ * которое при этом исправно пишет историю.
+ */
+export async function studioCompletion(req: CompletionRequest): Promise<string> {
+  const c = studioConnection();
+  try {
+    return await runCompletion(c ? { ...req, connection: c, model: c.conn.model } : req);
+  } catch (e) {
+    if (!c || (e as Error)?.name === 'AbortError') throw e;
+    const err = new Error(
+      `Отдельный текстовый API студии (${c.conn.model}, ${c.conn.baseUrl || 'адрес не задан'}): ${(e as Error).message}\n` +
+        'Проверьте его ключ в «Подключении к image-API» → «✍️ Отдельный текстовый API для студии» — или снимите галочку, тогда студия пойдёт через основное подключение.'
+    );
+    err.name = (e as Error).name;
+    throw err;
+  }
 }

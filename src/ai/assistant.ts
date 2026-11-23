@@ -408,7 +408,9 @@ export function buildAssistantSystem(
   /** Прохождение открыто только для чтения (из конструктора): память не правится. */
   playthroughReadOnly = false,
   /** Активный пресет режима — ассистент его видит и может править. */
-  presetCtx?: { preset: PromptPreset; label: string } | null
+  presetCtx?: { preset: PromptPreset; label: string } | null,
+  /** Текстовые блоки пресета, отправленные ассистенту как правила (см. presetPassThrough). */
+  presetPass?: { system: string; sentIds: Set<string> } | null
 ): string {
   const who = persona.trim() || DEFAULT_ASSISTANT_PERSONA;
   const parts = [who];
@@ -417,11 +419,12 @@ export function buildAssistantSystem(
   if (instructions?.trim()) {
     parts.push(`== STANDING INSTRUCTIONS FROM THE AUTHOR (apply to everything you create or edit) ==\n${instructions.trim()}`);
   }
+  if (presetPass?.system) parts.push(presetPass.system);
   const me = userProfileBlock(profile);
   if (me) parts.push(me);
   parts.push(projectDigest(project));
   if (state) parts.push(playthroughDigest(project, state));
-  if (presetCtx) parts.push(presetDigest(presetCtx.preset, presetCtx.label));
+  if (presetCtx) parts.push(presetDigest(presetCtx.preset, presetCtx.label, presetPass?.system ? presetPass.sentIds : undefined));
   parts.push(PROTOCOL);
   if (presetCtx) parts.push(PRESET_PROTOCOL);
   if (state) parts.push(playthroughReadOnly ? READONLY_PLAYTHROUGH_PROTOCOL : IN_GAME_PROTOCOL);

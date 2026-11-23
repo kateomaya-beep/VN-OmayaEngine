@@ -152,6 +152,11 @@ export function ImageConnectionField({ project }: { project?: Project | null }) 
           <input
             className="input flex-1"
             type="password"
+            autoComplete="new-password"
+            name="api-key-no-autofill"
+            data-lpignore="true"
+            data-1p-ignore=""
+            spellCheck={false}
             value={key}
             placeholder={conn.providerKind === 'novelai' ? 'pst-…' : 'sk-… / AIza…'}
             onChange={(e) => {

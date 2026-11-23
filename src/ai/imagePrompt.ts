@@ -1,7 +1,6 @@
 import type { Project, RuntimeState, ImageAspectRatio } from '../shared/types';
 import { IMAGE_ASPECT_RATIOS } from '../shared/types';
-import { runCompletion } from './providers';
-import { studioRequest } from './studioConnection';
+import { studioCompletion } from './studioConnection';
 import { describePerson, type Person } from './characterRegistry';
 import { imageGenFor } from './imageConnection';
 import { composeNaiPrompt } from './novelaiPrompt';
@@ -37,12 +36,12 @@ Current background: ${bgName}
 Music mood: ${state.currentMusicMood ?? 'none'}
 Recent events:\n${recent}`;
 
-  const raw = await runCompletion(studioRequest({
+  const raw = await studioCompletion({
     system,
     messages: [{ role: 'user', content: user }],
     model: project.aiConfig.summarizerModel || undefined,
     temperature: 0.7,
-  }));
+  });
   // На случай, если модель всё же обернула в кавычки/markdown.
   return raw.replace(/^```[a-z]*\n?|```$/gi, '').replace(/^["'\s]+|["'\s]+$/g, '').trim();
 }
@@ -118,12 +117,12 @@ ${charLines.join('\n') || '(no named characters — an environment/mood CG)'}
 What is happening at this exact moment:
 ${recent || '(quiet beat — infer from location and characters)'}`;
 
-  const raw = await runCompletion(studioRequest({
+  const raw = await studioCompletion({
     system: systemPrompt,
     messages: [{ role: 'user', content: user }],
     model: project.aiConfig.summarizerModel || undefined,
     temperature: 0.7,
-  }));
+  });
   const text = raw.replace(/^```[a-z]*\n?|```$/gi, '').replace(/^["'\s]+|["'\s]+$/g, '').trim();
   return extractTrailingDirectives(text);
 }

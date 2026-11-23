@@ -7,6 +7,7 @@ import { isProxyActive, recheckProxy, forgetLearnedModelQuirks } from '../../ai/
 import { pushToast } from '../../shared/toast';
 import { ImageConnectionField } from './ImageConnectionField';
 import { useAssistantConnection, ASSISTANT_KEY_ROLE } from '../../ai/assistantConnection';
+import { getApiKey, setApiKey } from '../../ai/keys';
 import { usePlayerStore } from '../player/playerStore';
 
 // Глобальное основное подключение к LLM (Batch 3 §2): единый источник истины для
@@ -183,10 +184,14 @@ export function ConnectionPanel({ open, onClose }: { open: boolean; onClose: () 
             <div className="mt-3">
               <button
                 className="btn-ghost !px-3 !py-1 text-xs mb-2"
-                onClick={() => asst.set({ conn: { provider: connection.provider, baseUrl: connection.baseUrl, model: asst.conn.model } })}
-                title="Тот же провайдер и адрес, что у основного, — останется выбрать модель (и ключ, если он другой)"
+                onClick={() => {
+                  // Ключ — тоже: без него шлюз отвечает 401, хотя модели (часто без ключа) подтягиваются.
+                  setApiKey(ASSISTANT_KEY_ROLE, getApiKey(connection.provider));
+                  asst.set({ conn: { provider: connection.provider, baseUrl: connection.baseUrl, model: asst.conn.model || connection.model } });
+                }}
+                title="Тот же провайдер, адрес и ключ, что у основного, — останется выбрать модель"
               >
-                Взять адрес из основного
+                Взять адрес и ключ из основного
               </button>
               <ApiConnectionField conn={asst.conn} keyRole={ASSISTANT_KEY_ROLE} onChange={(conn) => asst.set({ conn })} />
               {!asst.conn.model && (

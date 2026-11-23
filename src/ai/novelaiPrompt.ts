@@ -1,7 +1,6 @@
 import type { ImageAspectRatio, NaiImageConfig, Project, RuntimeState } from '../shared/types';
 import { IMAGE_ASPECT_RATIOS, defaultNaiConfig } from '../shared/types';
-import { runCompletion } from './providers';
-import { studioRequest } from './studioConnection';
+import { studioCompletion } from './studioConnection';
 import { extractJson } from './responseParser';
 import { describePerson, nameHit, personsInText, resolvePerson, type Person } from './characterRegistry';
 import { imageGenFor } from './imageConnection';
@@ -198,12 +197,12 @@ ${lines.join('\n') || '(no named characters — an environment / mood image)'}
 What is happening at this exact moment:
 ${recent || '(quiet beat — infer from location and characters)'}`;
 
-  const raw = await runCompletion(studioRequest({
+  const raw = await studioCompletion({
     system: naiWorkerPrompt(nai),
     messages: [{ role: 'user', content: user }],
     model: project.aiConfig.summarizerModel || undefined,
     temperature: 0.7,
-  }));
+  });
   return parseNaiWorker(raw, people, nai, max);
 }
 
@@ -261,12 +260,12 @@ export async function generateAppearanceTags(project: Project, state: RuntimeSta
     project.lore.worldDescription.trim() && `World: ${project.lore.worldDescription.trim().slice(0, 400)}`,
   ].filter(Boolean);
   void state;
-  const raw = await runCompletion(studioRequest({
+  const raw = await studioCompletion({
     system: APPEARANCE_SYSTEM,
     messages: [{ role: 'user', content: parts.join('\n') }],
     model: project.aiConfig.summarizerModel || undefined,
     temperature: 0.4,
-  }));
+  });
   return raw
     .replace(/^```[a-z]*\n?|```$/gi, '')
     .split('\n')
@@ -325,12 +324,12 @@ export interface PlainTagsResult {
 /** Простой список стилей / художников / нежелательного → теги NovelAI для превью. */
 export async function plainToNaiTags(project: Project, text: string, field: NaiTagField): Promise<PlainTagsResult> {
   const model = naiModel(effectiveImageModel(imageGenFor(project)));
-  const raw = await runCompletion(studioRequest({
+  const raw = await studioCompletion({
     system: plainToTagsSystem(field, model),
     messages: [{ role: 'user', content: text.trim() }],
     model: project.aiConfig.summarizerModel || undefined,
     temperature: 0.2,
-  }));
+  });
   return finishPlainTags(raw, model);
 }
 

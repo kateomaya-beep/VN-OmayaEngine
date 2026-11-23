@@ -960,6 +960,8 @@ export interface ImageGenConfig {
   chat?: ImageChatMsg[];
   /** Ассистент видит сцену (место, кто рядом, последний текст). По умолчанию — да. */
   chatSeeScene?: boolean;
+  /** Ассистенту уходят текстовые блоки активного пресета (как рассказчику). По умолчанию — да. */
+  chatSendPreset?: boolean;
 }
 
 // РУЧНОЙ РЕЖИМ СТУДИИ. Человек пишет по-простому, ассистент отвечает промптом
@@ -1215,6 +1217,7 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     ...(o.nai ? { nai: normalizeNaiConfig(o.nai) } : {}),
     ...(Array.isArray(o.chat) ? { chat: normalizeImageChat(o.chat) } : {}),
     ...(typeof o.chatSeeScene === 'boolean' ? { chatSeeScene: o.chatSeeScene } : {}),
+    ...(typeof o.chatSendPreset === 'boolean' ? { chatSendPreset: o.chatSendPreset } : {}),
     ...(o.illustrate && typeof o.illustrate === 'object'
       ? {
           illustrate: {

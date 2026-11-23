@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { ApiConnection } from '../shared/types';
+import { getApiKey } from './keys';
+import { getConnection } from './connection';
 
 // ОТДЕЛЬНОЕ ПОДКЛЮЧЕНИЕ ДЛЯ АССИСТЕНТА. Ассистенту-соавтору не обязательно сидеть
 // на той же дорогой модели, что пишет историю: карточку, запись лорбука или правку
@@ -58,5 +60,9 @@ export const useAssistantConnection = create<Store>((set, get) => ({
 /** Подключение для запросов ассистента; null — основное. */
 export function assistantConnection(): { conn: ApiConnection; keyRole: string } | null {
   const { enabled, conn } = useAssistantConnection.getState();
-  return enabled && conn.model ? { conn, keyRole: ASSISTANT_KEY_ROLE } : null;
+  if (!enabled || !conn.model) return null;
+  // Свой ключ не вписан, адрес тот же, что у основного, — ключ основного (иначе 401).
+  const main = getConnection();
+  const same = main.provider === conn.provider && (main.baseUrl || '').replace(/\/+$/, '') === (conn.baseUrl || '').replace(/\/+$/, '');
+  return { conn, keyRole: !getApiKey(ASSISTANT_KEY_ROLE).trim() && same ? main.provider : ASSISTANT_KEY_ROLE };
 }
