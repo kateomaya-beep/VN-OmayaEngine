@@ -16,6 +16,7 @@ import {
   naiSteps,
   naiSupportsRefs,
   naiUcPresetText,
+  normalizeNaiScene,
   padDirectorRef,
   parseNaiAccount,
   withQuality,
@@ -637,8 +638,11 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
   const nai = cfg.nai ?? defaultNaiConfig();
   const scene0: NaiScene = input.nai ?? { base: input.prompt, characters: [], negative: '' };
   const max = naiMaxCharacters(model);
-  const characters = scene0.characters.filter((c) => c.prompt.trim()).slice(0, max);
-  let sceneBase = withStyle(scene0.base, nai.styleTags);
+  const cast = scene0.characters.filter((c) => c.prompt.trim()).slice(0, max);
+  // Правила NovelAI выполняет код: теги количества, girl/boy/other, «Text:» последним…
+  const norm = normalizeNaiScene({ base: scene0.base, characters: cast.map((c) => c.prompt) }, model, { quality: nai.quality });
+  const characters = cast.map((c, i) => ({ ...c, prompt: norm.characters[i] }));
+  let sceneBase = withStyle(norm.base, nai.styleTags);
   if (nai.quality) sceneBase = withQuality(sceneBase, model);
   const negative = [naiUcPresetText(model, nai.ucPreset), nai.negativeTags.trim(), scene0.negative.trim()]
     .filter(Boolean)

@@ -5,7 +5,7 @@ import { usePlayerStore } from '../playerStore';
 import { composeCgPrompt } from '../../../ai/imagePrompt';
 import { renderImage, resolveCast, type RefReport } from '../../../ai/imageCast';
 import { resolvePerson, type Person } from '../../../ai/characterRegistry';
-import { useStylePresets } from '../../../ai/imageStyles';
+import { StylePresetBar } from './StylePresetBar';
 import { scenePeople, DEFAULT_ILLUSTRATE } from '../../../ai/illustrations';
 import { stripStateBlock } from '../../../ai/rpResponse';
 import { ImageConnectionField } from '../../shared/ImageConnectionField';
@@ -27,6 +27,7 @@ import {
   type ImageSizeTier,
 } from '../../../shared/types';
 import { NovelAiSettings, NaiAppearanceTags } from './NovelAiSettings';
+import { ImageChat } from './ImageChat';
 
 type Stage = 'idle' | 'analyze' | 'draw' | 'done' | 'error';
 interface Result {
@@ -56,7 +57,6 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   const s = usePlayerStore();
   const project = s.project;
   const state = s.state;
-  const { presets, add: addPreset, remove: removePreset } = useStylePresets();
 
   const [stage, setStage] = useState<Stage>('idle');
   const [prompt, setPrompt] = useState('');
@@ -70,6 +70,8 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   useImageConnection((x) => x.conn);
   const connOpenAtStart = useMemo(() => open && !imageGenFor(project).model, [open]);
   const [lastCast, setLastCast] = useState<string[] | null>(null); // кто попал в прошлый кадр
+  // По сцене (воркер сам собирает промпт) или ручной режим — чат с ассистентом.
+  const [mode, setMode] = useState<'scene' | 'chat'>('scene');
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -279,7 +281,9 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
       p.imageGen = { ...cur, gallery: cur.gallery.filter((id) => id !== assetId) };
       const a = p.assets.find((x) => x.id === assetId);
       p.assets = p.assets.filter((x) => x.id !== assetId);
-      if (a) void deleteAsset(a.blobKey);
+      // Картинка из ручного режима остаётся в переписке — её файл не трогаем.
+      const inChat = !!a && (cur.chat || []).some((m) => m.images?.includes(a.blobKey));
+      if (a && !inChat) void deleteAsset(a.blobKey);
     });
   }
   function showInScene(assetId: string) {
@@ -344,8 +348,26 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
             )}
           </div>
         )}
+        {/* Режим: по сцене или ручной (чат с ассистентом картинок) */}
+        <div className="flex gap-1.5 nf-studio-mode">
+          <button
+            className={`chip !px-3 !py-1.5 text-xs nf-mode-scene ${mode === 'scene' ? 'bg-accent2 text-white' : ''}`}
+            onClick={() => setMode('scene')}
+          >
+            🎬 {L('По сцене', 'From the scene')}
+          </button>
+          <button
+            className={`chip !px-3 !py-1.5 text-xs nf-mode-chat ${mode === 'chat' ? 'bg-accent2 text-white' : ''}`}
+            onClick={() => setMode('chat')}
+          >
+            💬 {L('Ручной режим', 'Manual mode')}
+            {!!ig.chat?.length && <span className="opacity-70"> · {ig.chat.filter((m) => m.role === 'user').length}</span>}
+          </button>
+        </div>
+        {mode === 'chat' && <ImageChat project={project} state={state} L={L} />}
+
         {/* Reveal результата */}
-        {result && (
+        {mode === 'scene' && result && (
           <div className="rounded-2xl overflow-hidden border border-[rgba(180,150,255,0.25)] bg-gradient-to-b from-[#241d33] to-[#0a0912] p-3 animate-[fadein_400ms]">
             <img src={result.url} alt="CG" className="w-full rounded-xl object-contain max-h-[52vh]" />
             {result.refs && <RefReportLine L={L} r={result.refs} />}
@@ -364,7 +386,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
         )}
 
         {/* Прогресс / кнопка генерации */}
-        {!result && (
+        {mode === 'scene' && !result && (
           <div className="glass-panel p-4 !rounded-2xl">
             {busy ? (
               <div className="text-center py-4">
@@ -531,17 +553,26 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
 
         {/* Стиль + пресеты */}
         {isNai ? (
-          <NovelAiSettings ig={ig} patchNai={patchNai} L={L} />
+          <NovelAiSettings project={project} ig={ig} patchNai={patchNai} L={L} />
         ) : (
         <div>
-          <StyleControls
-            L={L}
-            style={ig.style}
-            onStyle={(style) => patchIG({ style })}
-            presets={presets}
-            onSavePreset={(name) => addPreset(name, ig.style)}
-            onPickPreset={(style) => patchIG({ style })}
-            onDeletePreset={removePreset}
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+            <label className="label !mb-0">{L('Стиль изображения', 'Image style')}</label>
+            <StylePresetBar
+              kind="text"
+              L={L}
+              current={() => ({ kind: 'text', style: ig.style, negative: ig.negativePrompt || '' })}
+              onApply={(p) => patchIG(p.negative === undefined ? { style: p.style } : { style: p.style, negativePrompt: p.negative })}
+            />
+          </div>
+          <textarea
+            className="input h-20 text-sm nf-style-text"
+            placeholder={L(
+              'напр. полуреализм, кинематографичный свет, аниме-иллюстрация высокого качества, мягкие тени',
+              'e.g. semi-realistic, cinematic lighting, high-quality anime illustration, soft shadows'
+            )}
+            value={ig.style}
+            onChange={(e) => patchIG({ style: e.target.value })}
           />
           <div className="mt-3">
             <label className="label">{L('Чего быть не должно', 'What to avoid')}</label>
@@ -552,7 +583,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
               )}
             </p>
             <textarea
-              className="input h-20 text-sm"
+              className="input h-20 text-sm nf-style-negative"
               value={ig.negativePrompt || ''}
               onChange={(e) => patchIG({ negativePrompt: e.target.value })}
             />
@@ -724,81 +755,6 @@ function RefSlot({
           </button>
         )}
       </div>
-    </div>
-  );
-}
-
-function StyleControls({
-  L,
-  style,
-  onStyle,
-  presets,
-  onSavePreset,
-  onPickPreset,
-  onDeletePreset,
-}: {
-  L: (ru: string, en: string) => string;
-  style: string;
-  onStyle: (s: string) => void;
-  presets: { id: string; name: string; style: string }[];
-  onSavePreset: (name: string) => void;
-  onPickPreset: (style: string) => void;
-  onDeletePreset: (id: string) => void;
-}) {
-  const [sel, setSel] = useState('');
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <label className="label !mb-0">{L('Стиль изображения', 'Image style')}</label>
-        <div className="flex items-center gap-1.5">
-          <select
-            className="input !w-40 !py-1 text-xs"
-            value={sel}
-            onChange={(e) => {
-              const p = presets.find((x) => x.id === e.target.value);
-              setSel(e.target.value);
-              if (p) onPickPreset(p.style);
-            }}
-          >
-            <option value="">{L('— пресеты —', '— presets —')}</option>
-            {presets.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          {sel && (
-            <button
-              className="btn-ghost !px-2 !py-1 text-xs text-red-300"
-              title={L('Удалить пресет', 'Delete preset')}
-              onClick={() => {
-                onDeletePreset(sel);
-                setSel('');
-              }}
-            >
-              🗑
-            </button>
-          )}
-          <button
-            className="btn-ghost !px-2 !py-1 text-xs"
-            onClick={() => {
-              const name = window.prompt(L('Имя стиля-пресета', 'Style preset name'));
-              if (name && name.trim()) onSavePreset(name.trim());
-            }}
-          >
-            💾 {L('Сохранить', 'Save')}
-          </button>
-        </div>
-      </div>
-      <textarea
-        className="input h-20 text-sm"
-        placeholder={L(
-          'напр. полуреализм, кинематографичный свет, аниме-иллюстрация высокого качества, мягкие тени',
-          'e.g. semi-realistic, cinematic lighting, high-quality anime illustration, soft shadows'
-        )}
-        value={style}
-        onChange={(e) => onStyle(e.target.value)}
-      />
     </div>
   );
 }

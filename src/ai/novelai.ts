@@ -199,13 +199,123 @@ export function withQuality(base: string, m: NaiModel): string {
   return `${base.slice(0, at).replace(/[\s,.]+$/, '')}, ${q}. ${base.slice(at).trim()}`;
 }
 
-/** Вставить теги стиля в общий промпт — тоже до «Text:». */
+/**
+ * Вставить теги стиля в общий промпт — СРАЗУ ЗА тегами количества: «art style
+ * tags close to the start of the prompt, which is where they're more likely to
+ * have a greater effect» (docs: tutorial-artstyles), а порядок «1boy, 1girl,
+ * characters, series, everything else» (docs: tags).
+ */
 export function withStyle(base: string, style: string): string {
   const s = style.trim().replace(/^[,\s]+|[,\s]+$/g, '');
   if (!s) return base;
-  const at = base.search(/\s*\bText:/);
-  if (at < 0) return `${base.replace(/[\s,]+$/, '')}, ${s}`;
-  return `${base.slice(0, at).replace(/[\s,.]+$/, '')}, ${s}. ${base.slice(at).trim()}`;
+  const at = base.search(/\bText:/);
+  const tags = (at >= 0 ? base.slice(0, at) : base).replace(/[\s,.]+$/, '');
+  const text = at >= 0 ? base.slice(at).trim() : '';
+  const parts = tags.split(',');
+  let i = 0;
+  while (i < parts.length && COUNT_TAG.test(parts[i].trim())) i++;
+  const head = parts.slice(0, i).map((t) => t.trim());
+  const rest = parts.slice(i).join(',').trim();
+  return [...head, s, rest].filter(Boolean).join(', ') + (text ? `. ${text}` : '');
+}
+
+// ── Нормализация промпта ──────────────────────────────────────────────────────
+// Правила NovelAI, которые выполняет КОД, а не модель-воркер: она может их забыть,
+// а от них зависит, сколько людей будет на картинке и кто есть кто.
+
+const COUNT_TAG = /^(\d+\+?(girl|boy|other)s?|multiple (girls|boys|others)|solo|no humans)$/i;
+const QUALITY_TAGS = new Set(['masterpiece', 'best quality', 'amazing quality', 'great quality', 'high quality', 'very aesthetic', 'absurdres', 'highres']);
+
+const splitTags = (s: string) => s.split(',').map((t) => t.trim()).filter(Boolean);
+
+/** Подчёркивания Danbooru → пробелы (в NovelAI теги пишутся через пробел). */
+function unscore(s: string): string {
+  return s.replace(/([\p{L}\p{N}])_(?=[\p{L}\p{N}(])/gu, '$1 ');
+}
+
+function dedupe(tags: string[]): string[] {
+  const seen = new Set<string>();
+  return tags.filter((t) => {
+    const k = t.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+/** V4/V4.5 — токенайзер T5, V3 — CLIP: «most Unicode characters … are not supported» (docs: models). */
+function asciiOnly(s: string): string {
+  return s
+    .replace(/[«»“”„]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[—–]/g, '-')
+    .replace(/…/g, '...')
+    .replace(/[^\x20-\x7E\n]/g, '')
+    .replace(/ {2,}/g, ' ');
+}
+
+type Subject = 'girl' | 'boy' | 'other';
+
+function subjectOf(prompt: string): Subject {
+  const tags = splitTags(prompt.toLowerCase());
+  const first = (tags[0] || '').replace(/^\d+\+?/, '').replace(/s$/, '');
+  if (first === 'girl' || first === 'boy' || first === 'other') return first;
+  const all = ` ${tags.join(' ')} `;
+  if (/\b(\d*girls?|woman|female|lady|maid)\b/.test(all)) return 'girl';
+  if (/\b(\d*boys?|man|male|guy)\b/.test(all)) return 'boy';
+  return 'other';
+}
+
+/** Промпт персонажа: первым — girl / boy / other без числа (docs: multiple characters). */
+export function normalizeCharacterPrompt(prompt: string): string {
+  const subject = subjectOf(prompt);
+  const tags = splitTags(unscore(prompt)).filter((t) => !COUNT_TAG.test(t) && !/^(girl|boy|other)$/i.test(t));
+  return [subject, ...dedupe(tags)].join(', ');
+}
+
+/** Теги количества по составу: 2girls, 1boy… (+ solo для одного) — в общий промпт. */
+export function countTags(characters: string[]): string[] {
+  const n = { girl: 0, boy: 0, other: 0 };
+  for (const c of characters) n[subjectOf(c)]++;
+  const out: string[] = [];
+  for (const k of ['girl', 'boy', 'other'] as const) {
+    const v = n[k];
+    if (!v) continue;
+    out.push(v >= 6 ? `6+${k}s` : `${v}${k}${v > 1 ? 's' : ''}`);
+  }
+  if (characters.length === 1) out.push('solo');
+  return out;
+}
+
+/**
+ * Привести сцену к правилам NovelAI перед отправкой:
+ *  • персонажи — girl/boy/other первым, без чисел, без дублей;
+ *  • теги количества в общем промпте пересчитаны по персонажам и стоят первыми
+ *    («These tags should always go into the base prompt», docs: multiple characters);
+ *  • теги качества модели — не дублировать (их добавит галочка);
+ *  • «Text:» — последним (docs: text rendering);
+ *  • V3/V4/V4.5 — без символов, которых не знает их токенайзер.
+ */
+export function normalizeNaiScene(
+  scene: { base: string; characters: string[] },
+  model: NaiModel,
+  opts: { quality: boolean }
+): { base: string; characters: string[] } {
+  const ascii = model.family !== 'v5';
+  const fix = (s: string) => (ascii ? asciiOnly(unscore(s)) : unscore(s));
+  // Один к одному со входом: к персонажу привязаны его «нежелательное» и место в кадре.
+  const characters = scene.characters.map((c) => normalizeCharacterPrompt(fix(c)));
+  // Текст в картинке — отдельно: он не теги, и делить его по запятым нельзя.
+  const tAt = scene.base.search(/\bText:/);
+  const text = tAt >= 0 ? scene.base.slice(tAt).trim() : '';
+  let tags = splitTags(fix(tAt >= 0 ? scene.base.slice(0, tAt) : scene.base).replace(/[.\s]+$/, ''));
+  if (opts.quality) tags = tags.filter((t) => !QUALITY_TAGS.has(t.toLowerCase()));
+  if (characters.length) {
+    tags = tags.filter((t) => !COUNT_TAG.test(t));
+    tags = [...countTags(characters), ...tags];
+  }
+  const base = dedupe(tags).join(', ') + (text ? `. ${ascii ? asciiOnly(text) : text}` : '');
+  return { base, characters };
 }
 
 // ── Реф персонажа (V4.5) ──────────────────────────────────────────────────────
@@ -436,4 +546,49 @@ export function parseNaiAccount(d: any): NaiAccount {
     v5UsageNegative: d?.usage ? !!d.usage.isNegative : undefined,
     v5UsagePercent: d?.usage ? Number(d.usage.percent ?? 0) : undefined,
   };
+}
+
+// ── Веса ─────────────────────────────────────────────────────────────────────
+// Синтаксис NovelAI (docs: strengthening-weakening): «1.5::rain, night ::» —
+// числом (V4+), «-1::hat ::» — отрицательный (V4.5+), {…} ×1.05, […] ÷1.05.
+// Модели-помощники часто пишут по привычке Stable Diffusion: «(tag:1.3)» — это
+// NovelAI не поймёт, переводим. А что модель не умеет — убираем с пометкой.
+
+export interface WeightFix {
+  text: string;
+  /** Что пришлось убрать или переделать — сказать человеку. */
+  notes: string[];
+}
+
+const braces = (w: number, body: string) => {
+  const n = Math.min(8, Math.max(1, Math.round(Math.abs(Math.log(w) / Math.log(1.05)))));
+  return w >= 1 ? `${'{'.repeat(n)}${body}${'}'.repeat(n)}` : `${'['.repeat(n)}${body}${']'.repeat(n)}`;
+};
+
+export function fixNaiWeights(text: string, m: NaiModel): WeightFix {
+  const notes: string[] = [];
+  // (tag:1.3) / (tag) — синтаксис SD.
+  let t = text.replace(/\(([^()]+?):\s*(-?\d+(?:\.\d+)?)\)/g, (_all, body: string, w: string) => `${Number(w)}::${body.trim()}::`);
+  const numeric = /(-?\d+(?:\.\d+)?)::((?:(?!::).)*?)\s*::/g;
+  if (m.family === 'v3') {
+    t = t.replace(numeric, (_a, w: string, body: string) => {
+      const v = Number(w);
+      if (v <= 0) {
+        notes.push(`«${body.trim()}» с отрицательным весом убран — у Anime V3 его нет, перенесите в «нежелательное»`);
+        return '';
+      }
+      return braces(v, body.trim());
+    });
+  } else if (m.family === 'v4') {
+    t = t.replace(numeric, (all, w: string, body: string) => {
+      if (Number(w) >= 0) return all;
+      notes.push(`«${body.trim()}» с отрицательным весом убран — он работает только с V4.5, перенесите в «нежелательное»`);
+      return '';
+    });
+  }
+  t = t
+    .replace(/\s*,\s*(,\s*)+/g, ', ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s,]+|[\s,]+$/g, '');
+  return { text: t, notes };
 }

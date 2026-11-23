@@ -956,6 +956,29 @@ export interface ImageGenConfig {
   illustrations?: Record<string, Illustration>;
   /** Настройки NovelAI — действуют, когда провайдер картинок NovelAI. */
   nai?: NaiImageConfig;
+  /** Ручной режим: переписка с ассистентом картинок (живёт в истории, «Очистить» — стереть). */
+  chat?: ImageChatMsg[];
+  /** Ассистент видит сцену (место, кто рядом, последний текст). По умолчанию — да. */
+  chatSeeScene?: boolean;
+}
+
+// РУЧНОЙ РЕЖИМ СТУДИИ. Человек пишет по-простому, ассистент отвечает промптом
+// под текущего провайдера (NovelAI — теги «сцена | персонаж», остальные — описание).
+export interface ImageChatMsg {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  /** assistant: промпт (правится руками перед «Нарисовать»). */
+  prompt?: string;
+  /** Под какого провайдера написан промпт: другой провайдер его не поймёт. */
+  provider?: ImageGenConfig['providerKind'];
+  aspect?: ImageAspectRatio;
+  /** Кто в кадре — имена (по ним при «Нарисовать» находятся описания и рефы). */
+  cast?: string[];
+  /** Нарисованные картинки: blobKey в IndexedDB. */
+  images?: string[];
+  error?: string;
+  at: number;
 }
 
 // NOVELAI. Отдельные от общих стиля и «нежелательного»: там фразы, здесь теги.
@@ -1120,6 +1143,27 @@ export function defaultImageGenConfig(): ImageGenConfig {
 }
 
 // Санитизация ImageGenConfig (импорт/старые проекты) → полная конфигурация.
+const KINDS = ['gemini', 'openai', 'openai_chat', 'novelai'];
+const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && !!x) : undefined);
+
+export function normalizeImageChat(v: unknown[]): ImageChatMsg[] {
+  return v
+    .filter((m: any) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')
+    .slice(-200)
+    .map((m: any) => ({
+      id: typeof m.id === 'string' ? m.id : `msg_${Math.random().toString(36).slice(2)}`,
+      role: m.role,
+      text: m.text,
+      ...(typeof m.prompt === 'string' ? { prompt: m.prompt } : {}),
+      ...(KINDS.includes(m.provider) ? { provider: m.provider } : {}),
+      ...((IMAGE_ASPECT_RATIOS as readonly string[]).includes(m.aspect) ? { aspect: m.aspect } : {}),
+      ...(strs(m.cast) ? { cast: strs(m.cast) } : {}),
+      ...(strs(m.images)?.length ? { images: strs(m.images) } : {}),
+      ...(typeof m.error === 'string' ? { error: m.error } : {}),
+      at: Number(m.at) || 0,
+    }));
+}
+
 export function normalizeImageGen(v: unknown): ImageGenConfig {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   const d = defaultImageGenConfig();
@@ -1169,6 +1213,8 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     sendReferences: typeof o.sendReferences === 'boolean' ? o.sendReferences : true,
     gallery: Array.isArray(o.gallery) ? o.gallery.filter((x): x is string => typeof x === 'string') : [],
     ...(o.nai ? { nai: normalizeNaiConfig(o.nai) } : {}),
+    ...(Array.isArray(o.chat) ? { chat: normalizeImageChat(o.chat) } : {}),
+    ...(typeof o.chatSeeScene === 'boolean' ? { chatSeeScene: o.chatSeeScene } : {}),
     ...(o.illustrate && typeof o.illustrate === 'object'
       ? {
           illustrate: {

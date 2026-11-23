@@ -6,16 +6,20 @@ import { naiMaxCharacters, naiModel, naiQualitySuffix, naiSupportsRefs, naiUcPre
 import { generateAppearanceTags, naiWorkerDefault, naiWorkerPrompt } from '../../../ai/novelaiPrompt';
 import { resolvePerson } from '../../../ai/characterRegistry';
 import { pushToast } from '../../../shared/toast';
+import { StylePresetBar } from './StylePresetBar';
+import { NaiTagsAssist } from './NaiTagsAssist';
 
 type L = (ru: string, en: string) => string;
 
 // НАСТРОЙКИ NOVELAI В СТУДИИ. Свои, а не общие «стиль» и «чего быть не должно»:
 // там фразы для моделей-художников, здесь теги Danbooru, пресеты модели и рефы V4.5.
 export function NovelAiSettings({
+  project,
   ig,
   patchNai,
   L,
 }: {
+  project: Project;
   ig: ImageGenConfig;
   patchNai: (p: Partial<NaiImageConfig>) => void;
   L: L;
@@ -26,7 +30,18 @@ export function NovelAiSettings({
   const custom = !!nai.workerPrompt?.trim();
   return (
     <div className="nf-nai-settings space-y-3 rounded-xl border border-fuchsia-400/20 bg-fuchsia-500/[0.04] p-3">
-      <div className="text-sm font-semibold">NovelAI · {model.label}</div>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-sm font-semibold">NovelAI · {model.label}</div>
+        <StylePresetBar
+          kind="nai"
+          L={L}
+          current={() => ({
+            kind: 'nai',
+            nai: { styleTags: nai.styleTags, negativeTags: nai.negativeTags, ucPreset: nai.ucPreset, quality: nai.quality },
+          })}
+          onApply={(p) => p.nai && patchNai({ ...p.nai })}
+        />
+      </div>
       <p className="text-[11px] text-gray-400">
         {L(
           `Воркер пишет теги Danbooru: сцену отдельно, каждого персонажа отдельно (до ${naiMaxCharacters(model) || 0}), взаимодействия — тегами source#/target#/mutual#. Сцена описывается как есть, включая NSFW, если он в сюжете${model.curated ? ' — но Curated-модель NSFW не рисует, для него выберите Full' : ''}.`,
@@ -35,7 +50,10 @@ export function NovelAiSettings({
       </p>
 
       <div>
-        <label className="label">{L('Теги стиля', 'Style tags')}</label>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <label className="label !mb-0">{L('Теги стиля', 'Style tags')}</label>
+          <NaiTagsAssist project={project} field="style" value={nai.styleTags} onApply={(t) => patchNai({ styleTags: t })} L={L} />
+        </div>
         <p className="text-[11px] text-gray-500 mb-1">
           {L(
             'Вписываются в промпт сцены как есть: художники (artist:имя), год (year 2014), сложность (high complexity — V5), техника, палитра. Веса: {тег} сильнее, [тег] слабее, 1.5::тег:: — числом.',
@@ -97,9 +115,12 @@ export function NovelAiSettings({
       </div>
 
       <div>
-        <label className="label">{L('Свои теги «нежелательного»', 'Own undesired tags')}</label>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <label className="label !mb-0">{L('Свои теги «нежелательного»', 'Own undesired tags')}</label>
+          <NaiTagsAssist project={project} field="negative" value={nai.negativeTags} onApply={(t) => patchNai({ negativeTags: t })} L={L} />
+        </div>
         <textarea
-          className="input h-14 text-sm font-mono"
+          className="input h-14 text-sm font-mono nf-nai-negative"
           placeholder="например: bad hands, extra fingers, -1::text::"
           value={nai.negativeTags}
           onChange={(e) => patchNai({ negativeTags: e.target.value })}
