@@ -15,15 +15,18 @@ import { uploadAsset } from '../../../storage/assetOps';
 import { uid } from '../../../shared/utils';
 import {
   defaultImageGenConfig,
+  defaultNaiConfig,
   normalizeNarrativeMode,
   IMAGE_ASPECT_RATIOS,
   IMAGE_ASPECT_LABELS,
   IMAGE_SIZE_TIERS,
   type AssetMeta,
   type ImageGenConfig,
+  type NaiImageConfig,
   type ImageAspectSetting,
   type ImageSizeTier,
 } from '../../../shared/types';
+import { NovelAiSettings, NaiAppearanceTags } from './NovelAiSettings';
 
 type Stage = 'idle' | 'analyze' | 'draw' | 'done' | 'error';
 interface Result {
@@ -89,6 +92,14 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   function patchIG(patch: Partial<ImageGenConfig>) {
     s.patchProject((p) => {
       p.imageGen = { ...(p.imageGen ?? defaultImageGenConfig()), ...patch };
+    });
+  }
+  // NovelAI: свои настройки (теги стиля, пресеты, рефы V4.5, промпт воркера).
+  const isNai = ig.providerKind === 'novelai';
+  function patchNai(patch: Partial<NaiImageConfig>) {
+    s.patchProject((p) => {
+      const cur = p.imageGen ?? defaultImageGenConfig();
+      p.imageGen = { ...cur, nai: { ...(cur.nai ?? defaultNaiConfig()), ...patch } };
     });
   }
   // Два независимых слота на персонажа: внешность (лицо/волосы/телосложение) и
@@ -496,7 +507,12 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
             </div>
           </div>
           <p className="text-[11px] text-gray-500 mt-1">
-            {ig.providerKind === 'gemini'
+            {isNai
+              ? L(
+                  'NovelAI: соотношение пересчитывается в размер, кратный 64. С «Не тратить Anlas» — до ~1 Мп (832×1216, 1216×832, 1024×1024…), разрешение выше 1K тогда не действует.',
+                  'NovelAI: the ratio becomes a size in multiples of 64. With "Do not spend Anlas" it stays under ~1 MP.'
+                )
+              : ig.providerKind === 'gemini'
               ? L(
                   '2K/4K умеет только Pro-модель Nano Banana — на остальных движок сам вернётся к 1K. Фон всегда рисуется горизонтальным, селфи — вертикальным.',
                   'Only the Nano Banana Pro model supports 2K/4K — others fall back to 1K automatically. Backgrounds are always landscape, selfies portrait.'
@@ -514,6 +530,9 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
         </div>
 
         {/* Стиль + пресеты */}
+        {isNai ? (
+          <NovelAiSettings ig={ig} patchNai={patchNai} L={L} />
+        ) : (
         <div>
           <StyleControls
             L={L}
@@ -539,6 +558,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
             />
           </div>
         </div>
+        )}
 
         {/* Референсы персонажей */}
         <div>
@@ -554,10 +574,15 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
             </label>
           </div>
           <p className="text-[11px] text-gray-500 mb-2">
-            {L(
+            {isNai
+              ? L(
+                  'У NovelAI дизайн держат ТЕГИ ВНЕШНОСТИ: они вставляются в промпт персонажа дословно в каждом кадре. Картинка «Внешность» нужна только для рефа персонажа — он есть у V4.5 и включается галочкой выше.',
+                  'With NovelAI the APPEARANCE TAGS keep the design: they go into the character prompt verbatim in every image. The Appearance image is only used for the V4.5 character reference.'
+                )
+              : L(
               'На каждого — два слота. ВНЕШНОСТЬ: если задана только она — это дизайн персонажа целиком (лицо, причёска, костюм, цвета), модель повторяет его как есть. Если задана и ОДЕЖДА — с первой картинки берутся лицо и телосложение, со второй — наряд. По умолчанию внешность — нейтральный спрайт, но своя картинка заменит его везде (CG, селфи, фото от ботов, аватарки). В списке не только персонажи проекта: те, кого нашёл Game Master, и контакты телефона без карточки тоже здесь. Под готовой картинкой написано, какие рефы ушли.',
               'Two slots each. APPEARANCE alone is the whole character design (face, hair, costume, colours) and is reproduced as is. With an OUTFIT image too, the first gives face and build, the second the clothes. Appearance defaults to the neutral sprite; a custom image replaces it everywhere. The list covers project characters, people found by the Game Master and phone contacts. Under a finished picture you can see which references were sent.'
-            )}
+                )}
             {ig.providerKind === 'openai' &&
               ' ' +
                 L(
@@ -586,16 +611,28 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
                     onUpload={(f) => void uploadRef(c.id, 'appearance', f)}
                     onReset={() => setRef(c.id, 'appearance')}
                   />
-                  <RefSlot
-                    L={L}
-                    title={L('Одежда', 'Outfit')}
-                    blobKey={project.assets.find((a) => a.id === outfitRefAsset(c.id))?.blobKey}
-                    note={outfitRefAsset(c.id) ? L('своя картинка', 'custom image') : L('не задан', 'not set')}
-                    custom={!!outfitRefAsset(c.id)}
-                    onUpload={(f) => void uploadRef(c.id, 'outfit', f)}
-                    onReset={() => setRef(c.id, 'outfit')}
-                  />
+                  {!isNai && (
+                    <RefSlot
+                      L={L}
+                      title={L('Одежда', 'Outfit')}
+                      blobKey={project.assets.find((a) => a.id === outfitRefAsset(c.id))?.blobKey}
+                      note={outfitRefAsset(c.id) ? L('своя картинка', 'custom image') : L('не задан', 'not set')}
+                      custom={!!outfitRefAsset(c.id)}
+                      onUpload={(f) => void uploadRef(c.id, 'outfit', f)}
+                      onReset={() => setRef(c.id, 'outfit')}
+                    />
+                  )}
                 </div>
+                {isNai && (
+                  <NaiAppearanceTags
+                    project={project}
+                    state={state}
+                    personId={c.id}
+                    nai={ig.nai ?? defaultNaiConfig()}
+                    patchNai={patchNai}
+                    L={L}
+                  />
+                )}
               </div>
             ))}
             {refTargets.length === 0 && (
@@ -614,6 +651,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           </summary>
           <div className="mt-3">
             <ImageConnectionField project={project} />
+            {!isNai && (
             <div className="mt-3">
               <label className="label">{L('Системный промпт воркера', 'Prompt-worker system prompt')}</label>
               <p className="text-[11px] text-gray-500 mb-1">
@@ -628,6 +666,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
                 onChange={(e) => patchIG({ systemPrompt: e.target.value })}
               />
             </div>
+            )}
           </div>
         </details>
       </div>
@@ -776,6 +815,17 @@ function RefReportLine({ r, L }: { r: RefReport; L: (ru: string, en: string) => 
         </div>
       )}
       {r.note && <div className="text-amber-300/90">{L('Рефы не ушли: ', 'References not sent: ') + r.note}</div>}
+      {!!r.tagged?.length && (
+        <div className="text-emerald-300/90">{L('Теги внешности ушли дословно: ', 'Appearance tags sent verbatim: ') + r.tagged.join(', ')}</div>
+      )}
+      {!!r.noTags?.length && (
+        <div className="text-amber-300/90">
+          {L(
+            `Без тегов внешности: ${r.noTags.join(', ')} — дизайн может меняться от кадра к кадру. Заполните их в «Референсах» (кнопка «✨ из анкеты»).`,
+            `No appearance tags: ${r.noTags.join(', ')} — fill them in under "References".`
+          )}
+        </div>
+      )}
       {r.missing.length > 0 && (
         <div className="text-amber-300/90">
           {L(
@@ -784,7 +834,7 @@ function RefReportLine({ r, L }: { r: RefReport; L: (ru: string, en: string) => 
           )}
         </div>
       )}
-      {!r.sent.length && !r.note && !r.missing.length && (
+      {!r.sent.length && !r.note && !r.missing.length && !r.tagged?.length && !r.noTags?.length && (
         <div className="text-gray-500">{L('В кадре никого из известных персонажей — рефы не нужны.', 'No known characters in frame — no references needed.')}</div>
       )}
     </div>

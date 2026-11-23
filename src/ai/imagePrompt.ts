@@ -2,6 +2,8 @@ import type { Project, RuntimeState, ImageAspectRatio } from '../shared/types';
 import { IMAGE_ASPECT_RATIOS } from '../shared/types';
 import { runCompletion } from './providers';
 import { describePerson, type Person } from './characterRegistry';
+import { imageGenFor } from './imageConnection';
+import { composeNaiPrompt } from './novelaiPrompt';
 
 // Собирает короткий промпт для image-API из текущего контекста сцены
 // (локация, настроение, последние beats). Отдельный дешёвый вызов LLM.
@@ -62,6 +64,9 @@ export async function composeCgPrompt(
     recent?: string;
   }
 ): Promise<{ prompt: string; aspectRatio?: ImageAspectRatio; cast?: string[] }> {
+  // NovelAI рисует по тегам Danbooru, сцену и персонажей отдельно — у него свой
+  // воркер и свой промпт (настройки студии), шаблон systemPrompt здесь ни при чём.
+  if (imageGenFor(project).providerKind === 'novelai') return composeNaiPrompt(project, state, opts);
   // Кандидаты — те, кто «на сцене» по состоянию движка. ВАЖНО: это не значит,
   // что все они в кадре: персонаж остаётся на сцене и после своей реплики, и на
   // трёх персонажах NPC не выпадал никогда — поэтому лез в каждую кат-сцену.

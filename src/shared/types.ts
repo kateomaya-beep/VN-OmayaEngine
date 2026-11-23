@@ -926,7 +926,9 @@ export interface ImageGenConfig {
   //  • openai      — /images/generations (текст→картинка, без рефов);
   //  • openai_chat — /chat/completions с картинкой в ОТВЕТЕ (OpenRouter и клоны:
   //    google/gemini-…-image, modalities:['image','text']). Рефы работают.
-  providerKind: 'gemini' | 'openai' | 'openai_chat';
+  //  • novelai     — NovelAI (image.novelai.net): теги Danbooru, сцена и персонажи
+  //    отдельными промптами, свои теги качества и пресеты (см. ai/novelai.ts).
+  providerKind: 'gemini' | 'openai' | 'openai_chat' | 'novelai';
   baseUrl?: string; // пусто — дефолт под providerKind
   model?: string; // пусто — дефолт под providerKind
   // Кадр: соотношение сторон и разрешение (у Nano Banana это родные параметры).
@@ -952,6 +954,72 @@ export interface ImageGenConfig {
   // проекте, а не в сейве: откат или свайп не должны терять уже оплаченную
   // картинку и рисовать её заново.
   illustrations?: Record<string, Illustration>;
+  /** Настройки NovelAI — действуют, когда провайдер картинок NovelAI. */
+  nai?: NaiImageConfig;
+}
+
+// NOVELAI. Отдельные от общих стиля и «нежелательного»: там фразы, здесь теги.
+export interface NaiImageConfig {
+  /** Теги стиля — вписываются в общий промпт как есть (художники, год, сложность…). */
+  styleTags: string;
+  /** Свои теги «нежелательного» — к пресету. */
+  negativeTags: string;
+  ucPreset: 'heavy' | 'light' | 'human' | 'none';
+  /** Теги качества модели в конец промпта (как «Add Quality Tags» на сайте). */
+  quality: boolean;
+  /** Не тратить Anlas: ≤ 1 Мп, ≤ 28 шагов, одна картинка (бесплатно на Opus). */
+  freeOnly: boolean;
+  /** Реф персонажа (Precise Reference) — только V4.5, +5 Anlas за картинку. */
+  refs: boolean;
+  refType: 'character' | 'character&style';
+  refStrength: number;
+  refFidelity: number;
+  /** Каким промптом воркер пишет теги: иллюстрация к сцене или страница манхвы. */
+  workerPreset: 'illustration' | 'manhwa';
+  /** Свой текст промпта воркера; нет — текст выбранного пресета. */
+  workerPrompt?: string;
+  /** Теги внешности по человеку (id анкеты/записи) — вставляются дословно. */
+  appearanceTags: Record<string, string>;
+}
+
+export function defaultNaiConfig(): NaiImageConfig {
+  return {
+    styleTags: '',
+    negativeTags: '',
+    ucPreset: 'heavy',
+    quality: true,
+    freeOnly: true,
+    refs: false,
+    refType: 'character',
+    refStrength: 0.7,
+    refFidelity: 1,
+    workerPreset: 'illustration',
+    appearanceTags: {},
+  };
+}
+
+export function normalizeNaiConfig(v: unknown): NaiImageConfig {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, any>;
+  const d = defaultNaiConfig();
+  const clamp01 = (x: unknown, def: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : def);
+  const tags: Record<string, string> = {};
+  if (o.appearanceTags && typeof o.appearanceTags === 'object') {
+    for (const [k, val] of Object.entries(o.appearanceTags)) if (typeof val === 'string' && val.trim()) tags[k] = val;
+  }
+  return {
+    styleTags: typeof o.styleTags === 'string' ? o.styleTags : d.styleTags,
+    negativeTags: typeof o.negativeTags === 'string' ? o.negativeTags : d.negativeTags,
+    ucPreset: ['heavy', 'light', 'human', 'none'].includes(o.ucPreset) ? o.ucPreset : d.ucPreset,
+    quality: typeof o.quality === 'boolean' ? o.quality : d.quality,
+    freeOnly: typeof o.freeOnly === 'boolean' ? o.freeOnly : d.freeOnly,
+    refs: !!o.refs,
+    refType: o.refType === 'character&style' ? 'character&style' : 'character',
+    refStrength: clamp01(o.refStrength, d.refStrength),
+    refFidelity: clamp01(o.refFidelity, d.refFidelity),
+    workerPreset: o.workerPreset === 'manhwa' ? 'manhwa' : 'illustration',
+    ...(typeof o.workerPrompt === 'string' && o.workerPrompt.trim() ? { workerPrompt: o.workerPrompt } : {}),
+    appearanceTags: tags,
+  };
 }
 
 export interface Illustration {
@@ -1067,7 +1135,7 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
   const refs = pickRefs(o.references);
   return {
     providerKind:
-      o.providerKind === 'openai' ? 'openai' : o.providerKind === 'openai_chat' ? 'openai_chat' : 'gemini',
+      o.providerKind === 'openai' || o.providerKind === 'openai_chat' || o.providerKind === 'novelai' ? o.providerKind : 'gemini',
     baseUrl: typeof o.baseUrl === 'string' && o.baseUrl.trim() ? o.baseUrl.trim() : undefined,
     model: typeof o.model === 'string' && o.model.trim() ? o.model.trim() : undefined,
     availableModels: Array.isArray(o.availableModels)
@@ -1100,6 +1168,7 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     outfitReferences: pickRefs(o.outfitReferences),
     sendReferences: typeof o.sendReferences === 'boolean' ? o.sendReferences : true,
     gallery: Array.isArray(o.gallery) ? o.gallery.filter((x): x is string => typeof x === 'string') : [],
+    ...(o.nai ? { nai: normalizeNaiConfig(o.nai) } : {}),
     ...(o.illustrate && typeof o.illustrate === 'object'
       ? {
           illustrate: {

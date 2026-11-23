@@ -10,6 +10,7 @@ import {
 import { imageGenFor, useImageConnection, type ImageConnection } from '../../ai/imageConnection';
 import type { ImageGenConfig, Project } from '../../shared/types';
 import { defaultImageGenConfig } from '../../shared/types';
+import { DEFAULT_NAI_MODEL, NAI_MODELS } from '../../ai/novelai';
 
 // Редактор подключения к image-API — как основное подключение: провайдер / Base URL /
 // модель со списком по ⟳ / ключ / тест. Подключение ОБЩЕЕ на все истории (см.
@@ -18,12 +19,14 @@ const DEFAULT_BASE: Record<ImageGenConfig['providerKind'], string> = {
   gemini: 'https://generativelanguage.googleapis.com/v1beta',
   openai: 'https://api.openai.com/v1',
   openai_chat: 'https://openrouter.ai/api/v1',
+  novelai: 'https://image.novelai.net',
 };
 
 const PATH_HINT: Record<ImageGenConfig['providerKind'], string> = {
   gemini: '/models/<модель>:generateContent',
   openai: '/images/generations',
   openai_chat: '/chat/completions',
+  novelai: '/ai/generate-image',
 };
 
 export function ImageConnectionField({ project }: { project?: Project | null }) {
@@ -83,19 +86,22 @@ export function ImageConnectionField({ project }: { project?: Project | null }) 
             const providerKind = e.target.value as ImageGenConfig['providerKind'];
             const wasDefault =
               !conn.baseUrl || Object.values(DEFAULT_BASE).includes(conn.baseUrl.replace(/\/+$/, ''));
+            // У NovelAI списка моделей в API нет — каталог подставляем сразу.
+            const nai = providerKind === 'novelai';
             patch({
               providerKind,
               baseUrl: wasDefault ? DEFAULT_BASE[providerKind] : conn.baseUrl,
-              model: undefined,
-              availableModels: undefined,
-              modelInfo: undefined,
+              model: nai ? DEFAULT_NAI_MODEL : undefined,
+              availableModels: nai ? NAI_MODELS.map((m) => m.id) : undefined,
+              modelInfo: nai ? Object.fromEntries(NAI_MODELS.map((m) => [m.id, { name: m.label, image: true }])) : undefined,
             });
             setStatus({ busy: false });
           }}
         >
           <option value="gemini">Google напрямую · Gemini / Nano Banana (с рефами)</option>
           <option value="openai_chat">Шлюз-роутер · chat/completions с картинкой в ответе (с рефами)</option>
-          <option value="openai">Шлюз · images/generations (без рефов)</option>
+          <option value="openai">Шлюз · images/generations (рефы через /images/edits)</option>
+          <option value="novelai">NovelAI · теги Danbooru (постоянный токен)</option>
         </select>
       </Field>
 
@@ -104,7 +110,9 @@ export function ImageConnectionField({ project }: { project?: Project | null }) 
           ? 'Родной протокол Google — только для ключа Google AI Studio и адреса generativelanguage.googleapis.com.'
           : conn.providerKind === 'openai_chat'
             ? 'Для агрегаторов (OpenRouter и клоны): своей ручки картинок у них нет, рисует модель вида google/gemini-…-image прямо в чате.'
-            : 'Классический путь картинок OpenAI. Если шлюз его не знает — берите вариант с chat/completions.'}
+            : conn.providerKind === 'novelai'
+              ? 'NovelAI рисует по тегам Danbooru: воркер сам пишет сцену и каждого персонажа отдельно. Теги стиля, «нежелательное», рефы V4.5 и «Не тратить Anlas» — в студии. Токен: novelai.net → Account Settings → Get Persistent API Token.'
+              : 'Классический путь картинок OpenAI. Если шлюз его не знает — берите вариант с chat/completions.'}
       </p>
 
       <Field label="Base URL" hint={`Запрос уйдёт на: ${effectiveImageBase(cfg)}${PATH_HINT[conn.providerKind]}`}>
@@ -135,20 +143,23 @@ export function ImageConnectionField({ project }: { project?: Project | null }) 
         />
       </Field>
 
-      <Field label="API-ключ" hint="Хранится только в этом браузере (localStorage), уходит только к image-провайдеру.">
+      <Field
+        label={conn.providerKind === 'novelai' ? 'Постоянный токен NovelAI' : 'API-ключ'}
+        hint="Хранится только в этом браузере (localStorage), уходит только к image-провайдеру."
+      >
         <div className="flex gap-2">
           <input
             className="input flex-1"
             type="password"
             value={key}
-            placeholder="sk-… / AIza…"
+            placeholder={conn.providerKind === 'novelai' ? 'pst-…' : 'sk-… / AIza…'}
             onChange={(e) => {
               setKey(e.target.value);
               setApiKey('image', e.target.value);
             }}
           />
           <button className="btn-ghost !px-3 text-xs" disabled={status.busy} onClick={test}>
-            {status.busy ? '…' : 'Тест'}
+            {status.busy ? '…' : conn.providerKind === 'novelai' ? 'Подписка и Anlas' : 'Тест'}
           </button>
         </div>
       </Field>

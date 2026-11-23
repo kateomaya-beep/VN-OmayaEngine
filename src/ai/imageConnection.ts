@@ -33,7 +33,8 @@ function load(): ImageConnection | null {
     const v = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (!v || typeof v !== 'object') return null;
     return {
-      providerKind: v.providerKind === 'openai' || v.providerKind === 'openai_chat' ? v.providerKind : 'gemini',
+      providerKind:
+        v.providerKind === 'openai' || v.providerKind === 'openai_chat' || v.providerKind === 'novelai' ? v.providerKind : 'gemini',
       baseUrl: typeof v.baseUrl === 'string' && v.baseUrl.trim() ? v.baseUrl.trim() : undefined,
       model: typeof v.model === 'string' && v.model.trim() ? v.model.trim() : undefined,
       availableModels: Array.isArray(v.availableModels) ? v.availableModels.filter((x: unknown) => typeof x === 'string') : undefined,

@@ -1,5 +1,8 @@
 import type { Project, RuntimeState } from '../shared/types';
-import { blobToRef, composeFinalPrompt, generateImage, supportsReferences, type ImageRef } from './imageProvider';
+import { blobToRef, composeFinalPrompt, effectiveImageModel, generateImage, supportsReferences, type ImageRef } from './imageProvider';
+import { defaultNaiConfig } from '../shared/types';
+import { joinNaiPrompt, naiMaxCharacters, naiModel, naiSupportsRefs, splitNaiPrompt } from './novelai';
+import { appearanceTagsOf } from './novelaiPrompt';
 import { getAssetBlob } from '../storage/db';
 import { imageGenFor } from './imageConnection';
 import { resolveSprite } from '../shared/outfits';
@@ -76,6 +79,10 @@ export interface RefReport {
   missing: string[];
   /** Почему рефы не ушли вовсе (выключены, провайдер не принял). */
   note?: string;
+  /** NovelAI: у кого в кадре нет тегов внешности (дизайн может плыть). */
+  noTags?: string[];
+  /** NovelAI: у кого теги внешности ушли дословно. */
+  tagged?: string[];
 }
 
 /**
@@ -121,6 +128,8 @@ export async function renderImage(
   }
   if (opts.scanText) for (const p of personsInText(project, state, opts.scanText)) push(p);
 
+  if (ig.providerKind === 'novelai') return renderNovelAI(project, ig, people, opts);
+
   const known = people
     .map((p) => ({ name: p.name, look: describePerson(p) }))
     .filter((x) => x.look);
@@ -160,4 +169,55 @@ export async function renderImage(
     },
   });
   return { blob, cast: people, finalPrompt, refs: report };
+}
+
+// NovelAI: промпт уже в синтаксисе «сцена | персонаж | …» (его пишет воркер NovelAI,
+// см. novelaiPrompt.ts) — разбираем на части. Пришла обычная фраза (камера
+// телефона, быстрые действия) — персонажей собираем из их тегов внешности.
+// Реф персонажа — только V4.5 и один: несколько модель сливает в одного.
+async function renderNovelAI(
+  project: Project,
+  ig: ReturnType<typeof imageGenFor>,
+  people: Person[],
+  opts: RenderImageOpts
+): Promise<RenderedImage> {
+  const nai = ig.nai ?? defaultNaiConfig();
+  const model = naiModel(effectiveImageModel(ig));
+  const split = splitNaiPrompt(opts.prompt);
+  let chars = split.characters;
+  const report: RefReport = { sent: [], missing: [], tagged: [], noTags: [] };
+  for (const p of people) (appearanceTagsOf(nai, p) ? report.tagged! : report.noTags!).push(p.name);
+  if (!chars.length && people.length && naiMaxCharacters(model) > 0) {
+    chars = people
+      .slice(0, naiMaxCharacters(model))
+      .map((p) => appearanceTagsOf(nai, p) || describePerson(p).slice(0, 300))
+      .filter(Boolean);
+  }
+  const refs: ImageRef[] = [];
+  if (supportsReferences(ig) && ig.sendReferences) {
+    for (const p of people) {
+      const got = (await personRefs(project, p, { withOutfit: false })).filter((r) => r.kind !== 'outfit');
+      if (got.length) {
+        refs.push(got[0]);
+        report.sent.push(`${p.name} — реф персонажа (+5 Anlas)`);
+        break;
+      }
+    }
+    if (!refs.length && people.length) report.note = 'реф персонажа включён, но ни у кого в кадре нет картинки-рефа';
+  } else if (nai.refs && !naiSupportsRefs(model)) {
+    report.note = `у модели ${model.label} рефов нет — дизайн держат теги внешности (реф персонажа есть только у V4.5)`;
+  }
+  const scene = { base: split.base, characters: chars.map((prompt) => ({ prompt })), negative: '' };
+  const blob = await generateImage(ig, {
+    prompt: split.base,
+    nai: scene,
+    references: refs,
+    aspectRatio: opts.aspectRatio,
+    signal: opts.signal,
+    onRefsDropped: (why) => {
+      report.note = why;
+      report.sent = [];
+    },
+  });
+  return { blob, cast: people, finalPrompt: joinNaiPrompt(split.base, chars), refs: report };
 }

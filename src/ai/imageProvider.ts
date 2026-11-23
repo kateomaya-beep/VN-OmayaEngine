@@ -3,6 +3,28 @@ import { getApiKey } from './keys';
 import { getConnection } from './connection';
 import { netFetch } from './providers';
 import { logEvent } from '../shared/logStore';
+import {
+  DEFAULT_NAI_MODEL,
+  NAI_BASE,
+  NAI_MODELS,
+  naiBodyV3,
+  naiBodyV4,
+  naiImageFromResponse,
+  naiMaxCharacters,
+  naiModel,
+  naiSize,
+  naiSteps,
+  naiSupportsRefs,
+  naiUcPresetText,
+  padDirectorRef,
+  parseNaiAccount,
+  withQuality,
+  withStyle,
+  type NaiAccount,
+  type NaiRequest,
+  type NaiScene,
+} from './novelai';
+import { defaultNaiConfig } from '../shared/types';
 
 // Генерация изображений для CG-студии. Три бэкенда (выбор в CG-студии):
 //  • gemini      — родной Google generateContent («Nano Banana»): принимает РЕФЕРЕНСЫ
@@ -38,6 +60,8 @@ export interface ImageGenInput {
   signal?: AbortSignal;
   /** Рефы были, но провайдер их не принял — для подписи в студии. */
   onRefsDropped?: (why: string) => void;
+  /** NovelAI: сцена и персонажи отдельными промптами (см. novelai.ts). */
+  nai?: NaiScene;
 }
 
 // Кадр запроса: соотношение из вызова (воркер / фон / селфи) → из настроек
@@ -70,6 +94,7 @@ function pixelSize(ratio: ImageAspectRatio, tier: ImageSizeTier): string {
 // generations не умеет и отвечает 404. Теперь адрес виден в UI и в тексте ошибки.
 export function effectiveImageBase(cfg: ImageGenConfig): string {
   const raw = (cfg.baseUrl || '').trim().replace(/\/+$/, '');
+  if (cfg.providerKind === 'novelai') return raw || NAI_BASE;
   if (cfg.providerKind === 'gemini') {
     if (!raw) return DEFAULT_GEMINI_BASE;
     // Частая опечатка: адрес Google без версии — тогда любой путь даёт 404.
@@ -82,6 +107,7 @@ export function effectiveImageBase(cfg: ImageGenConfig): string {
 export function effectiveImageModel(cfg: ImageGenConfig): string {
   const m = (cfg.model || '').trim();
   if (m) return m;
+  if (cfg.providerKind === 'novelai') return DEFAULT_NAI_MODEL;
   if (cfg.providerKind === 'gemini') return DEFAULT_GEMINI_MODEL;
   return cfg.providerKind === 'openai_chat' ? DEFAULT_CHAT_MODEL : DEFAULT_OPENAI_MODEL;
 }
@@ -145,6 +171,7 @@ function b64ToBlob(b64: string, mime = 'image/png'): Blob {
 }
 
 export async function generateImage(cfg: ImageGenConfig, input: ImageGenInput): Promise<Blob> {
+  if (cfg.providerKind === 'novelai') return generateNovelAI(cfg, input);
   if (cfg.providerKind === 'gemini') return generateGemini(cfg, input);
   if (cfg.providerKind === 'openai_chat') return generateOpenAiChat(cfg, input);
   return generateOpenAI(cfg, input);
@@ -153,6 +180,8 @@ export async function generateImage(cfg: ImageGenConfig, input: ImageGenInput): 
 // Рефы поддерживают все три пути: родной Gemini и чат — частями сообщения, OpenAI —
 // через /images/edits (если шлюз её не знает, рисуем по тексту и пишем об этом).
 export function supportsReferences(cfg: ImageGenConfig): boolean {
+  // NovelAI: реф персонажа (Precise Reference) есть только у V4.5 и включается галочкой.
+  if (cfg.providerKind === 'novelai') return naiSupportsRefs(naiModel(effectiveImageModel(cfg))) && !!cfg.nai?.refs;
   return cfg.providerKind === 'gemini' || cfg.providerKind === 'openai_chat' || cfg.providerKind === 'openai';
 }
 
@@ -472,6 +501,13 @@ export async function listImageModelsDetailed(
   cfg: ImageGenConfig,
   apiKey: string
 ): Promise<{ ids: string[]; info: Record<string, { name?: string; image?: boolean }> }> {
+  // У NovelAI списка моделей в API нет — берём наш каталог (docs: models).
+  if (cfg.providerKind === 'novelai') {
+    return {
+      ids: NAI_MODELS.map((m) => m.id),
+      info: Object.fromEntries(NAI_MODELS.map((m) => [m.id, { name: m.label, image: true }])),
+    };
+  }
   const base = effectiveImageBase(cfg);
   const url = `${base}/models`;
   const res = await netFetch(url, {
@@ -515,6 +551,14 @@ export async function testImageConnection(
   cfg: ImageGenConfig,
   apiKey: string
 ): Promise<{ ok: boolean; message: string }> {
+  if (cfg.providerKind === 'novelai') {
+    try {
+      const a = await novelAiAccount(cfg, apiKey);
+      return { ok: true, message: describeNaiAccount(a) };
+    } catch (e) {
+      return { ok: false, message: (e as Error).message };
+    }
+  }
   try {
     const models = await listImageModels(cfg, apiKey);
     const model = effectiveImageModel(cfg);
@@ -578,4 +622,109 @@ async function downscaleRef(blob: Blob): Promise<Blob> {
   } catch {
     return blob; // не вышло ужать — отправим как есть
   }
+}
+
+// ---- NovelAI ----
+// Сцена и персонажи — отдельными промптами; к общему промпту дописываются теги
+// стиля и (по галочке) теги качества модели, к «нежелательному» — пресет и свои
+// теги. Формат запроса: V5 — multipart (как веб-клиент), V4/V4.5 — JSON (как
+// SillyTavern); не принял сервер один — пробуем второй.
+async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promise<Blob> {
+  const key = getApiKey('image');
+  if (!key) throw new Error('Нет токена NovelAI: впишите постоянный токен (pst-…) в «Подключении к image-API».');
+  const base = effectiveImageBase(cfg);
+  const model = naiModel(effectiveImageModel(cfg));
+  const nai = cfg.nai ?? defaultNaiConfig();
+  const scene0: NaiScene = input.nai ?? { base: input.prompt, characters: [], negative: '' };
+  const max = naiMaxCharacters(model);
+  const characters = scene0.characters.filter((c) => c.prompt.trim()).slice(0, max);
+  let sceneBase = withStyle(scene0.base, nai.styleTags);
+  if (nai.quality) sceneBase = withQuality(sceneBase, model);
+  const negative = [naiUcPresetText(model, nai.ucPreset), nai.negativeTags.trim(), scene0.negative.trim()]
+    .filter(Boolean)
+    .join(', ');
+  const { ratio, tier } = frame(cfg, input);
+  const size = naiSize(ratio, nai.freeOnly, tier);
+  // Реф персонажа: один (несколько персонажей-рефов модель сливает в одного).
+  const refIn = naiSupportsRefs(model) && nai.refs ? (input.references || []).find((r) => r.kind !== 'outfit') : undefined;
+  const req: NaiRequest = {
+    model,
+    scene: { base: sceneBase, characters, negative },
+    width: size.width,
+    height: size.height,
+    steps: nai.freeOnly ? Math.min(28, naiSteps(model)) : naiSteps(model),
+    ucPreset: nai.ucPreset,
+    quality: nai.quality,
+    ...(refIn
+      ? { ref: { b64: await padDirectorRef(refIn.b64, refIn.mime), type: nai.refType, strength: nai.refStrength, fidelity: nai.refFidelity } }
+      : {}),
+  };
+  if ((input.references || []).length && !refIn) {
+    input.onRefsDropped?.(
+      naiSupportsRefs(model)
+        ? 'реф NovelAI выключен (галочка «Реф персонажа» в студии)'
+        : `у модели ${model.label} рефов нет — дизайн держат теги внешности (реф персонажа есть только у V4.5)`
+    );
+  }
+  const url = `${base}/ai/generate-image`;
+  const send = (fmt: 3 | 4) =>
+    netFetch(url, {
+      method: 'POST',
+      signal: input.signal,
+      headers:
+        fmt === 4 ? { Authorization: `Bearer ${key}` } : { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: fmt === 4 ? naiBodyV4(req) : JSON.stringify(naiBodyV3(req)),
+    });
+  const first: 3 | 4 = model.family === 'v5' ? 4 : 3;
+  let res = await withTransientRetry(() => send(first), input.signal);
+  // Одна генерация за раз: сразу после прошлой сервер отвечает 429 — ждём и повторяем.
+  if (res.status === 429 && !input.signal?.aborted) {
+    await new Promise((r) => setTimeout(r, 2500));
+    res = await send(first);
+  }
+  if ((res.status === 400 || res.status === 422) && !input.signal?.aborted) {
+    const errText = await res.text().catch(() => '');
+    if (/anlas|insufficient|not enough/i.test(errText)) throw naiError(res.status, url, errText);
+    logEvent('warn', 'image', `NovelAI не принял запрос в формате ${first} (${cleanErr(errText)}) — пробую другой формат`);
+    res = await send(first === 4 ? 3 : 4);
+  }
+  if (!res.ok) throw naiError(res.status, url, await res.text().catch(() => ''));
+  return naiImageFromResponse(await res.arrayBuffer());
+}
+
+function naiError(status: number, url: string, body: string): Error {
+  let msg = cleanErr(body);
+  try {
+    const j = JSON.parse(body);
+    if (typeof j?.message === 'string') msg = j.message;
+  } catch {
+    /* не JSON */
+  }
+  const hint =
+    status === 401
+      ? 'токен не принят — нужен постоянный токен (pst-…) из настроек аккаунта NovelAI.'
+      : status === 402
+        ? 'не хватает Anlas (или подписки) на такую генерацию. Включите «Не тратить Anlas» в студии или пополните баланс.'
+        : status === 429
+          ? 'NovelAI рисует по одной картинке за раз — предыдущая ещё не закончилась. Повторите через пару секунд.'
+          : '';
+  return new Error(`NovelAI вернул ${status}${hint ? `: ${hint}` : ''}\nЗапрос: ${url}${msg ? `\nОтвет: ${msg}` : ''}`);
+}
+
+/** Подписка и баланс Anlas — по тому же токену. */
+export async function novelAiAccount(cfg: ImageGenConfig, apiKey = getApiKey('image')): Promise<NaiAccount> {
+  const url = `${effectiveImageBase(cfg)}/user/subscription`;
+  const res = await netFetch(url, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
+  if (!res.ok) throw naiError(res.status, url, await res.text().catch(() => ''));
+  return parseNaiAccount(await res.json());
+}
+
+export function describeNaiAccount(a: NaiAccount): string {
+  return (
+    `OK · подписка ${a.tierName}${a.active ? '' : ' (не активна)'} · Anlas: ${a.anlas.toLocaleString('ru')}` +
+    (a.tier >= 3 ? ' · генерации до 1 Мп и 28 шагов бесплатны' : ' · бесплатных генераций нет — каждая стоит Anlas') +
+    (a.v5UsagePercent !== undefined
+      ? ` · лимит V5: ${a.v5UsagePercent}%${a.v5UsageNegative ? ' — исчерпан, V5 сейчас за Anlas' : ''}`
+      : '')
+  );
 }
