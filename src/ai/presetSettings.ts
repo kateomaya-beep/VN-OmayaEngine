@@ -4,7 +4,7 @@ import { defaultRpPreset, normalizeRpPreset } from './rpPreset';
 import { defaultLocalPreset, normalizeLocalPreset } from './localPreset';
 import { defaultDeepseekPreset, normalizeDeepseekPreset, DEEPSEEK_THINKING_PLAN } from './deepseekPreset';
 import { isPromptProcessing, type PromptProcessing } from './promptPostProcess';
-import { normalizeRegexRules, type RegexRule } from './regexRules';
+import { BUILTIN_REGEX_RULES, normalizeRegexRules, withBuiltinRegexRules, type RegexRule } from './regexRules';
 import { normalizeAltPresets, type AltRpPreset } from './altPresets';
 import { pushToast } from '../shared/toast';
 import { NARRATIVE_DIRECTIVE } from './assistantDirective';
@@ -105,6 +105,8 @@ export interface PresetSettings {
   streamingEnabled: boolean;
   // Правила-регэкспы: правка текста между моделью и экраном (и/или запросом).
   regexRules: RegexRule[];
+  // Какие встроенные правила уже добавлены (удалённое человеком не возвращается).
+  builtinRegexSeen: string[];
   // Инфобокс состояния под ответом в режиме РП (в духе Horae). Данные для него
   // приезжают служебным блоком <state>; выключать имеет смысл, если блок отключён.
   showStateInfobox: boolean;
@@ -182,7 +184,8 @@ function defaults(): PresetSettings {
     impersonationGuard: true,
     streamingEnabled: true,
     hidePrefill: true,
-    regexRules: [],
+    regexRules: BUILTIN_REGEX_RULES.map((r) => ({ ...r })),
+    builtinRegexSeen: BUILTIN_REGEX_RULES.map((r) => r.id),
     showStateInfobox: true,
     assistantPersona: '',
     assistantInstructions: NARRATIVE_DIRECTIVE,
@@ -267,7 +270,11 @@ function load(): PresetSettings {
       impersonationGuard: typeof v.impersonationGuard === 'boolean' ? v.impersonationGuard : true,
       streamingEnabled: typeof v.streamingEnabled === 'boolean' ? v.streamingEnabled : true,
       hidePrefill: typeof v.hidePrefill === 'boolean' ? v.hidePrefill : true,
-      regexRules: normalizeRegexRules(v.regexRules),
+      ...(() => {
+        const seen = Array.isArray(v.builtinRegexSeen) ? v.builtinRegexSeen.filter((x: unknown): x is string => typeof x === 'string') : [];
+        const r = withBuiltinRegexRules(normalizeRegexRules(v.regexRules), seen);
+        return { regexRules: r.rules, builtinRegexSeen: r.seen };
+      })(),
       showStateInfobox: typeof v.showStateInfobox === 'boolean' ? v.showStateInfobox : true,
       assistantPersona: typeof v.assistantPersona === 'string' ? v.assistantPersona : '',
       // Ключа нет (настройки до появления поля) — подставляем директиву; пустую

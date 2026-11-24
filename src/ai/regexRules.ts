@@ -55,6 +55,34 @@ export function newRegexRule(): RegexRule {
   };
 }
 
+// ВСТРОЕННЫЕ ПРАВИЛА — стоят в списке как обычные: их видно, можно выключить или
+// удалить. Добавляются один раз (и тем, у кого настройки уже сохранены); удалённое
+// не возвращается — это помнит builtinRegexSeen в настройках.
+export const BUILTIN_REGEX_RULES: RegexRule[] = [
+  {
+    // Модели (и префиллы-«затравки») пишут вместо пробелов пустой символ Брайля
+    // U+2800: на экране он шире пробела и не переносит строку — абзац
+    // превращается в одно длинное «слово». В истории и в запросе символ остаётся.
+    id: 'rx_builtin_braille_blank',
+    name: 'Пустой символ Брайля (U+2800) → пробел',
+    enabled: true,
+    find: '\\u2800',
+    flags: 'g',
+    replace: ' ',
+    appliesTo: 'both',
+    scope: 'display',
+  },
+];
+
+/** Добавить встроенные правила, которых человек ещё не видел. */
+export function withBuiltinRegexRules(rules: RegexRule[], seen: string[]): { rules: RegexRule[]; seen: string[] } {
+  const fresh = BUILTIN_REGEX_RULES.filter((b) => !seen.includes(b.id) && !rules.some((r) => r.id === b.id));
+  return {
+    rules: fresh.length ? [...rules, ...fresh.map((r) => ({ ...r }))] : rules,
+    seen: [...new Set([...seen, ...BUILTIN_REGEX_RULES.map((b) => b.id)])],
+  };
+}
+
 export function normalizeRegexRules(raw: unknown): RegexRule[] {
   if (!Array.isArray(raw)) return [];
   return raw
