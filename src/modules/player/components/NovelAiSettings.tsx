@@ -3,7 +3,7 @@ import type { ImageGenConfig, NaiImageConfig, Project, RuntimeState } from '../.
 import { defaultNaiConfig } from '../../../shared/types';
 import { effectiveImageModel } from '../../../ai/imageProvider';
 import { naiMaxCharacters, naiModel, naiQualitySuffix, naiSupportsRefs, naiUcPresetText } from '../../../ai/novelai';
-import { generateAppearanceTags, naiWorkerDefault, naiWorkerPrompt } from '../../../ai/novelaiPrompt';
+import { generateAppearanceTags } from '../../../ai/novelaiPrompt';
 import { resolvePerson } from '../../../ai/characterRegistry';
 import { pushToast } from '../../../shared/toast';
 import { StylePresetBar } from './StylePresetBar';
@@ -27,7 +27,6 @@ export function NovelAiSettings({
   const nai = ig.nai ?? defaultNaiConfig();
   const model = naiModel(effectiveImageModel(ig));
   const refsOk = naiSupportsRefs(model);
-  const custom = !!nai.workerPrompt?.trim();
   return (
     <div className="nf-nai-settings space-y-3 rounded-xl border border-fuchsia-400/20 bg-fuchsia-500/[0.04] p-3">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -44,7 +43,7 @@ export function NovelAiSettings({
       </div>
       <p className="text-[11px] text-gray-400">
         {L(
-          `Воркер пишет теги Danbooru: сцену отдельно, каждого персонажа отдельно (до ${naiMaxCharacters(model) || 0}), взаимодействия — тегами source#/target#/mutual#. Сцена описывается как есть, включая NSFW, если он в сюжете${model.curated ? ' — но Curated-модель NSFW не рисует, для него выберите Full' : ''}.`,
+          `Режим картинки пишет теги Danbooru: сцену отдельно, каждого персонажа отдельно (до ${naiMaxCharacters(model) || 0}), взаимодействия — тегами source#/target#/mutual#. Сцена описывается как есть, включая NSFW, если он в сюжете${model.curated ? ' — но Curated-модель NSFW не рисует, для него выберите Full' : ''}.`,
           `The worker writes Danbooru tags: the scene and each character separately, interactions via source#/target#/mutual#. The scene is described as it is, NSFW included if the story has it.`
         )}
       </p>
@@ -196,43 +195,9 @@ export function NovelAiSettings({
         )}
       </div>
 
-      <div>
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <label className="label !mb-0">{L('Промпт воркера', 'Worker prompt')}</label>
-          <div className="flex gap-1.5">
-            {(['illustration', 'manhwa'] as const).map((p) => (
-              <button
-                key={p}
-                className={`chip !px-2.5 !py-1 text-xs nf-nai-preset-${p} ${nai.workerPreset === p && !custom ? 'bg-accent2 text-white' : ''}`}
-                onClick={() => patchNai({ workerPreset: p, workerPrompt: undefined })}
-                title={L('Взять текст этого варианта (своя правка сбросится)', 'Use this preset (your edit is reset)')}
-              >
-                {p === 'illustration' ? L('Иллюстрация', 'Illustration') : L('Страница манхвы', 'Manhwa page')}
-              </button>
-            ))}
-          </div>
-        </div>
-        <p className="text-[11px] text-gray-500 my-1">
-          {custom
-            ? L('Свой текст — правка поверх варианта. Кнопка варианта вернёт его исходный текст.', 'Your own text. A preset button restores its original text.')
-            : nai.workerPreset === 'manhwa'
-              ? L(
-                  'Страница манхвы: несколько панелей в одной картинке, реплики в облачках через «Text:». Лучше всего работает на V5.',
-                  'Manhwa page: several panels in one image, dialogue via "Text:". Works best on V5.'
-                )
-              : L(
-                  'Иллюстрация к моменту: сцена как есть, главное — персонажи и их взаимодействие, затем композиция и окружение.',
-                  'An illustration of the moment: the scene as it is, characters and their interaction first.'
-                )}
-        </p>
-        <textarea
-          className="input h-40 font-mono text-[11px] nf-nai-worker"
-          value={naiWorkerPrompt(nai)}
-          onChange={(e) =>
-            patchNai({ workerPrompt: e.target.value.trim() === naiWorkerDefault(nai.workerPreset).trim() ? undefined : e.target.value })
-          }
-        />
-      </div>
+      <p className="text-[11px] text-gray-500">
+        {L('Промпт картинки пишет активный режим — «🧩 Режим картинки» (блоки из Таверны).', 'The image prompt is written by the active image mode.')}
+      </p>
     </div>
   );
 }

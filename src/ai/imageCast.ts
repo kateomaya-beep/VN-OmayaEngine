@@ -83,6 +83,8 @@ export interface RefReport {
   noTags?: string[];
   /** NovelAI: у кого теги внешности ушли дословно. */
   tagged?: string[];
+  /** Что пришлось поправить в промпте (например, убрать русские реплики на V4.5). */
+  warnings?: string[];
 }
 
 /**
@@ -218,6 +220,7 @@ async function renderNovelAI(
       report.note = why;
       report.sent = [];
     },
+    onNote: (msg) => (report.warnings = [...(report.warnings || []), msg]),
   });
   return { blob, cast: people, finalPrompt: joinNaiPrompt(split.base, chars), refs: report };
 }

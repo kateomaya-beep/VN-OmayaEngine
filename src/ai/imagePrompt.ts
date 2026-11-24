@@ -2,6 +2,7 @@ import type { Project, RuntimeState, ImageAspectRatio } from '../shared/types';
 import { IMAGE_ASPECT_RATIOS } from '../shared/types';
 import { studioCompletion } from './studioConnection';
 import { withPreset } from './presetPassThrough';
+import { activeExtBlock, runExtBlock } from './extBlocks';
 import { describePerson, type Person } from './characterRegistry';
 import { imageGenFor } from './imageConnection';
 import { composeNaiPrompt } from './novelaiPrompt';
@@ -72,7 +73,14 @@ export async function composeCgPrompt(
     /** Текст вокруг момента вместо последних бит новеллы. */
     recent?: string;
   }
-): Promise<{ prompt: string; aspectRatio?: ImageAspectRatio; cast?: string[] }> {
+): Promise<{ prompt: string; aspectRatio?: ImageAspectRatio; cast?: string[]; blockOutput?: { blockId: string; output: string } }> {
+  // Активный внешний блок (режим картинки из Таверны) — он и есть воркер. Блоков
+  // для этого провайдера нет вовсе — встроенные воркеры ниже.
+  const block = activeExtBlock(imageGenFor(project));
+  if (block) {
+    const r = await runExtBlock(project, state, block, opts);
+    return { prompt: r.prompt, aspectRatio: r.aspectRatio, cast: r.cast, blockOutput: { blockId: block.id, output: r.output } };
+  }
   // NovelAI рисует по тегам Danbooru, сцену и персонажей отдельно — у него свой
   // воркер и свой промпт (настройки студии), шаблон systemPrompt здесь ни при чём.
   if (imageGenFor(project).providerKind === 'novelai') return composeNaiPrompt(project, state, opts);

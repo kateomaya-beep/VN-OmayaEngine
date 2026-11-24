@@ -20,7 +20,8 @@ import { uploadAsset } from '../../storage/assetOps';
 import { expandMacros } from '../../ai/macros';
 import { getProject, putSave, saveProject, deleteSave, putAsset, deleteAsset } from '../../storage/db';
 import { imageGenFor } from '../../ai/imageConnection';
-import { drawIllustration as paintIllustration, illustrateConfig, illustrationDue, illustrationKey, illustrationMarks } from '../../ai/illustrations';
+import { pushBlockOutput } from '../../ai/extBlocks';
+import { drawIllustration as paintIllustration, illustrateConfig, illustrationDue, illustrationKey, illustrationMarks, messageIllustrationKey } from '../../ai/illustrations';
 import {
   listPlaythroughs,
   activePlaythrough,
@@ -1010,7 +1011,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     await patchRec({ status: 'drawing', error: undefined });
     const t0 = Date.now();
     try {
-      const { blob, prompt } = await paintIllustration(project, state, caption, { prompt: opts?.prompt, recent: opts?.recent });
+      const { blob, prompt, blockOutput } = await paintIllustration(project, state, caption, { prompt: opts?.prompt, recent: opts?.recent });
       const blobKey = uid('blob');
       await putAsset(blobKey, blob);
       const asset: AssetMeta = {
@@ -1034,7 +1035,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           if (a) void deleteAsset(a.blobKey);
         }
         p.imageGen = {
-          ...ig,
+          ...(blockOutput ? pushBlockOutput(ig, blockOutput.blockId, blockOutput.output) : ig),
           illustrations: { ...(ig.illustrations || {}), [key]: { caption, status: 'done', assetId: asset.id, prompt, at: Date.now() } },
         };
       });
@@ -2045,6 +2046,14 @@ function maybeIllustrate(get: () => PlayerStore): void {
   if (!project || !state || !illustrateConfig(project)) return;
   const last = state.history[state.history.length - 1];
   if (last?.role !== 'assistant') return;
+  // «Каждые N ответов»: картинка ко всему ответу, без метки рассказчика.
+  if (illustrateConfig(project)?.mode === 'every') {
+    const key = messageIllustrationKey(last.content);
+    if (project.imageGen?.illustrations?.[key]) return;
+    if (!illustrationDue(project, state.history.slice(0, -1))) return;
+    void get().drawIllustration('', { key, recent: last.content });
+    return;
+  }
   const marks = illustrationMarks(last.content);
   if (!marks.length) return;
   if (project.imageGen?.illustrations?.[illustrationKey(marks[0])]) return;

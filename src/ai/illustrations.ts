@@ -24,9 +24,11 @@ import { ILLUSTRATION_RE, stripStateBlock } from './rpResponse';
 export interface IllustrateConfig {
   enabled: boolean;
   minGap: number;
+  /** 'story' — решает рассказчик меткой; 'every' — к каждому minGap-му ответу. */
+  mode?: 'story' | 'every';
 }
 
-export const DEFAULT_ILLUSTRATE: IllustrateConfig = { enabled: false, minGap: 3 };
+export const DEFAULT_ILLUSTRATE: IllustrateConfig = { enabled: false, minGap: 3, mode: 'story' };
 
 /** Режим включён у проекта (и проект — текстовый РП). */
 export function illustrateConfig(project: Project): IllustrateConfig | null {
@@ -63,7 +65,8 @@ export function turnsSinceIllustration(project: Project, history: LlmMessage[]):
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
     if (m.role !== 'assistant') continue;
-    if (illustrationMarks(m.content).some((c) => map[illustrationKey(c)])) return n;
+    // Картинка у ответа — по метке рассказчика или к сообщению целиком (каждые N, «Проиллюстрировать»).
+    if (illustrationMarks(m.content).some((c) => map[illustrationKey(c)]) || map[messageIllustrationKey(m.content)]) return n;
     n++;
   }
   return Infinity;
@@ -74,6 +77,11 @@ export function illustrationDue(project: Project, history: LlmMessage[]): boolea
   const cfg = illustrateConfig(project);
   if (!cfg) return false;
   return turnsSinceIllustration(project, history) + 1 >= cfg.minGap;
+}
+
+/** Рассказчику говорить про метки — только в режиме «по сюжету». */
+export function narratorMarksDue(project: Project, history: LlmMessage[]): boolean {
+  return illustrateConfig(project)?.mode !== 'every' && illustrationDue(project, history);
 }
 
 /** Инструкция рассказчику — в хвост хода, только когда срок вышел. */
@@ -113,6 +121,8 @@ export function scenePeople(project: Project, state: RuntimeState): Person[] {
 export interface DrawnIllustration {
   blob: Blob;
   prompt: string;
+  /** Вывод внешнего блока — запомнить для его «прошлого вывода». */
+  blockOutput?: { blockId: string; output: string };
 }
 
 /**
@@ -131,6 +141,7 @@ export async function drawIllustration(
   let prompt = opts.prompt?.trim() || '';
   let aspect = ig.aspectRatio === 'auto' || !ig.aspectRatio ? undefined : ig.aspectRatio;
   let cast: Person[] = people;
+  let blockOutput: DrawnIllustration['blockOutput'];
   if (!prompt) {
     const res = await composeCgPrompt(project, state, ig.systemPrompt, {
       people,
@@ -139,6 +150,7 @@ export async function drawIllustration(
       recent: opts.recent ? stripStateBlock(opts.recent) : lastStory ? stripStateBlock(lastStory.content) : undefined,
     });
     prompt = res.prompt;
+    blockOutput = res.blockOutput;
     if (!aspect) aspect = res.aspectRatio;
     if (res.cast) cast = resolveCast(project, state, res.cast);
   }
@@ -152,5 +164,5 @@ export async function drawIllustration(
     aspectRatio: aspect || '3:2',
     signal: opts.signal,
   });
-  return { blob, prompt };
+  return { blob, prompt, blockOutput };
 }

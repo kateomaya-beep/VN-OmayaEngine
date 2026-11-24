@@ -63,6 +63,8 @@ export interface ImageGenInput {
   signal?: AbortSignal;
   /** Рефы были, но провайдер их не принял — для подписи в студии. */
   onRefsDropped?: (why: string) => void;
+  /** Что пришлось поправить в промпте (сказать человеку под картинкой). */
+  onNote?: (msg: string) => void;
   /** NovelAI: сцена и персонажи отдельными промптами (см. novelai.ts). */
   nai?: NaiScene;
 }
@@ -650,6 +652,7 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
   // Правила NovelAI выполняет код: теги количества, girl/boy/other, «Text:» последним…
   const norm = normalizeNaiScene({ base: scene0.base, characters: cast.map((c) => c.prompt) }, model, { quality: nai.quality });
   const characters = cast.map((c, i) => ({ ...c, prompt: norm.characters[i] }));
+  for (const n of norm.notes) input.onNote?.(n);
   let sceneBase = withStyle(norm.base, nai.styleTags);
   if (nai.quality) sceneBase = withQuality(sceneBase, model);
   const negative = [naiUcPresetText(model, nai.ucPreset), nai.negativeTags.trim(), scene0.negative.trim()]

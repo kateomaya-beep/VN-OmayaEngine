@@ -28,6 +28,8 @@ import {
 } from '../../../shared/types';
 import { NovelAiSettings, NaiAppearanceTags } from './NovelAiSettings';
 import { ImageChat } from './ImageChat';
+import { ExtBlocksPanel } from './ExtBlocksPanel';
+import { pushBlockOutput } from '../../../ai/extBlocks';
 
 type Stage = 'idle' | 'analyze' | 'draw' | 'done' | 'error';
 interface Result {
@@ -174,11 +176,16 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const { prompt: p, aspectRatio: workerAspect, cast } = await composeCgPrompt(project, state, ig.systemPrompt, {
+      const { prompt: p, aspectRatio: workerAspect, cast, blockOutput } = await composeCgPrompt(project, state, ig.systemPrompt, {
         onlyCharacterIds: castOverride ?? undefined,
         ...(rp ? { people, recent: lastStory ? stripStateBlock(lastStory.content) : undefined } : {}),
       });
       if (controller.signal.aborted) return;
+      // Вывод внешнего блока — его «прошлый вывод» в следующий раз (одежда, раны, позы).
+      if (blockOutput)
+        void s.patchProject((pr) => {
+          pr.imageGen = pushBlockOutput(pr.imageGen ?? defaultImageGenConfig(), blockOutput.blockId, blockOutput.output);
+        });
       setPrompt(p);
       setStage('draw');
 
@@ -325,8 +332,24 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
             </label>
             {ill.enabled && (
               <div className="mt-2.5">
+                <div className="flex gap-1.5 flex-wrap mb-2 nf-ill-mode">
+                  {(['story', 'every'] as const).map((m) => (
+                    <button
+                      key={m}
+                      className={`chip !px-2.5 !py-1 text-xs nf-ill-${m} ${(ill.mode ?? 'story') === m ? 'bg-accent2 text-white' : ''}`}
+                      onClick={() => patchIG({ illustrate: { ...ill, mode: m } })}
+                    >
+                      {m === 'story' ? L('📖 По сюжету', '📖 By the story') : L('🔁 Каждые N ответов', '🔁 Every N replies')}
+                    </button>
+                  ))}
+                </div>
                 <label className="label">
-                  {L(`Не чаще раза в ${ill.minGap} ${ill.minGap === 1 ? 'ход' : ill.minGap < 5 ? 'хода' : 'ходов'}`, `At most once every ${ill.minGap} turns`)}
+                  {(ill.mode ?? 'story') === 'every'
+                    ? L(
+                        `Картинка к каждому ${ill.minGap === 1 ? 'ответу' : `${ill.minGap}-му ответу`}`,
+                        `A picture for every ${ill.minGap === 1 ? 'reply' : `${ill.minGap}th reply`}`
+                      )
+                    : L(`Не чаще раза в ${ill.minGap} ${ill.minGap === 1 ? 'ход' : ill.minGap < 5 ? 'хода' : 'ходов'}`, `At most once every ${ill.minGap} turns`)}
                 </label>
                 <input
                   type="range"
@@ -338,10 +361,15 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
                   onChange={(e) => patchIG({ illustrate: { ...ill, minGap: Number(e.target.value) } })}
                 />
                 <p className="text-[11px] text-gray-500 mt-1">
-                  {L(
-                    `Пока срок не вышел, рассказчик об иллюстрациях не слышит. Нарисовано в этой истории: ${illCount}.`,
-                    `Until then the narrator is not told about illustrations. Drawn so far: ${illCount}.`
-                  )}
+                  {(ill.mode ?? 'story') === 'every'
+                    ? L(
+                        `Рассказчик о картинках не знает: после ответа активный режим картинки («🧩» ниже) сам берёт последние сообщения и рисует, картинка встаёт под ответом. Нарисовано в этой истории: ${illCount}.`,
+                        `The narrator is not involved: after the reply the active image mode draws it. Drawn so far: ${illCount}.`
+                      )
+                    : L(
+                        `Пока срок не вышел, рассказчик об иллюстрациях не слышит. Нарисовано в этой истории: ${illCount}.`,
+                        `Until then the narrator is not told about illustrations. Drawn so far: ${illCount}.`
+                      )}
                   {!ig.model && <span className="text-amber-300"> {L('Сначала настройте подключение к image-API внизу.', 'Set up the image API below first.')}</span>}
                 </p>
               </div>
@@ -383,6 +411,8 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           </span>
         </label>
         {mode === 'chat' && <ImageChat project={project} state={state} L={L} />}
+        {/* Режим картинки — внешний блок, который пишет промпт «По сцене» и для иллюстраций. */}
+        {mode === 'scene' && <ExtBlocksPanel ig={ig} L={L} />}
 
         {/* Reveal результата */}
         {mode === 'scene' && result && (
@@ -700,22 +730,6 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           </summary>
           <div className="mt-3">
             <ImageConnectionField project={project} />
-            {!isNai && (
-            <div className="mt-3">
-              <label className="label">{L('Системный промпт воркера', 'Prompt-worker system prompt')}</label>
-              <p className="text-[11px] text-gray-500 mb-1">
-                {L(
-                  'Как превратить текущую сцену в промпт для картинки. Работает через ОСНОВНОЕ подключение (текстовая модель), не через image-API.',
-                  'How the current scene is turned into an image prompt. Runs on the MAIN (text) connection, not the image API.'
-                )}
-              </p>
-              <textarea
-                className="input h-32 font-mono text-xs"
-                value={ig.systemPrompt}
-                onChange={(e) => patchIG({ systemPrompt: e.target.value })}
-              />
-            </div>
-            )}
           </div>
         </details>
       </div>
@@ -789,6 +803,9 @@ function RefReportLine({ r, L }: { r: RefReport; L: (ru: string, en: string) => 
         </div>
       )}
       {r.note && <div className="text-amber-300/90">{L('Рефы не ушли: ', 'References not sent: ') + r.note}</div>}
+      {r.warnings?.map((w, i) => (
+        <div key={i} className="text-amber-300/90 nf-ref-warn">⚠️ {w}</div>
+      ))}
       {!!r.tagged?.length && (
         <div className="text-emerald-300/90">{L('Теги внешности ушли дословно: ', 'Appearance tags sent verbatim: ') + r.tagged.join(', ')}</div>
       )}

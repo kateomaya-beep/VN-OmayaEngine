@@ -949,7 +949,9 @@ export interface ImageGenConfig {
   // ИЛЛЮСТРАЦИИ В ТЕКСТОВОМ РП. Модель сама отмечает важный момент меткой
   // <illustration>…</illustration>, движок рисует его и ставит картинку в ответ на
   // место метки. minGap — «не чаще раза в N ходов».
-  illustrate?: { enabled: boolean; minGap: number };
+  // mode: 'story' — рассказчик сам ставит метку (не чаще раза в minGap ходов);
+  // 'every' — картинка к каждому minGap-му ответу, без метки (как period в Таверне).
+  illustrate?: { enabled: boolean; minGap: number; mode?: 'story' | 'every' };
   // Нарисованные иллюстрации по ключу метки (см. illustrations.ts). Живут в
   // проекте, а не в сейве: откат или свайп не должны терять уже оплаченную
   // картинку и рисовать её заново.
@@ -965,6 +967,8 @@ export interface ImageGenConfig {
    * «по сцене», иллюстрации в игре, фоны, ассистент ручного режима. По умолчанию — да.
    */
   sendPreset?: boolean;
+  /** Внешние блоки: последние выводы каждого (id блока → до 3) — для «прошлого вывода» в контексте. */
+  blockOutputs?: Record<string, string[]>;
 }
 
 // РУЧНОЙ РЕЖИМ СТУДИИ. Человек пишет по-простому, ассистент отвечает промптом
@@ -1220,6 +1224,15 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     ...(o.nai ? { nai: normalizeNaiConfig(o.nai) } : {}),
     ...(Array.isArray(o.chat) ? { chat: normalizeImageChat(o.chat) } : {}),
     ...(typeof o.chatSeeScene === 'boolean' ? { chatSeeScene: o.chatSeeScene } : {}),
+    ...(o.blockOutputs && typeof o.blockOutputs === 'object'
+      ? {
+          blockOutputs: Object.fromEntries(
+            Object.entries(o.blockOutputs as Record<string, unknown>)
+              .filter(([, v]) => Array.isArray(v))
+              .map(([k, v]) => [k, (v as unknown[]).filter((x): x is string => typeof x === 'string').slice(-3)])
+          ),
+        }
+      : {}),
     // chatSendPreset — прежнее имя (галочка была только в ручном режиме).
     ...(typeof (o.sendPreset ?? o.chatSendPreset) === 'boolean' ? { sendPreset: (o.sendPreset ?? o.chatSendPreset) as boolean } : {}),
     ...(o.illustrate && typeof o.illustrate === 'object'
@@ -1227,6 +1240,7 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
           illustrate: {
             enabled: !!(o.illustrate as any).enabled,
             minGap: Math.max(1, Math.min(20, Math.round(Number((o.illustrate as any).minGap) || 3))),
+            mode: (o.illustrate as any).mode === 'every' ? 'every' : 'story',
           },
         }
       : {}),

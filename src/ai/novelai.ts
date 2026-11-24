@@ -300,22 +300,44 @@ export function normalizeNaiScene(
   scene: { base: string; characters: string[] },
   model: NaiModel,
   opts: { quality: boolean }
-): { base: string; characters: string[] } {
+): { base: string; characters: string[]; notes: string[] } {
   const ascii = model.family !== 'v5';
   const fix = (s: string) => (ascii ? asciiOnly(unscore(s)) : unscore(s));
+  const notes: string[] = [];
+  let dropped = 0;
+  // Текст в картинке — отдельно от тегов: делить по запятым и чистить его нельзя.
+  // «Text:» бывает и в конце раздела персонажа (реплика этого персонажа — так
+  // пишут комикс-блоки). V4/V4.5 рисуют текст только латиницей: русская реплика
+  // там выйдет кашей — убираем её и говорим об этом.
+  const splitText = (s: string): [string, string] => {
+    const at = s.search(/\bText:/);
+    return at >= 0 ? [s.slice(0, at).replace(/[\s,.]+$/, ''), s.slice(at).trim()] : [s, ''];
+  };
+  const keepText = (t: string): string => {
+    if (!t || !ascii) return t;
+    if (/[^\x00-\x7F]/.test(t.replace(/[«»“”„‘’—–…]/g, ''))) {
+      dropped++;
+      return '';
+    }
+    return asciiOnly(t);
+  };
   // Один к одному со входом: к персонажу привязаны его «нежелательное» и место в кадре.
-  const characters = scene.characters.map((c) => normalizeCharacterPrompt(fix(c)));
-  // Текст в картинке — отдельно: он не теги, и делить его по запятым нельзя.
-  const tAt = scene.base.search(/\bText:/);
-  const text = tAt >= 0 ? scene.base.slice(tAt).trim() : '';
-  let tags = splitTags(fix(tAt >= 0 ? scene.base.slice(0, tAt) : scene.base).replace(/[.\s]+$/, ''));
+  const characters = scene.characters.map((c) => {
+    const [head, t] = splitText(c);
+    const text = keepText(t);
+    return normalizeCharacterPrompt(fix(head)) + (text ? `. ${text}` : '');
+  });
+  const [baseHead, baseText] = splitText(scene.base);
+  let tags = splitTags(fix(baseHead).replace(/[.\s]+$/, ''));
   if (opts.quality) tags = tags.filter((t) => !QUALITY_TAGS.has(t.toLowerCase()));
   if (characters.length) {
     tags = tags.filter((t) => !COUNT_TAG.test(t));
     tags = [...countTags(characters), ...tags];
   }
-  const base = dedupe(tags).join(', ') + (text ? `. ${ascii ? asciiOnly(text) : text}` : '');
-  return { base, characters };
+  const text = keepText(baseText);
+  const base = dedupe(tags).join(', ') + (text ? `. ${text}` : '');
+  if (dropped) notes.push(`реплики не на латинице убраны (${dropped}): ${model.label} рисует текст только по-английски — русские реплики получатся на V5`);
+  return { base, characters, notes };
 }
 
 // ── Реф персонажа (V4.5) ──────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import { FORMAT_REMINDER } from './directorPrompt';
 import { type DynamicSource } from './promptPreset';
 import { RP_STATE_OPEN, RP_STATE_CLOSE, RP_STATE_BLOCK_KEY } from './rpPreset';
 import { repairChunkBreaks, stripStateBlock, stripThinkingBlocks } from './rpResponse';
-import { illustrationDirective, illustrationDue } from './illustrations';
+import { illustrationDirective, narratorMarksDue } from './illustrations';
 import { applyRegexRules } from './regexRules';
 import { getPresetSettings, presetForMode, settingsForMode } from './presetSettings';
 import { modelAlwaysThinks, modelIsVerboseThinker } from './providers';
@@ -1618,7 +1618,7 @@ export async function buildRequest(
 
   // Иллюстрации в РП: модель слышит о них, только когда вышел срок «не чаще раза
   // в N ходов» — иначе ставила бы метки каждый ход, а рисовать их всё равно нельзя.
-  const illustrate = mode === 'rp' && illustrationDue(project, state.history);
+  const illustrate = mode === 'rp' && narratorMarksDue(project, state.history);
   if (illustrate) tail.push(illustrationDirective());
 
   // Ремайндер формата + длины — последним в блоке. В РП он другой: там нет ни
