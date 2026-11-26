@@ -553,11 +553,19 @@ export function naiBodyV4(r: NaiRequest): FormData {
     legacy_uc: false,
     legacy_v3_extend: false,
     deliberate_euler_ancestral_bug: false,
-    add_original_image: false,
+    add_original_image: true,
     controlnet_strength: 1,
     autoSmea: false,
     skip_cfg_above_sigma: r.skipCfgAboveSigma ?? null,
     image_format: 'png',
+    // Как веб-клиент (novelai-python, params_version 4): подсказки модели и прочие
+    // поля, которые сайт шлёт всегда. tag_hint_* — константы и у V4.5, и у V5;
+    // straight_alpha — только V5.
+    tag_hint_qt: 1,
+    tag_hint_uc_preset: 2,
+    ...(r.model.family === 'v5' ? { straight_alpha: true } : {}),
+    inpaintImg2ImgStrength: 1,
+    normalize_reference_strength_multiple: true,
     use_coords: c.useCoords,
     characterPrompts: c.characterPrompts,
     v4_prompt: c.v4_prompt,
@@ -576,7 +584,7 @@ export function naiBodyV4(r: NaiRequest): FormData {
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     form.append('director_ref_0', new Blob([bytes], { type: 'image/png' }), 'blob');
   }
-  const json = JSON.stringify({ input: r.scene.base, model: r.model.id, action: 'generate', parameters: params });
+  const json = JSON.stringify({ input: r.scene.base, model: r.model.id, action: 'generate', parameters: params, use_new_shared_trial: false });
   form.append('request', new Blob([json], { type: 'application/json' }), 'blob');
   return form;
 }

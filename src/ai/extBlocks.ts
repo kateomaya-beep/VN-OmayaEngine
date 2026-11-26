@@ -263,7 +263,13 @@ function peopleNote(project: Project, ig: ImageGenConfig, people: Person[], only
     return `- ${p.name}${p.aliases.length ? ` (also: ${p.aliases.slice(0, 3).join(', ')})` : ''}${tags ? `\n  appearance tags (copy verbatim into this person's section): ${tags}` : ''}${look ? `\n  appearance: ${look}` : ''}`;
   });
   void project;
-  return `Characters of the story who may be in this image${onlyIds ? ' (ONLY these may appear)' : ''}:\n${lines.join('\n')}`;
+  // Справка, а не состав кадра: раньше список «кто может быть в кадре» модель
+  // читала как «нарисуй всех» — и в кадр лезли все, кто числится на локации
+  // (кассир, младенец): лица мельчали, позы деревенели. Кто в кадре — решают
+  // правила блока и сам момент.
+  return onlyIds
+    ? `ONLY these people may appear in the image — appearance reference:\n${lines.join('\n')}`
+    : `Appearance reference for story people mentioned in the scene. This is NOT a cast list: do not add anyone just because they are listed — who is visible is decided by your rules and the moment itself.\n${lines.join('\n')}`;
 }
 
 export function blockMessages(
@@ -386,9 +392,13 @@ function castOf(project: Project, state: RuntimeState, people: Person[], prompt:
 export async function runExtBlock(project: Project, state: RuntimeState, block: ExtBlock, opts: ExtRunOpts = {}): Promise<ExtRunResult> {
   const ig = imageGenFor(project);
   const manual = opts.onlyCharacterIds;
-  const people = (opts.people?.length ? opts.people : collectPeople(project, state, opts.recent)).filter(
+  const candidates = (opts.people?.length ? opts.people : collectPeople(project, state, opts.recent)).filter(
     (p) => !manual || p.ids.some((id) => manual.includes(id))
   );
+  // В справку — только те, кто назван в тексте момента (или выбран руками). Кто
+  // просто числится на локации, блоку не нужен: в Таверне он видит лишь последние
+  // сообщения, {{persona}} и {{description}}.
+  const people = manual ? candidates : mentionedIn(candidates, momentText(state, block, opts));
   const outputs = ig.blockOutputs?.[block.id] || [];
   const { system, messages } = blockMessages(project, state, block, outputs, opts, people);
   const raw = await studioCompletion(
@@ -417,6 +427,19 @@ export async function runExtBlock(project: Project, state: RuntimeState, block: 
     cast: castOf(project, state, people, prompt, stripStateBlock(recent), named),
     output: parsed.output,
   };
+}
+
+/** Текст, который блок увидит: его последние сообщения + момент. */
+function momentText(state: RuntimeState, block: ExtBlock, opts: ExtRunOpts): string {
+  const lm = (block.raw.context || []).find((c) => c.type === 'last_messages' && !c.disabled);
+  const recent = lm ? lastMessages(state, lm, opts.recent) : stripStateBlock(opts.recent || state.history[state.history.length - 1]?.content || '');
+  return `${recent}\n${opts.moment || ''}`;
+}
+
+/** Кто из людей назван в тексте (по имени или прозвищу, без учёта регистра и «ё»). */
+export function mentionedIn(people: Person[], text: string): Person[] {
+  const hay = normName(text);
+  return people.filter((p) => [p.name, ...p.aliases].some((n) => n && n.trim().length > 1 && (hay.includes(normName(n.trim())) || nameHit(n, text))));
 }
 
 /** Кандидаты в кадр: кто в сцене + кто назван в тексте момента. */
