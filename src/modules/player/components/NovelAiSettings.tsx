@@ -180,6 +180,14 @@ export function NovelAiSettings({
                 `${model.label} has no references (V4.5 and V5 do). Appearance tags keep the design.`
               )}
         </p>
+        {refsOk && (
+          <button
+            className="btn-ghost !px-2.5 !py-1 text-xs mt-1.5 nf-nai-goto-refs"
+            onClick={() => document.getElementById('nf-refs')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            ⬆ {L('Загрузить картинки-рефы ↓', 'Upload reference images ↓')}
+          </button>
+        )}
         {refsOk && nai.refs && (
           <div className="grid sm:grid-cols-3 gap-2 mt-2 text-xs">
             <label className="block">

@@ -137,7 +137,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   // Кому вообще можно задать реф. Не только персонажам проекта: у мамы, папы или
   // любого, кого нашёл Game Master, карточки нет — а рисовать их надо (аватарки,
   // фото от них). Ключ реф-мапы = id записи, они между источниками не пересекаются.
-  type RefTarget = { id: string; name: string; note?: string };
+  type RefTarget = { id: string; name: string; note?: string; custom?: boolean };
   const refTargets: RefTarget[] = [];
   const seenRef = new Set<string>();
   const pushTarget = (t: RefTarget) => {
@@ -153,6 +153,29 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
   for (const ct of state.phone?.contacts || []) {
     if (ct.characterId || ct.registryId) continue; // уже покрыт выше
     pushTarget({ id: ct.id, name: ct.name || ct.id, note: L('контакт в телефоне', 'phone contact') });
+  }
+  // Свои рефы — кого нет в истории (персонаж из аниме, гость): по имени в промпте.
+  for (const c of ig.customRefs || []) {
+    pushTarget({ id: c.id, name: c.name, note: c.aliases.length ? `${L('свой', 'custom')} · ${c.aliases.join(', ')}` : L('свой реф', 'custom ref'), custom: true });
+  }
+  function addCustomRef(name: string, aliases: string): string {
+    const id = uid('refp');
+    s.patchProject((p) => {
+      const cur = p.imageGen ?? defaultImageGenConfig();
+      const list = aliases.split(',').map((a) => a.trim()).filter(Boolean);
+      p.imageGen = { ...cur, customRefs: [...(cur.customRefs || []), { id, name: name.trim(), aliases: list }] };
+    });
+    return id;
+  }
+  function removeCustomRef(id: string) {
+    s.patchProject((p) => {
+      const cur = p.imageGen ?? defaultImageGenConfig();
+      const refs = { ...cur.references };
+      const outfit = { ...(cur.outfitReferences || {}) };
+      delete refs[id];
+      delete outfit[id];
+      p.imageGen = { ...cur, customRefs: (cur.customRefs || []).filter((c) => c.id !== id), references: refs, outfitReferences: outfit };
+    });
   }
 
   async function uploadRef(charId: string, kind: RefKind, file: File) {
@@ -641,7 +664,7 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
         )}
 
         {/* Референсы персонажей */}
-        <div>
+        <div id="nf-refs">
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs uppercase tracking-wide text-gray-500">{L('Референсы', 'References')}</div>
             <label className="flex items-center gap-1.5 text-xs text-gray-400">
@@ -656,8 +679,8 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           <p className="text-[11px] text-gray-500 mb-2">
             {isNai
               ? L(
-                  'У NovelAI дизайн держат ТЕГИ ВНЕШНОСТИ: они вставляются в промпт персонажа дословно в каждом кадре. Картинка «Внешность» нужна только для рефа персонажа — он есть у V4.5 и включается галочкой выше.',
-                  'With NovelAI the APPEARANCE TAGS keep the design: they go into the character prompt verbatim in every image. The Appearance image is only used for the V4.5 character reference.'
+                  'У NovelAI дизайн держат ТЕГИ ВНЕШНОСТИ: они вставляются в промпт персонажа дословно в каждом кадре. Картинка «Внешность» (⬆ Загрузить) — для рефа персонажа: он есть у V4.5 и V5 и включается галочкой «Реф персонажа» в настройках NovelAI выше. Кого нет в списке (например, персонаж из аниме) — «＋ Свой реф» внизу.',
+                  'With NovelAI the APPEARANCE TAGS keep the design. The Appearance image (⬆ Upload) is for the character reference (V4.5 and V5), enabled in the NovelAI settings above. Not in the list — «+ Custom reference» below.'
                 )
               : L(
               'На каждого — два слота. ВНЕШНОСТЬ: если задана только она — это дизайн персонажа целиком (лицо, причёска, костюм, цвета), модель повторяет его как есть. Если задана и ОДЕЖДА — с первой картинки берутся лицо и телосложение, со второй — наряд. По умолчанию внешность — нейтральный спрайт, но своя картинка заменит его везде (CG, селфи, фото от ботов, аватарки). В списке не только персонажи проекта: те, кого нашёл Game Master, и контакты телефона без карточки тоже здесь. Под готовой картинкой написано, какие рефы ушли.',
@@ -672,10 +695,21 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {refTargets.map((c) => (
-              <div key={c.id} className="card !p-2">
-                <div className="text-sm truncate mb-1.5">
-                  {c.name}
-                  {c.note && <span className="ml-1.5 text-[10px] text-gray-500">· {c.note}</span>}
+              <div key={c.id} className={`card !p-2 ${c.custom ? 'nf-ref-custom' : ''}`}>
+                <div className="text-sm mb-1.5 flex items-start gap-1.5">
+                  <span className="truncate flex-1 min-w-0">
+                    {c.name}
+                    {c.note && <span className="ml-1.5 text-[10px] text-gray-500">· {c.note}</span>}
+                  </span>
+                  {c.custom && (
+                    <button
+                      className="btn-ghost !px-1.5 !py-0.5 text-[11px] text-red-300 shrink-0 nf-ref-custom-del"
+                      title={L('Убрать свой реф', 'Remove custom reference')}
+                      onClick={() => window.confirm(L(`Убрать реф «${c.name}»?`, `Remove «${c.name}»?`)) && removeCustomRef(c.id)}
+                    >
+                      🗑
+                    </button>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <RefSlot
@@ -716,9 +750,13 @@ export function CgStudio({ open, onClose }: { open: boolean; onClose: () => void
               </div>
             ))}
             {refTargets.length === 0 && (
-              <p className="text-sm text-gray-600">{L('Нет персонажей.', 'No characters.')}</p>
+              <p className="text-sm text-gray-600">{L('В истории пока никого — добавьте свой реф.', 'Nobody in the story yet — add a custom reference.')}</p>
             )}
           </div>
+          <CustomRefForm L={L} onAdd={(name, aliases, file) => {
+            const id = addCustomRef(name, aliases);
+            if (file) void uploadRef(id, 'appearance', file);
+          }} />
         </div>
 
         {/* Подключение к image-API и промпт-воркер — здесь же: всё про картинки в одном месте. */}
@@ -766,8 +804,8 @@ function RefSlot({
           <div className="w-9 h-9 rounded bg-white/5 border border-dashed border-white/15 shrink-0" />
         )}
         <div className="min-w-0 flex-1 text-[10px] text-gray-500 truncate">{note}</div>
-        <label className="btn-ghost !px-1.5 !py-1 text-xs cursor-pointer shrink-0" title={L('Загрузить', 'Upload')}>
-          ⬆
+        <label className="btn-ghost !px-2 !py-1 text-xs cursor-pointer shrink-0 nf-ref-upload" title={L('Загрузить картинку', 'Upload an image')}>
+          ⬆ {custom ? L('Заменить', 'Replace') : L('Загрузить', 'Upload')}
           <input
             type="file"
             accept="image/*"
@@ -787,6 +825,59 @@ function RefSlot({
             ↺
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// «＋ Свой реф»: имя, как его могут назвать в промпте, и картинка.
+function CustomRefForm({ L, onAdd }: { L: (ru: string, en: string) => string; onAdd: (name: string, aliases: string, file?: File) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [aliases, setAliases] = useState('');
+  const [file, setFile] = useState<File | undefined>();
+  if (!open)
+    return (
+      <button className="btn-ghost !px-3 !py-1 text-xs mt-2 nf-ref-custom-open" onClick={() => setOpen(true)}>
+        ＋ {L('Свой реф (кого нет в истории)', 'Custom reference (not in the story)')}
+      </button>
+    );
+  return (
+    <div className="mt-2 rounded-lg border border-white/10 p-2 space-y-1.5 text-xs nf-ref-custom-form">
+      <input className="input !py-1 nf-ref-custom-name" placeholder={L('Имя, например: Годжо', 'Name, e.g. Gojo')} value={name} onChange={(e) => setName(e.target.value)} />
+      <input
+        className="input !py-1 nf-ref-custom-aliases"
+        placeholder={L('Как ещё назовут в промпте, через запятую: Gojo, gojou satoru', 'Other names in prompts, comma-separated')}
+        value={aliases}
+        onChange={(e) => setAliases(e.target.value)}
+      />
+      <p className="text-[10px] text-gray-500">
+        {L(
+          'Реф уйдёт, когда это имя (или одно из вариантов) есть в промпте картинки или в составе кадра. Промпты для NovelAI пишутся латиницей — впишите и латинское имя, и тег персонажа, если он из аниме.',
+          'The reference is sent when one of these names is in the image prompt or cast. NovelAI prompts are in Latin script — add the Latin name too.'
+        )}
+      </p>
+      <label className="btn-ghost !px-2 !py-1 text-xs cursor-pointer inline-block">
+        ⬆ {file ? file.name : L('Картинка', 'Image')}
+        <input type="file" accept="image/*" hidden className="nf-ref-custom-file" onChange={(e) => setFile(e.target.files?.[0])} />
+      </label>
+      <div className="flex gap-1.5">
+        <button
+          className="btn-primary !px-3 !py-1 text-xs nf-ref-custom-add"
+          disabled={!name.trim()}
+          onClick={() => {
+            onAdd(name, aliases, file);
+            setName('');
+            setAliases('');
+            setFile(undefined);
+            setOpen(false);
+          }}
+        >
+          {L('Добавить', 'Add')}
+        </button>
+        <button className="btn-ghost !px-3 !py-1 text-xs" onClick={() => setOpen(false)}>
+          {L('Отмена', 'Cancel')}
+        </button>
       </div>
     </div>
   );

@@ -967,8 +967,20 @@ export interface ImageGenConfig {
    * «по сцене», иллюстрации в игре, фоны, ассистент ручного режима. По умолчанию — да.
    */
   sendPreset?: boolean;
+  /**
+   * Свои рефы — для тех, кого нет в истории (персонаж из аниме, гость): имя и как
+   * его могут назвать в промпте. Картинка — в references[id], как у всех.
+   */
+  customRefs?: CustomRef[];
   /** Внешние блоки: последние выводы каждого (id блока → до 3) — для «прошлого вывода» в контексте. */
   blockOutputs?: Record<string, string[]>;
+}
+
+export interface CustomRef {
+  id: string;
+  name: string;
+  /** Как ещё его могут назвать в промпте (латиницей, тегом Danbooru…). */
+  aliases: string[];
 }
 
 // РУЧНОЙ РЕЖИМ СТУДИИ. Человек пишет по-простому, ассистент отвечает промптом
@@ -1258,6 +1270,13 @@ export function normalizeImageGen(v: unknown): ImageGenConfig {
     gallery: Array.isArray(o.gallery) ? o.gallery.filter((x): x is string => typeof x === 'string') : [],
     ...(o.nai ? { nai: normalizeNaiConfig(o.nai) } : {}),
     ...(Array.isArray(o.chat) ? { chat: normalizeImageChat(o.chat) } : {}),
+    ...(Array.isArray(o.customRefs)
+      ? {
+          customRefs: (o.customRefs as any[])
+            .filter((c) => c && typeof c.id === 'string' && typeof c.name === 'string' && c.name.trim())
+            .map((c) => ({ id: c.id, name: c.name.trim(), aliases: Array.isArray(c.aliases) ? c.aliases.filter((a: unknown): a is string => typeof a === 'string' && !!a.trim()) : [] })),
+        }
+      : {}),
     ...(typeof o.chatSeeScene === 'boolean' ? { chatSeeScene: o.chatSeeScene } : {}),
     ...(o.blockOutputs && typeof o.blockOutputs === 'object'
       ? {

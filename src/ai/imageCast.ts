@@ -48,6 +48,14 @@ async function personRefs(
   return out;
 }
 
+const customNorm = (s: string) => s.toLowerCase().replace(/ё/g, 'е').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** Имя своего рефа в тексте — целым словом (латиница и кириллица, без учёта регистра). */
+function customHit(name: string, text: string): boolean {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${esc}`, 'iu').test(customNorm(text));
+}
+
 export interface RenderImageOpts {
   /** Текст для художника БЕЗ стиля и без описаний людей — их добавим сами. */
   prompt: string;
@@ -131,6 +139,17 @@ export async function renderImage(
     push('ids' in c ? (c as Person) : resolvePerson(project, state, c));
   }
   if (opts.scanText) for (const p of personsInText(project, state, opts.scanText)) push(p);
+  // Свои рефы (кого нет в истории): названного в составе кадра — привязываем, а
+  // названного в промпте — добавляем в кадр. Реф лежит в references[id] своего рефа.
+  for (const c of ig.customRefs || []) {
+    const names = [c.name, ...c.aliases].map(customNorm).filter((n) => n.length > 1);
+    const same = people.find((p) => [p.name, ...p.aliases].some((n) => names.includes(customNorm(n))));
+    if (same) {
+      if (!same.ids.includes(c.id)) people[people.indexOf(same)] = { ...same, ids: [...same.ids, c.id] };
+    } else if (names.some((n) => customHit(n, `${opts.prompt}\n${opts.scanText || ''}`))) {
+      push({ id: c.id, ids: [c.id], name: c.name, aliases: c.aliases, isHero: false });
+    }
+  }
 
   if (ig.providerKind === 'novelai') return renderNovelAI(project, ig, people, opts);
 
