@@ -84,6 +84,30 @@ export function NovelAiSettings({
           <p className="text-[10px] text-gray-500 mt-1 line-clamp-3" title={naiUcPresetText(model, nai.ucPreset)}>
             {naiUcPresetText(model, nai.ucPreset) || '—'}
           </p>
+          <div className="mt-2 nf-nai-nsfw">
+            <div className="text-[11px] text-gray-400 mb-1">NSFW</div>
+            <div className="flex gap-1.5 flex-wrap">
+              {(['story', 'never'] as const).map((m) => (
+                <button
+                  key={m}
+                  className={`chip !px-2.5 !py-1 text-xs nf-nai-nsfw-${m} ${(nai.nsfw ?? 'story') === m ? 'bg-accent2 text-white' : ''}`}
+                  onClick={() => patchNai({ nsfw: m === 'story' ? undefined : 'never' })}
+                >
+                  {m === 'story' ? L('Как в сюжете', 'As in the story') : L('Не рисовать', 'Never')}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-gray-500 mt-1">
+              {model.curated
+                ? L('Curated-модель NSFW не рисует вовсе — для откровенных сцен выберите Full.', 'Curated models never draw NSFW.')
+                : (nai.nsfw ?? 'story') === 'story'
+                  ? L(
+                      'Как сайт NovelAI: «nsfw» стоит в «нежелательном», пока сцена обычная (модель не «сексуализирует»). Откровенная сцена (nude, nipples, sex…) — «nsfw» уходит в промпт и убирается из «нежелательного»: без этого NovelAI рисует «прилично», например грудь без сосков.',
+                      'Like the NovelAI site: nsfw is undesired unless the scene is explicit.'
+                    )
+                  : L('«nsfw» всегда в «нежелательном» и вычеркнут из промпта.', 'nsfw is always undesired.')}
+            </p>
+          </div>
         </div>
         <div className="space-y-1.5 text-sm">
           <label className="flex items-start gap-2">

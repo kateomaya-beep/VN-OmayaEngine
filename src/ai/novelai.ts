@@ -128,6 +128,36 @@ export function naiUcPresetText(m: NaiModel, preset: NaiUcPreset): string {
   return set[preset] ?? set.heavy ?? '';
 }
 
+// ── NSFW ─────────────────────────────────────────────────────────────────────
+// Как у сайта NovelAI (novelai-python повторяет веб-клиент): пресеты
+// «нежелательного» у Full-моделей начинаются с «nsfw», и «nsfw» убирается из
+// них, только когда он есть в самом промпте. Без «nsfw» в промпте модель рисует
+// откровенное «прилично» (грудь без сосков), с «nsfw» в «нежелательном» — тем
+// более. Поэтому: явные теги в промпте → «nsfw» в промпт кодом, не надеясь на
+// модель-писателя; иначе «nsfw» в «нежелательное», чтобы не «сексуализировать»
+// обычные сцены.
+
+const EXPLICIT_RE =
+  /\b(nsfw|explicit|uncensored|nude|naked|completely nude|topless|bottomless|nipples?|areolae?|pussy|vagina|vulva|clitoris|penis|testicles|erection|sex|sex from behind|vaginal|anal|oral|fellatio|cunnilingus|paizuri|handjob|footjob|fingering|masturbation|penetration|cum|cum in \w+|after sex|ejaculation|pubic hair|cameltoe)\b/i;
+
+export function isExplicitPrompt(text: string): boolean {
+  return EXPLICIT_RE.test(text.replace(/\bText:[\s\S]*$/, ''));
+}
+
+/** Есть ли «nsfw» тегом (не внутри слова). */
+export const hasNsfwTag = (text: string) => /(^|[,|]\s*|\d::\s*)nsfw\s*(?=,|$|\||\.|::)/i.test(text.trim());
+
+/**
+ * «Нежелательное» с правилом сайта для «nsfw»: мода 'story' — «nsfw» в
+ * «нежелательном», пока сцена не откровенная; 'never' — всегда.
+ * Curated-модели NSFW не рисуют вовсе — им «nsfw» не добавляем (у их пресетов его нет).
+ */
+export function naiNegativeWithNsfw(m: NaiModel, negative: string, positiveExplicit: boolean, mode: 'story' | 'never'): string {
+  const tags = negative.split(',').map((t) => t.trim()).filter(Boolean).filter((t) => t.toLowerCase() !== 'nsfw');
+  const block = mode === 'never' || !positiveExplicit;
+  return (block && !m.curated ? ['nsfw', ...tags] : tags).join(', ');
+}
+
 // ── Размер кадра ──────────────────────────────────────────────────────────────
 // Бесплатно на Opus: до 1 048 576 пикселей и до 28 шагов, по одной картинке
 // (docs: basics). Стороны кратны 64. Таблица — канонические размеры под ~1 Мп.

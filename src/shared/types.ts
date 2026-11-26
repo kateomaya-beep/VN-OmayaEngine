@@ -1025,6 +1025,8 @@ export interface NaiImageConfig {
   seed?: number;
   /** Персонажи отдельными промптами (как сайт NovelAI) или всё одним (как SillyTavern). */
   charMode?: 'separate' | 'merged';
+  /** NSFW: 'story' — как в сюжете (по умолчанию), 'never' — не рисовать никогда. */
+  nsfw?: 'story' | 'never';
 }
 
 export const NAI_SAMPLERS = ['k_euler_ancestral', 'k_euler', 'k_dpmpp_2m', 'k_dpmpp_2s_ancestral', 'k_dpmpp_sde', 'k_dpm_fast', 'ddim'] as const;
@@ -1079,6 +1081,7 @@ export function normalizeNaiConfig(v: unknown): NaiImageConfig {
     ...(typeof o.varietyBoost === 'boolean' ? { varietyBoost: o.varietyBoost } : {}),
     ...(num(o.seed, 0, 4294967295) !== undefined ? { seed: Math.floor(num(o.seed, 0, 4294967295)!) } : {}),
     ...(o.charMode === 'merged' ? { charMode: 'merged' as const } : {}),
+    ...(o.nsfw === 'never' ? { nsfw: 'never' as const } : {}),
   };
 }
 

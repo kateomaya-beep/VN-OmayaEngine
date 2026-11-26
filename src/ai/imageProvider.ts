@@ -17,6 +17,9 @@ import {
   naiSupportsRefs,
   naiUcPresetText,
   normalizeNaiScene,
+  isExplicitPrompt,
+  hasNsfwTag,
+  naiNegativeWithNsfw,
   naiDefaults,
   naiVarietySigma,
   isNaiTrialError,
@@ -689,11 +692,27 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
     baseText = [head, ...parts.map((p) => p[0])].filter(Boolean).join(', ') + (texts.length ? `. Text: ${texts.join(' ')}` : '');
     characters = [];
   }
+  // NSFW по правилу сайта: откровенная сцена — «nsfw» в промпт (если модель-писатель
+  // его не поставила) и прочь из «нежелательного»; обычная — «nsfw» в «нежелательное».
+  const nsfwMode = nai.nsfw ?? 'story';
+  const whole = [baseText, ...characters.map((c) => c.prompt)].join(' | ');
+  const explicit = nsfwMode === 'story' && !model.curated && isExplicitPrompt(whole);
+  if (nsfwMode === 'never') {
+    const drop = (s: string) => s.split(',').filter((t) => t.trim().toLowerCase() !== 'nsfw').join(',').replace(/^\s*,\s*/, '');
+    baseText = drop(baseText);
+    characters = characters.map((c) => ({ ...c, prompt: drop(c.prompt) }));
+  } else if (explicit && !hasNsfwTag(baseText)) {
+    baseText = withStyle(baseText, 'nsfw');
+    input.onNote?.('сцена откровенная — в промпт добавлен «nsfw» (без него NovelAI рисует «прилично»)');
+  }
   let sceneBase = withStyle(baseText, nai.styleTags);
   if (nai.quality) sceneBase = withQuality(sceneBase, model);
-  const negative = [naiUcPresetText(model, nai.ucPreset), nai.negativeTags.trim(), scene0.negative.trim()]
-    .filter(Boolean)
-    .join(', ');
+  const negative = naiNegativeWithNsfw(
+    model,
+    [naiUcPresetText(model, nai.ucPreset), nai.negativeTags.trim(), scene0.negative.trim()].filter(Boolean).join(', '),
+    explicit || hasNsfwTag(baseText),
+    nsfwMode
+  );
   const { ratio, tier } = frame(cfg, input);
   const size = naiSize(ratio, nai.freeOnly, tier);
   const defs = naiDefaults(model);
