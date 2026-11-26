@@ -2,7 +2,8 @@ import { useState } from 'react';
 import type { ImageGenConfig, NaiImageConfig, Project, RuntimeState } from '../../../shared/types';
 import { defaultNaiConfig } from '../../../shared/types';
 import { effectiveImageModel } from '../../../ai/imageProvider';
-import { naiMaxCharacters, naiModel, naiQualitySuffix, naiSupportsRefs, naiUcPresetText } from '../../../ai/novelai';
+import { naiDefaults, naiMaxCharacters, naiModel, naiQualitySuffix, naiSupportsRefs, naiUcPresetText, type NaiModel } from '../../../ai/novelai';
+import { NAI_NOISE_SCHEDULES, NAI_SAMPLERS } from '../../../shared/types';
 import { generateAppearanceTags } from '../../../ai/novelaiPrompt';
 import { resolvePerson } from '../../../ai/characterRegistry';
 import { pushToast } from '../../../shared/toast';
@@ -112,6 +113,8 @@ export function NovelAiSettings({
           </label>
         </div>
       </div>
+
+      <NaiGenParams nai={nai} model={model} patchNai={patchNai} L={L} />
 
       <div>
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -258,5 +261,156 @@ export function NaiAppearanceTags({
         onChange={(e) => set(e.target.value)}
       />
     </div>
+  );
+}
+
+const SAMPLER_LABEL: Record<string, string> = {
+  k_euler_ancestral: 'Euler Ancestral (как на сайте)',
+  k_euler: 'Euler',
+  k_dpmpp_2m: 'DPM++ 2M',
+  k_dpmpp_2s_ancestral: 'DPM++ 2S Ancestral',
+  k_dpmpp_sde: 'DPM++ SDE',
+  k_dpm_fast: 'DPM Fast',
+  ddim: 'DDIM',
+};
+
+/** Шаги, guidance, сэмплер и прочее — как на сайте NovelAI; пусто — значение модели. */
+function NaiGenParams({
+  nai,
+  model,
+  patchNai,
+  L,
+}: {
+  nai: NaiImageConfig;
+  model: NaiModel;
+  patchNai: (p: Partial<NaiImageConfig>) => void;
+  L: L;
+}) {
+  const d = naiDefaults(model);
+  const maxSteps = nai.freeOnly ? 28 : 50;
+  const steps = Math.min(maxSteps, nai.steps ?? d.steps);
+  const scale = nai.scale ?? d.scale;
+  const custom =
+    nai.steps !== undefined || nai.scale !== undefined || nai.cfgRescale !== undefined || nai.sampler !== undefined ||
+    nai.noiseSchedule !== undefined || nai.varietyBoost !== undefined || nai.seed !== undefined || nai.charMode !== undefined;
+  const v5 = model.family === 'v5';
+  return (
+    <details className="nf-nai-params rounded-lg border border-white/10 p-2.5">
+      <summary className="cursor-pointer select-none text-sm">
+        ⚙ {L('Параметры генерации', 'Generation parameters')}{' '}
+        <span className="text-[11px] text-gray-400">
+          · {L('шагов', 'steps')} {steps} · guidance {scale}
+          {custom ? L(' · свои', ' · custom') : L(' · как на сайте', ' · site defaults')}
+        </span>
+      </summary>
+      <div className="mt-2 space-y-2.5 text-xs">
+        <label className="block">
+          {L(`Шаги: ${steps}`, `Steps: ${steps}`)}
+          <span className="text-gray-500"> · {L(`у ${model.label} по умолчанию ${d.steps}`, `default ${d.steps}`)}</span>
+          <input
+            type="range"
+            min={1}
+            max={maxSteps}
+            step={1}
+            className="w-full nf-nai-steps"
+            value={steps}
+            onChange={(e) => patchNai({ steps: Number(e.target.value) })}
+          />
+          <span className="text-[10px] text-gray-500">
+            {nai.freeOnly
+              ? L('С «Не тратить Anlas» — до 28 (бесплатный предел Opus). Больше — снимите галочку: каждая картинка будет стоить Anlas.', 'Up to 28 while «Do not spend Anlas» is on.')
+              : L('Больше 28 шагов стоит Anlas даже на Opus. Обычно 28 хватает: сверх этого картинка почти не меняется.', 'Over 28 steps costs Anlas even on Opus.')}
+          </span>
+        </label>
+        <div className="grid sm:grid-cols-2 gap-2.5">
+          <label className="block">
+            {L(`Guidance (следование промпту): ${scale}`, `Guidance: ${scale}`)}
+            <input type="range" min={1} max={10} step={0.1} className="w-full nf-nai-scale" value={scale} onChange={(e) => patchNai({ scale: Number(e.target.value) })} />
+            <span className="text-[10px] text-gray-500">{L(`По умолчанию ${d.scale}. Выше — чётче и ближе к промпту, но может «пережарить» цвета.`, `Default ${d.scale}.`)}</span>
+          </label>
+          <label className="block">
+            {L(`Rescale: ${nai.cfgRescale ?? 0}`, `Rescale: ${nai.cfgRescale ?? 0}`)}
+            <input type="range" min={0} max={1} step={0.02} className="w-full" value={nai.cfgRescale ?? 0} onChange={(e) => patchNai({ cfgRescale: Number(e.target.value) })} />
+            <span className="text-[10px] text-gray-500">{L('Против пересвеченных цветов при высоком guidance. По умолчанию 0.', 'Fixes oversaturation at high guidance.')}</span>
+          </label>
+          <label className="block">
+            {L('Сэмплер', 'Sampler')}
+            <select className="input !py-1 mt-1 nf-nai-sampler" value={nai.sampler ?? d.sampler} onChange={(e) => patchNai({ sampler: e.target.value as NaiImageConfig['sampler'] })}>
+              {NAI_SAMPLERS.map((s) => (
+                <option key={s} value={s}>
+                  {SAMPLER_LABEL[s] ?? s}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            {L('Расписание шума', 'Noise schedule')}
+            <select
+              className="input !py-1 mt-1"
+              value={nai.noiseSchedule ?? d.noiseSchedule}
+              onChange={(e) => patchNai({ noiseSchedule: e.target.value as NaiImageConfig['noiseSchedule'] })}
+            >
+              {NAI_NOISE_SCHEDULES.filter((n) => n !== 'native' || model.family === 'v3').map((n) => (
+                <option key={n} value={n}>
+                  {n === 'karras' ? 'karras (как на сайте)' : n}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label className="flex items-start gap-2">
+          <input type="checkbox" disabled={v5} checked={!v5 && !!nai.varietyBoost} onChange={(e) => patchNai({ varietyBoost: e.target.checked })} className="mt-0.5 nf-nai-variety" />
+          <span>
+            Variety+
+            <span className="block text-[10px] text-gray-500">
+              {v5
+                ? L('У V5 этого параметра нет.', 'Not available on V5.')
+                : L('Разнообразнее композиции и позы (на сайте — та же галочка). По умолчанию выключено.', 'More varied compositions. Off by default.')}
+            </span>
+          </span>
+        </label>
+        <label className="block">
+          {L('Сид', 'Seed')}
+          <input
+            type="number"
+            min={0}
+            className="input !py-1 mt-1 nf-nai-seed"
+            placeholder={L('пусто — случайный (его видно в «🔍 Что ушло в NovelAI»)', 'empty — random')}
+            value={nai.seed ?? ''}
+            onChange={(e) => patchNai({ seed: e.target.value === '' ? undefined : Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+          />
+        </label>
+        <div>
+          <div className="mb-1">{L('Персонажи', 'Characters')}</div>
+          <div className="flex gap-1.5 flex-wrap">
+            {(['separate', 'merged'] as const).map((m) => (
+              <button
+                key={m}
+                className={`chip !px-2.5 !py-1 text-xs nf-nai-charmode-${m} ${(nai.charMode ?? 'separate') === m ? 'bg-accent2 text-white' : ''}`}
+                onClick={() => patchNai({ charMode: m === 'separate' ? undefined : 'merged' })}
+              >
+                {m === 'separate' ? L('Отдельными промптами (как сайт)', 'Separate prompts (like the site)') : L('Одним промптом (как SillyTavern)', 'One prompt (like SillyTavern)')}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-gray-500 mt-1">
+            {L(
+              'Сайт NovelAI даёт каждому персонажу своё поле — черты не смешиваются. SillyTavern шлёт всё одной строкой. Если у вас в Таверне выходило лучше — попробуйте второй вариант.',
+              'The NovelAI site gives each character its own field; SillyTavern sends everything as one prompt.'
+            )}
+          </p>
+        </div>
+        {custom && (
+          <button
+            className="btn-ghost !px-2.5 !py-1 text-xs nf-nai-params-reset"
+            onClick={() =>
+              patchNai({ steps: undefined, scale: undefined, cfgRescale: undefined, sampler: undefined, noiseSchedule: undefined, varietyBoost: undefined, seed: undefined, charMode: undefined })
+            }
+          >
+            ↺ {L('Как на сайте NovelAI', 'Site defaults')}
+          </button>
+        )}
+      </div>
+    </details>
   );
 }

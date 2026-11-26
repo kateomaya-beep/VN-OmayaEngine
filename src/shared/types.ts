@@ -1012,7 +1012,25 @@ export interface NaiImageConfig {
   workerPrompt?: string;
   /** Теги внешности по человеку (id анкеты/записи) — вставляются дословно. */
   appearanceTags: Record<string, string>;
+  // Параметры генерации. Нет поля — значение модели по умолчанию (как у сайта
+  // NovelAI): V4.5 — 28 шагов, guidance 5; V5 — 23 шага (Medium 14), guidance 7.
+  steps?: number;
+  scale?: number;
+  cfgRescale?: number;
+  sampler?: NaiSampler;
+  noiseSchedule?: NaiNoiseSchedule;
+  /** Variety+ (skip_cfg_above_sigma) — разнообразнее композиции; у V5 нет. */
+  varietyBoost?: boolean;
+  /** Свой сид; нет — случайный. */
+  seed?: number;
+  /** Персонажи отдельными промптами (как сайт NovelAI) или всё одним (как SillyTavern). */
+  charMode?: 'separate' | 'merged';
 }
+
+export const NAI_SAMPLERS = ['k_euler_ancestral', 'k_euler', 'k_dpmpp_2m', 'k_dpmpp_2s_ancestral', 'k_dpmpp_sde', 'k_dpm_fast', 'ddim'] as const;
+export type NaiSampler = (typeof NAI_SAMPLERS)[number];
+export const NAI_NOISE_SCHEDULES = ['karras', 'exponential', 'polyexponential', 'native'] as const;
+export type NaiNoiseSchedule = (typeof NAI_NOISE_SCHEDULES)[number];
 
 export function defaultNaiConfig(): NaiImageConfig {
   return {
@@ -1034,6 +1052,8 @@ export function normalizeNaiConfig(v: unknown): NaiImageConfig {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, any>;
   const d = defaultNaiConfig();
   const clamp01 = (x: unknown, def: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : def);
+  const num = (x: unknown, lo: number, hi: number): number | undefined =>
+    typeof x === 'number' && Number.isFinite(x) ? Math.max(lo, Math.min(hi, x)) : undefined;
   const tags: Record<string, string> = {};
   if (o.appearanceTags && typeof o.appearanceTags === 'object') {
     for (const [k, val] of Object.entries(o.appearanceTags)) if (typeof val === 'string' && val.trim()) tags[k] = val;
@@ -1051,6 +1071,14 @@ export function normalizeNaiConfig(v: unknown): NaiImageConfig {
     workerPreset: o.workerPreset === 'manhwa' ? 'manhwa' : 'illustration',
     ...(typeof o.workerPrompt === 'string' && o.workerPrompt.trim() ? { workerPrompt: o.workerPrompt } : {}),
     appearanceTags: tags,
+    ...(num(o.steps, 1, 50) !== undefined ? { steps: Math.round(num(o.steps, 1, 50)!) } : {}),
+    ...(num(o.scale, 0, 10) !== undefined ? { scale: num(o.scale, 0, 10) } : {}),
+    ...(num(o.cfgRescale, 0, 1) !== undefined ? { cfgRescale: num(o.cfgRescale, 0, 1) } : {}),
+    ...((NAI_SAMPLERS as readonly string[]).includes(o.sampler) ? { sampler: o.sampler } : {}),
+    ...((NAI_NOISE_SCHEDULES as readonly string[]).includes(o.noiseSchedule) ? { noiseSchedule: o.noiseSchedule } : {}),
+    ...(typeof o.varietyBoost === 'boolean' ? { varietyBoost: o.varietyBoost } : {}),
+    ...(num(o.seed, 0, 4294967295) !== undefined ? { seed: Math.floor(num(o.seed, 0, 4294967295)!) } : {}),
+    ...(o.charMode === 'merged' ? { charMode: 'merged' as const } : {}),
   };
 }
 

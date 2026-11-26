@@ -1,5 +1,5 @@
 import type { Project, RuntimeState } from '../shared/types';
-import { blobToRef, composeFinalPrompt, effectiveImageModel, generateImage, supportsReferences, type ImageRef } from './imageProvider';
+import { blobToRef, composeFinalPrompt, effectiveImageModel, generateImage, supportsReferences, type ImageRef, type NaiSentRequest } from './imageProvider';
 import { defaultNaiConfig } from '../shared/types';
 import { joinNaiPrompt, naiMaxCharacters, naiModel, naiSupportsRefs, splitNaiPrompt } from './novelai';
 import { appearanceTagsOf } from './novelaiPrompt';
@@ -85,6 +85,8 @@ export interface RefReport {
   tagged?: string[];
   /** Что пришлось поправить в промпте (например, убрать русские реплики на V4.5). */
   warnings?: string[];
+  /** NovelAI: что именно ушло — промпт, персонажи, «нежелательное», параметры. */
+  request?: NaiSentRequest;
 }
 
 /**
@@ -221,6 +223,7 @@ async function renderNovelAI(
       report.sent = [];
     },
     onNote: (msg) => (report.warnings = [...(report.warnings || []), msg]),
+    onRequest: (r) => (report.request = r),
   });
   return { blob, cast: people, finalPrompt: joinNaiPrompt(split.base, chars), refs: report };
 }

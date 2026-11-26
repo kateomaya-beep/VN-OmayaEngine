@@ -155,7 +155,7 @@ export function naiSteps(m: NaiModel): number {
   return m.family === 'v45' ? 28 : 23;
 }
 
-function naiScale(m: NaiModel): number {
+export function naiScale(m: NaiModel): number {
   return m.family === 'v5' ? 7 : m.family === 'v4' ? 5.5 : 5;
 }
 
@@ -302,7 +302,14 @@ export function normalizeNaiScene(
   opts: { quality: boolean }
 ): { base: string; characters: string[]; notes: string[] } {
   const ascii = model.family !== 'v5';
-  const fix = (s: string) => (ascii ? asciiOnly(unscore(s)) : unscore(s));
+  // Теги без единой латинской буквы (имена кириллицей и т. п.) модель не знает —
+  // это шум и на V5, хоть он и понимает юникод. Текст реплик («Text:») не трогаем.
+  const noForeignTags = (s: string) =>
+    s
+      .split(',')
+      .filter((t) => !(/\p{L}/u.test(t) && !/[A-Za-z]/.test(t)))
+      .join(',');
+  const fix = (s: string) => (ascii ? asciiOnly(unscore(noForeignTags(s))) : unscore(noForeignTags(s)));
   const notes: string[] = [];
   let dropped = 0;
   // Текст в картинке — отдельно от тегов: делить по запятым и чистить его нельзя.
@@ -396,6 +403,27 @@ export interface NaiRequest {
   quality: boolean;
   ref?: NaiRef;
   seed?: number;
+  /** Своё; нет — по умолчанию модели. */
+  scale?: number;
+  cfgRescale?: number;
+  sampler?: string;
+  noiseSchedule?: string;
+  /** Variety+: значение skip_cfg_above_sigma (null — выключено). */
+  skipCfgAboveSigma?: number | null;
+}
+
+/** Значения по умолчанию, как у сайта NovelAI (см. novelai-python: get_default_params). */
+export function naiDefaults(m: NaiModel): { steps: number; scale: number; sampler: string; noiseSchedule: string } {
+  return { steps: naiSteps(m), scale: naiScale(m), sampler: 'k_euler_ancestral', noiseSchedule: 'karras' };
+}
+
+/**
+ * Variety+ — формула SillyTavern: √(пикселей / 832·1216) × 58 для V4.5, × 19 для
+ * прочих. У V5 этого параметра нет (novelai-python его убирает).
+ */
+export function naiVarietySigma(m: NaiModel, width: number, height: number): number | null {
+  if (m.family === 'v5') return null;
+  return Math.round(Math.sqrt((width * height) / 1011712) * (m.family === 'v45' ? 58 : 19) * 1e6) / 1e6;
 }
 
 function captions(scene: NaiScene) {
@@ -424,9 +452,9 @@ export function naiBodyV3(r: NaiRequest): Record<string, unknown> {
     params_version: 3,
     width: r.width,
     height: r.height,
-    scale: naiScale(r.model),
-    sampler: 'k_euler_ancestral',
-    noise_schedule: 'karras',
+    scale: r.scale ?? naiScale(r.model),
+    sampler: r.sampler ?? 'k_euler_ancestral',
+    noise_schedule: r.noiseSchedule ?? 'karras',
     steps: r.steps,
     n_samples: 1,
     seed,
@@ -434,7 +462,7 @@ export function naiBodyV3(r: NaiRequest): Record<string, unknown> {
     ucPreset: 0,
     qualityToggle: false,
     prefer_brownian: true,
-    cfg_rescale: 0,
+    cfg_rescale: r.cfgRescale ?? 0,
     sm: false,
     sm_dyn: false,
     dynamic_thresholding: false,
@@ -443,7 +471,7 @@ export function naiBodyV3(r: NaiRequest): Record<string, unknown> {
     deliberate_euler_ancestral_bug: false,
     add_original_image: false,
     controlnet_strength: 1,
-    skip_cfg_above_sigma: null,
+    skip_cfg_above_sigma: r.skipCfgAboveSigma ?? null,
   };
   if (r.model.family !== 'v3') {
     const c = captions(r.scene);
@@ -479,9 +507,9 @@ export function naiBodyV4(r: NaiRequest): FormData {
     params_version: 4,
     width: r.width,
     height: r.height,
-    scale: naiScale(r.model),
-    sampler: 'k_euler_ancestral',
-    noise_schedule: 'karras',
+    scale: r.scale ?? naiScale(r.model),
+    sampler: r.sampler ?? 'k_euler_ancestral',
+    noise_schedule: r.noiseSchedule ?? 'karras',
     steps: r.steps,
     n_samples: 1,
     seed,
@@ -489,7 +517,7 @@ export function naiBodyV4(r: NaiRequest): FormData {
     ucPresetId: r.ucPreset,
     qualityPresetId: r.quality ? 'standard' : 'none',
     prefer_brownian: true,
-    cfg_rescale: 0,
+    cfg_rescale: r.cfgRescale ?? 0,
     dynamic_thresholding: false,
     legacy: false,
     legacy_uc: false,
@@ -498,7 +526,7 @@ export function naiBodyV4(r: NaiRequest): FormData {
     add_original_image: false,
     controlnet_strength: 1,
     autoSmea: false,
-    skip_cfg_above_sigma: null,
+    skip_cfg_above_sigma: r.skipCfgAboveSigma ?? null,
     image_format: 'png',
     use_coords: c.useCoords,
     characterPrompts: c.characterPrompts,

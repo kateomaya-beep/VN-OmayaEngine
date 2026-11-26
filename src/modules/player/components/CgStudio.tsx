@@ -29,6 +29,7 @@ import {
 import { NovelAiSettings, NaiAppearanceTags } from './NovelAiSettings';
 import { ImageChat } from './ImageChat';
 import { ExtBlocksPanel } from './ExtBlocksPanel';
+import { NaiSentDetails } from './NaiSentDetails';
 import { pushBlockOutput } from '../../../ai/extBlocks';
 
 type Stage = 'idle' | 'analyze' | 'draw' | 'done' | 'error';
@@ -806,6 +807,7 @@ function RefReportLine({ r, L }: { r: RefReport; L: (ru: string, en: string) => 
       {r.warnings?.map((w, i) => (
         <div key={i} className="text-amber-300/90 nf-ref-warn">⚠️ {w}</div>
       ))}
+      {r.request && <NaiSentDetails r={r.request} L={L} />}
       {!!r.tagged?.length && (
         <div className="text-emerald-300/90">{L('Теги внешности ушли дословно: ', 'Appearance tags sent verbatim: ') + r.tagged.join(', ')}</div>
       )}

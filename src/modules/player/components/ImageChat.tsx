@@ -4,6 +4,7 @@ import { usePlayerStore } from '../playerStore';
 import { imageGenFor } from '../../../ai/imageConnection';
 import { renderImage, type RefReport } from '../../../ai/imageCast';
 import { chatCast, imageChatTurn } from '../../../ai/imageChat';
+import { NaiSentDetails } from './NaiSentDetails';
 import { getAssetBlob, putAsset, deleteAsset } from '../../../storage/db';
 import { uid } from '../../../shared/utils';
 import { defaultImageGenConfig, type AssetMeta, type ImageChatMsg, type ImageGenConfig, type Project, type RuntimeState } from '../../../shared/types';
@@ -325,13 +326,14 @@ function ChatAnswer({
         </>
       )}
       {m.error && <div className="text-[11px] text-red-400">⚠️ {m.error}</div>}
-      {refs && (refs.sent.length > 0 || refs.note || refs.tagged?.length || refs.warnings?.length) && (
+      {refs && (refs.sent.length > 0 || refs.note || refs.tagged?.length || refs.warnings?.length || refs.request) && (
         <div className="text-[11px] space-y-0.5 nf-chat-refs">
           {refs.sent.length > 0 && <div className="text-emerald-300/90">{L('Рефы ушли: ', 'References sent: ') + refs.sent.join('; ')}</div>}
           {refs.note && <div className="text-amber-300/90">{L('Рефы не ушли: ', 'References not sent: ') + refs.note}</div>}
           {refs.warnings?.map((w, i) => (
             <div key={i} className="text-amber-300/90">⚠️ {w}</div>
           ))}
+          {refs.request && <NaiSentDetails r={refs.request} L={L} />}
           {!!refs.tagged?.length && <div className="text-emerald-300/90">{L('Теги внешности ушли: ', 'Appearance tags sent: ') + refs.tagged.join(', ')}</div>}
         </div>
       )}

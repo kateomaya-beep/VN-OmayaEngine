@@ -17,6 +17,8 @@ import {
   naiSupportsRefs,
   naiUcPresetText,
   normalizeNaiScene,
+  naiDefaults,
+  naiVarietySigma,
   isNaiTrialError,
   withNaiInformation,
   padDirectorRef,
@@ -53,6 +55,24 @@ export interface ImageRef {
   kind?: 'appearance' | 'outfit';
 }
 
+/** Что ушло в NovelAI — чтобы повторить на сайте один в один. */
+export interface NaiSentRequest {
+  model: string;
+  base: string;
+  characters: string[];
+  negative: string;
+  width: number;
+  height: number;
+  steps: number;
+  scale: number;
+  cfgRescale: number;
+  sampler: string;
+  noiseSchedule: string;
+  varietyBoost: boolean;
+  seed: number;
+  ref: boolean;
+}
+
 export interface ImageGenInput {
   prompt: string; // финальный текст (воркер-промпт + стиль)
   references?: ImageRef[]; // gemini и openai_chat
@@ -65,6 +85,8 @@ export interface ImageGenInput {
   onRefsDropped?: (why: string) => void;
   /** Что пришлось поправить в промпте (сказать человеку под картинкой). */
   onNote?: (msg: string) => void;
+  /** NovelAI: что именно ушло (для «Что ушло в NovelAI» под картинкой). */
+  onRequest?: (r: NaiSentRequest) => void;
   /** NovelAI: сцена и персонажи отдельными промптами (см. novelai.ts). */
   nai?: NaiScene;
 }
@@ -651,15 +673,34 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
   const cast = scene0.characters.filter((c) => c.prompt.trim()).slice(0, max);
   // Правила NovelAI выполняет код: теги количества, girl/boy/other, «Text:» последним…
   const norm = normalizeNaiScene({ base: scene0.base, characters: cast.map((c) => c.prompt) }, model, { quality: nai.quality });
-  const characters = cast.map((c, i) => ({ ...c, prompt: norm.characters[i] }));
+  let characters = cast.map((c, i) => ({ ...c, prompt: norm.characters[i] }));
   for (const n of norm.notes) input.onNote?.(n);
-  let sceneBase = withStyle(norm.base, nai.styleTags);
+  let baseText = norm.base;
+  // «Одним промптом» — как SillyTavern: персонажи дописываются в общий промпт, а
+  // отдельных промптов персонажей нет. Реплики («Text:») собираются в одну, в конец.
+  if (nai.charMode === 'merged' && characters.length) {
+    const cut = (s: string): [string, string] => {
+      const at = s.search(/\bText:/);
+      return at >= 0 ? [s.slice(0, at).replace(/[\s,.]+$/, ''), s.slice(at + 5).trim()] : [s, ''];
+    };
+    const [head, text] = cut(baseText);
+    const parts = characters.map((c) => cut(c.prompt));
+    const texts = [text, ...parts.map((p) => p[1])].filter(Boolean);
+    baseText = [head, ...parts.map((p) => p[0])].filter(Boolean).join(', ') + (texts.length ? `. Text: ${texts.join(' ')}` : '');
+    characters = [];
+  }
+  let sceneBase = withStyle(baseText, nai.styleTags);
   if (nai.quality) sceneBase = withQuality(sceneBase, model);
   const negative = [naiUcPresetText(model, nai.ucPreset), nai.negativeTags.trim(), scene0.negative.trim()]
     .filter(Boolean)
     .join(', ');
   const { ratio, tier } = frame(cfg, input);
   const size = naiSize(ratio, nai.freeOnly, tier);
+  const defs = naiDefaults(model);
+  // Шаги: свои или как у сайта. «Не тратить Anlas» — не больше 28 (бесплатный предел Opus).
+  const steps = Math.min(nai.freeOnly ? 28 : 50, nai.steps ?? defs.steps);
+  // «native» у V4.5 и V5 не бывает (novelai-python его убирает) — тогда karras.
+  const noiseSchedule = nai.noiseSchedule === 'native' && model.family !== 'v3' ? 'karras' : nai.noiseSchedule ?? defs.noiseSchedule;
   // Реф персонажа: один (несколько персонажей-рефов модель сливает в одного).
   const refIn = naiSupportsRefs(model) && nai.refs ? (input.references || []).find((r) => r.kind !== 'outfit') : undefined;
   const req: NaiRequest = {
@@ -667,13 +708,36 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
     scene: { base: sceneBase, characters, negative },
     width: size.width,
     height: size.height,
-    steps: nai.freeOnly ? Math.min(28, naiSteps(model)) : naiSteps(model),
+    steps,
     ucPreset: nai.ucPreset,
     quality: nai.quality,
+    scale: nai.scale ?? defs.scale,
+    cfgRescale: nai.cfgRescale ?? 0,
+    sampler: nai.sampler ?? defs.sampler,
+    noiseSchedule,
+    skipCfgAboveSigma: nai.varietyBoost ? naiVarietySigma(model, size.width, size.height) : null,
+    // Сид всегда явный: его видно в «Что ушло в NovelAI», и картинку можно повторить на сайте.
+    seed: nai.seed ?? Math.floor(Math.random() * 4294967295),
     ...(refIn
       ? { ref: { b64: await padDirectorRef(refIn.b64, refIn.mime), type: nai.refType, strength: nai.refStrength, fidelity: nai.refFidelity } }
       : {}),
   };
+  input.onRequest?.({
+    model: model.label,
+    base: req.scene.base,
+    characters: req.scene.characters.map((c) => c.prompt),
+    negative: req.scene.negative,
+    width: req.width,
+    height: req.height,
+    steps: req.steps,
+    scale: req.scale!,
+    cfgRescale: req.cfgRescale ?? 0,
+    sampler: req.sampler!,
+    noiseSchedule: req.noiseSchedule!,
+    varietyBoost: req.skipCfgAboveSigma != null,
+    seed: req.seed!,
+    ref: !!req.ref,
+  });
   if ((input.references || []).length && !refIn) {
     input.onRefsDropped?.(
       naiSupportsRefs(model)
