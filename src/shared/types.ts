@@ -1003,7 +1003,9 @@ export interface NaiImageConfig {
   freeOnly: boolean;
   /** Реф персонажа (Precise Reference) — только V4.5, +5 Anlas за картинку. */
   refs: boolean;
-  refType: 'character' | 'character&style';
+  refType: 'character' | 'character&style' | 'style';
+  /** V5: рефы всех, кто в кадре (до 16, каждый +5 Anlas); нет — только первого. */
+  refsAll?: boolean;
   refStrength: number;
   refFidelity: number;
   /** Каким промптом воркер пишет теги: иллюстрация к сцене или страница манхвы. */
@@ -1067,8 +1069,10 @@ export function normalizeNaiConfig(v: unknown): NaiImageConfig {
     quality: typeof o.quality === 'boolean' ? o.quality : d.quality,
     freeOnly: typeof o.freeOnly === 'boolean' ? o.freeOnly : d.freeOnly,
     refs: !!o.refs,
-    refType: o.refType === 'character&style' ? 'character&style' : 'character',
-    refStrength: clamp01(o.refStrength, d.refStrength),
+    refType: o.refType === 'character&style' || o.refType === 'style' ? o.refType : 'character',
+    ...(o.refsAll === true ? { refsAll: true } : {}),
+    // У V5 ползунок силы на сайте доходит до 5 (novelai-python), у V4.5 — до 1.
+    refStrength: typeof o.refStrength === 'number' && Number.isFinite(o.refStrength) ? Math.max(0, Math.min(5, o.refStrength)) : d.refStrength,
     refFidelity: clamp01(o.refFidelity, d.refFidelity),
     workerPreset: o.workerPreset === 'manhwa' ? 'manhwa' : 'illustration',
     ...(typeof o.workerPrompt === 'string' && o.workerPrompt.trim() ? { workerPrompt: o.workerPrompt } : {}),

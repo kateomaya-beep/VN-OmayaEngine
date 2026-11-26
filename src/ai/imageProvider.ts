@@ -24,7 +24,9 @@ import {
   naiVarietySigma,
   isNaiTrialError,
   withNaiInformation,
-  padDirectorRef,
+  prepareDirectorRef,
+  naiModelForRefs,
+  naiMaxRefs,
   parseNaiAccount,
   withQuality,
   withStyle,
@@ -73,7 +75,8 @@ export interface NaiSentRequest {
   noiseSchedule: string;
   varietyBoost: boolean;
   seed: number;
-  ref: boolean;
+  /** Сколько рефов персонажа ушло (каждый +5 Anlas). */
+  refs: number;
 }
 
 export interface ImageGenInput {
@@ -216,7 +219,7 @@ export async function generateImage(cfg: ImageGenConfig, input: ImageGenInput): 
 // Рефы поддерживают все три пути: родной Gemini и чат — частями сообщения, OpenAI —
 // через /images/edits (если шлюз её не знает, рисуем по тексту и пишем об этом).
 export function supportsReferences(cfg: ImageGenConfig): boolean {
-  // NovelAI: реф персонажа (Precise Reference) есть только у V4.5 и включается галочкой.
+  // NovelAI: реф персонажа (Precise Reference) есть у V4.5 и V5 и включается галочкой.
   if (cfg.providerKind === 'novelai') return naiSupportsRefs(naiModel(effectiveImageModel(cfg))) && !!cfg.nai?.refs;
   return cfg.providerKind === 'gemini' || cfg.providerKind === 'openai_chat' || cfg.providerKind === 'openai';
 }
@@ -669,8 +672,12 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
   const key = getApiKey('image');
   if (!key) throw new Error('Нет токена NovelAI: впишите постоянный токен (pst-…) в «Подключении к image-API».');
   const base = effectiveImageBase(cfg);
-  const model = naiModel(effectiveImageModel(cfg));
   const nai = cfg.nai ?? defaultNaiConfig();
+  const chosen = naiModel(effectiveImageModel(cfg));
+  const charRefs = naiSupportsRefs(chosen) && nai.refs ? (input.references || []).filter((r) => r.kind !== 'outfit') : [];
+  // С рефом V5 Medium не работает — как веб-клиент, рисуем на V5 Full.
+  const model = charRefs.length ? naiModelForRefs(chosen) : chosen;
+  if (model !== chosen) input.onNote?.(`с рефом ${chosen.label} не работает — нарисовано на ${model.label} (так делает и сайт NovelAI)`);
   const scene0: NaiScene = input.nai ?? { base: input.prompt, characters: [], negative: '' };
   const max = naiMaxCharacters(model);
   const cast = scene0.characters.filter((c) => c.prompt.trim()).slice(0, max);
@@ -721,7 +728,9 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
   // «native» у V4.5 и V5 не бывает (novelai-python его убирает) — тогда karras.
   const noiseSchedule = nai.noiseSchedule === 'native' && model.family !== 'v3' ? 'karras' : nai.noiseSchedule ?? defs.noiseSchedule;
   // Реф персонажа: один (несколько персонажей-рефов модель сливает в одного).
-  const refIn = naiSupportsRefs(model) && nai.refs ? (input.references || []).find((r) => r.kind !== 'outfit') : undefined;
+  // V4.5 сливает несколько рефов в одного — ему один; V5 различает до 16 (каждый +5 Anlas).
+  const refsIn = charRefs.slice(0, model.family === 'v5' && nai.refsAll ? naiMaxRefs(model) : 1);
+  const refIn = refsIn[0];
   const req: NaiRequest = {
     model,
     scene: { base: sceneBase, characters, negative },
@@ -737,8 +746,18 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
     skipCfgAboveSigma: nai.varietyBoost ? naiVarietySigma(model, size.width, size.height) : null,
     // Сид всегда явный: его видно в «Что ушло в NovelAI», и картинку можно повторить на сайте.
     seed: nai.seed ?? Math.floor(Math.random() * 4294967295),
-    ...(refIn
-      ? { ref: { b64: await padDirectorRef(refIn.b64, refIn.mime), type: nai.refType, strength: nai.refStrength, fidelity: nai.refFidelity } }
+    ...(refsIn.length
+      ? {
+          refs: await Promise.all(
+            refsIn.map(async (r) => ({
+              b64: await prepareDirectorRef(model, r.b64, r.mime),
+              type: nai.refType,
+              // У V4.5 сила — до 1 (до 5 только у V5).
+              strength: model.family === 'v5' ? nai.refStrength : Math.min(1, nai.refStrength),
+              fidelity: nai.refFidelity,
+            }))
+          ),
+        }
       : {}),
   };
   input.onRequest?.({
@@ -755,13 +774,13 @@ async function generateNovelAI(cfg: ImageGenConfig, input: ImageGenInput): Promi
     noiseSchedule: req.noiseSchedule!,
     varietyBoost: req.skipCfgAboveSigma != null,
     seed: req.seed!,
-    ref: !!req.ref,
+    refs: req.refs?.length ?? 0,
   });
   if ((input.references || []).length && !refIn) {
     input.onRefsDropped?.(
       naiSupportsRefs(model)
         ? 'реф NovelAI выключен (галочка «Реф персонажа» в студии)'
-        : `у модели ${model.label} рефов нет — дизайн держат теги внешности (реф персонажа есть только у V4.5)`
+        : `у модели ${model.label} рефов нет — дизайн держат теги внешности (реф персонажа есть у V4.5 и V5)`
     );
   }
   const url = `${base}/ai/generate-image`;

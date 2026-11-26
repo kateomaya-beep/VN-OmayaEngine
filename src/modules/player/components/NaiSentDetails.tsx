@@ -27,7 +27,7 @@ export function NaiSentDetails({ r, L }: { r: NaiSentRequest; L: L }) {
         <div className="text-gray-400">
           {r.model} · {r.width}×{r.height} · {L('шагов', 'steps')} {r.steps} · guidance {r.scale} · rescale {r.cfgRescale} · {r.sampler} · {r.noiseSchedule} ·
           Variety+ {r.varietyBoost ? L('вкл', 'on') : L('выкл', 'off')} · seed {r.seed}
-          {r.ref ? L(' · реф персонажа', ' · character ref') : ''}
+          {r.refs ? L(` · рефов: ${r.refs} (+${r.refs * 5} Anlas)`, ` · refs: ${r.refs}`) : ''}
         </div>
         <div>
           <span className="text-gray-500">{L('Промпт: ', 'Prompt: ')}</span>

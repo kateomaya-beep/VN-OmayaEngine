@@ -166,13 +166,18 @@ export function NovelAiSettings({
         </label>
         <p className="text-[11px] text-gray-500 mt-1">
           {refsOk
-            ? L(
-                '+5 Anlas за картинку даже на Opus. Берётся картинка «Внешность» первого персонажа в кадре, у кого она есть: несколько рефов модель сливает в одного. Лучший реф — в полный рост, нейтральная поза, простой фон.',
-                '+5 Anlas per image even on Opus. Uses the Appearance image of the first person in frame who has one.'
-              )
+            ? model.family === 'v5'
+              ? L(
+                  `+5 Anlas за каждый реф за картинку, даже на Opus. Берётся картинка «Внешность» из «Референсов»; V5 различает несколько рефов (до 16).${model.medium ? ' С рефом V5 Medium не работает — нарисуется на V5 Full (так делает и сайт).' : ''} Лучший реф — в полный рост, нейтральная поза, простой фон.`,
+                  '+5 Anlas per reference per image, even on Opus. V5 handles several references (up to 16).'
+                )
+              : L(
+                  '+5 Anlas за картинку даже на Opus. Берётся картинка «Внешность» первого персонажа в кадре, у кого она есть: несколько рефов V4.5 сливает в одного. Лучший реф — в полный рост, нейтральная поза, простой фон.',
+                  '+5 Anlas per image even on Opus. Uses the Appearance image of the first person in frame who has one.'
+                )
             : L(
-                `У ${model.label} рефов нет (только V4.5). Дизайн держат теги внешности ниже, в «Референсах».`,
-                `${model.label} has no references (V4.5 only). Appearance tags keep the design.`
+                `У ${model.label} рефов нет (есть у V4.5 и V5). Дизайн держат теги внешности ниже, в «Референсах».`,
+                `${model.label} has no references (V4.5 and V5 do). Appearance tags keep the design.`
               )}
         </p>
         {refsOk && nai.refs && (
@@ -186,6 +191,7 @@ export function NovelAiSettings({
               >
                 <option value="character">{L('Персонажа', 'Character')}</option>
                 <option value="character&style">{L('Персонажа и стиль', 'Character & style')}</option>
+                <option value="style">{L('Только стиль', 'Style only')}</option>
               </select>
             </label>
             <label className="block">
@@ -193,13 +199,25 @@ export function NovelAiSettings({
               <input
                 type="range"
                 min={0}
-                max={1}
+                max={model.family === 'v5' ? 5 : 1}
                 step={0.05}
-                className="w-full"
+                className="w-full nf-nai-refstrength"
                 value={nai.refStrength}
                 onChange={(e) => patchNai({ refStrength: Number(e.target.value) })}
               />
             </label>
+            {model.family === 'v5' && (
+              <label className="flex items-start gap-2 sm:col-span-2">
+                <input type="checkbox" className="mt-0.5 nf-nai-refsall" checked={!!nai.refsAll} onChange={(e) => patchNai({ refsAll: e.target.checked || undefined })} />
+                <span>
+                  {L('Рефы всех в кадре', 'References of everyone in frame')}
+                  <span className="block text-[10px] text-gray-500">
+                    {L('Выкл — только первого, у кого есть реф. Вкл — каждого (до 16), +5 Anlas за каждый.', 'Off — only the first one. On — everyone, +5 Anlas each.')}
+                  </span>
+                </span>
+              </label>
+            )}
+            {model.family !== 'v5' && (
             <label className="block">
               {L(`Точность: ${nai.refFidelity.toFixed(2)}`, `Fidelity: ${nai.refFidelity.toFixed(2)}`)}
               <input
@@ -212,6 +230,7 @@ export function NovelAiSettings({
                 onChange={(e) => patchNai({ refFidelity: Number(e.target.value) })}
               />
             </label>
+            )}
             <p className="sm:col-span-3 text-[10px] text-gray-500">
               {L(
                 'Высокая сила копирует с рефа и позу с ракурсом — для живых композиций держите её около 0.6–0.8.',

@@ -48,9 +48,28 @@ export function naiMaxCharacters(m: NaiModel): number {
   return m.family === 'v5' ? 22 : m.family === 'v3' ? 0 : 6;
 }
 
-/** Реф персонажа (Precise Reference) — только V4.5 (docs.novelai.net/en/image/precisereference). */
+/**
+ * Реф персонажа (Precise Reference): V4.5 и V5 (сверено с novelai-python —
+ * страница документации говорит только о V4.5, но веб-клиент давно умеет и V5).
+ * V5 Medium с рефом сайт сам переключает на V5 Full — так же делаем и мы.
+ */
 export function naiSupportsRefs(m: NaiModel): boolean {
+  return m.family === 'v45' || m.family === 'v5';
+}
+
+/** «Точность» рефа (Fidelity) есть только у V4.5. */
+export function naiRefHasFidelity(m: NaiModel): boolean {
   return m.family === 'v45';
+}
+
+/** Сколько рефов принимает модель: V5 — до 16 (как веб-клиент), V4.5 — сливает несколько в одного, шлём один. */
+export function naiMaxRefs(m: NaiModel): number {
+  return m.family === 'v5' ? 16 : m.family === 'v45' ? 1 : 0;
+}
+
+/** С рефом V5 Medium не работает — веб-клиент переключает на V5 Full. */
+export function naiModelForRefs(m: NaiModel): NaiModel {
+  return m.family === 'v5' && m.medium ? naiModel('nai-diffusion-5-full') : m;
 }
 
 // Теги качества — дословно со страницы «Add Quality Tags»: дописываются в конец
@@ -414,11 +433,76 @@ export async function padDirectorRef(b64: string, mime: string): Promise<string>
 }
 
 export interface NaiRef {
-  /** PNG base64, уже вписанный в размер директора. */
+  /** PNG base64, уже подготовленный под модель (V4.5 — холст с полями, V5 — корзина ~1 Мп). */
   b64: string;
-  type: 'character' | 'character&style';
+  type: 'character' | 'character&style' | 'style';
   strength: number;
   fidelity: number;
+}
+
+/**
+ * 97 размеров V5 (как веб-клиент, novelai-python: _director_buckets): для каждой
+ * высоты от 4096 до 1024 шагом 64 — самая широкая ширина, кратная 64, в пределах
+ * 1 Мп; потом те же, повёрнутые набок.
+ */
+export const V5_DIRECTOR_BUCKETS: [number, number][] = (() => {
+  const portrait: [number, number][] = [];
+  for (let h = 4096; h >= 1024; h -= 64) portrait.push([Math.floor(1048576 / (h * 64)) * 64, h]);
+  return [...portrait, ...portrait.slice(0, -1).reverse().map(([w, h]) => [h, w] as [number, number])];
+})();
+
+/** Ближайшая по соотношению сторон корзина (по логарифму, как веб-клиент). */
+export function v5Bucket(width: number, height: number): [number, number] {
+  const la = Math.log(width / height);
+  let best = V5_DIRECTOR_BUCKETS[0];
+  for (const b of V5_DIRECTOR_BUCKETS) if (Math.abs(la - Math.log(b[0] / b[1])) < Math.abs(la - Math.log(best[0] / best[1]))) best = b;
+  return best;
+}
+
+/** V5: растянуть, чтобы покрыть корзину, и обрезать по центру (cover + center crop). */
+export async function bucketDirectorRef(b64: string, mime: string): Promise<string> {
+  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return b64;
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const bmp = await createImageBitmap(new Blob([bytes], { type: mime }));
+  const [W, H] = v5Bucket(bmp.width, bmp.height);
+  if (bmp.width === W && bmp.height === H && mime === 'image/png') {
+    bmp.close?.();
+    return b64;
+  }
+  const k = Math.max(W / bmp.width, H / bmp.height);
+  const rw = Math.max(Math.floor(bmp.width * k + 0.5), W);
+  const rh = Math.max(Math.floor(bmp.height * k + 0.5), H);
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bmp, -Math.floor((rw - W) / 2), -Math.floor((rh - H) / 2), rw, rh);
+  bmp.close?.();
+  const out = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
+  if (!out) return b64;
+  const buf = new Uint8Array(await out.arrayBuffer());
+  let s = '';
+  for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/** Подготовить реф под модель: V5 — корзина, V4.5 — холст директора с чёрными полями. */
+export function prepareDirectorRef(m: NaiModel, b64: string, mime: string): Promise<string> {
+  return m.family === 'v5' ? bucketDirectorRef(b64, mime) : padDirectorRef(b64, mime);
+}
+
+/** Поля director_reference_* (кроме самих картинок). У V5 «точности» нет — вторичная сила 0. */
+function refFields(m: NaiModel, refs: NaiRef[]) {
+  return {
+    director_reference_descriptions: refs.map((r) => ({ caption: { base_caption: r.type, char_captions: [] }, legacy_uc: false })),
+    director_reference_information_extracted: refs.map(() => 1),
+    director_reference_strength_values: refs.map((r) => r.strength),
+    director_reference_secondary_strength_values: refs.map((r) => (naiRefHasFidelity(m) ? Math.round((1 - r.fidelity) * 10000) / 10000 : 0)),
+  };
 }
 
 // ── Тело запроса ──────────────────────────────────────────────────────────────
@@ -431,7 +515,7 @@ export interface NaiRequest {
   steps: number;
   ucPreset: NaiUcPreset;
   quality: boolean;
-  ref?: NaiRef;
+  refs?: NaiRef[];
   seed?: number;
   /** Своё; нет — по умолчанию модели. */
   scale?: number;
@@ -512,14 +596,8 @@ export function naiBodyV3(r: NaiRequest): Record<string, unknown> {
       v4_negative_prompt: c.v4_negative_prompt,
     });
   }
-  if (r.ref) {
-    Object.assign(params, {
-      director_reference_images: [r.ref.b64],
-      director_reference_descriptions: [{ caption: { base_caption: r.ref.type, char_captions: [] }, legacy_uc: false }],
-      director_reference_information_extracted: [1],
-      director_reference_strength_values: [r.ref.strength],
-      director_reference_secondary_strength_values: [Math.round((1 - r.ref.fidelity) * 10000) / 10000],
-    });
+  if (r.refs?.length) {
+    Object.assign(params, { director_reference_images: r.refs.map((x) => x.b64), ...refFields(r.model, r.refs) });
   }
   const input = r.model.family === 'v3' ? joinNaiPrompt(r.scene.base, r.scene.characters.map((c) => c.prompt)) : r.scene.base;
   return { input, model: r.model.id, action: 'generate', parameters: params };
@@ -572,17 +650,19 @@ export function naiBodyV4(r: NaiRequest): FormData {
     v4_negative_prompt: c.v4_negative_prompt,
   };
   const form = new FormData();
-  if (r.ref) {
-    const key = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, '0')).join('');
-    params.director_reference_images_cached = [{ cache_secret_key: key, data: 'director_ref_0' }];
-    params.director_reference_descriptions = [{ caption: { base_caption: r.ref.type, char_captions: [] }, legacy_uc: false }];
-    params.director_reference_information_extracted = [1];
-    params.director_reference_strength_values = [r.ref.strength];
-    params.director_reference_secondary_strength_values = [Math.round((1 - r.ref.fidelity) * 10000) / 10000];
-    const bin = atob(r.ref.b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    form.append('director_ref_0', new Blob([bytes], { type: 'image/png' }), 'blob');
+  if (r.refs?.length) {
+    // Каждая картинка — своей частью director_ref_N, в JSON — ссылки на них (как веб-клиент).
+    params.director_reference_images_cached = r.refs.map((x, i) => ({
+      cache_secret_key: Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, '0')).join(''),
+      data: `director_ref_${i}`,
+    }));
+    Object.assign(params, refFields(r.model, r.refs));
+    r.refs.forEach((x, i) => {
+      const bin = atob(x.b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+      form.append(`director_ref_${i}`, new Blob([bytes], { type: 'image/png' }), 'blob');
+    });
   }
   const json = JSON.stringify({ input: r.scene.base, model: r.model.id, action: 'generate', parameters: params, use_new_shared_trial: false });
   form.append('request', new Blob([json], { type: 'application/json' }), 'blob');

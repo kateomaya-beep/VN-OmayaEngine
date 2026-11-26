@@ -1,7 +1,7 @@
 import type { Project, RuntimeState } from '../shared/types';
 import { blobToRef, composeFinalPrompt, effectiveImageModel, generateImage, supportsReferences, type ImageRef, type NaiSentRequest } from './imageProvider';
 import { defaultNaiConfig } from '../shared/types';
-import { joinNaiPrompt, naiMaxCharacters, naiModel, naiSupportsRefs, splitNaiPrompt } from './novelai';
+import { joinNaiPrompt, naiMaxCharacters, naiMaxRefs, naiModel, naiSupportsRefs, splitNaiPrompt } from './novelai';
 import { appearanceTagsOf } from './novelaiPrompt';
 import { getAssetBlob } from '../storage/db';
 import { imageGenFor } from './imageConnection';
@@ -178,7 +178,8 @@ export async function renderImage(
 // NovelAI: промпт уже в синтаксисе «сцена | персонаж | …» (его пишет воркер NovelAI,
 // см. novelaiPrompt.ts) — разбираем на части. Пришла обычная фраза (камера
 // телефона, быстрые действия) — персонажей собираем из их тегов внешности.
-// Реф персонажа — только V4.5 и один: несколько модель сливает в одного.
+// Реф персонажа: V4.5 — один (несколько модель сливает в одного); V5 — по галочке
+// «рефы всех в кадре» до 16 (каждый +5 Anlas), иначе тоже один.
 async function renderNovelAI(
   project: Project,
   ig: ReturnType<typeof imageGenFor>,
@@ -199,17 +200,18 @@ async function renderNovelAI(
   }
   const refs: ImageRef[] = [];
   if (supportsReferences(ig) && ig.sendReferences) {
+    const max = model.family === 'v5' && nai.refsAll ? naiMaxRefs(model) : 1;
     for (const p of people) {
+      if (refs.length >= max) break;
       const got = (await personRefs(project, p, { withOutfit: false })).filter((r) => r.kind !== 'outfit');
       if (got.length) {
         refs.push(got[0]);
         report.sent.push(`${p.name} — реф персонажа (+5 Anlas)`);
-        break;
       }
     }
     if (!refs.length && people.length) report.note = 'реф персонажа включён, но ни у кого в кадре нет картинки-рефа';
   } else if (nai.refs && !naiSupportsRefs(model)) {
-    report.note = `у модели ${model.label} рефов нет — дизайн держат теги внешности (реф персонажа есть только у V4.5)`;
+    report.note = `у модели ${model.label} рефов нет — дизайн держат теги внешности (реф персонажа есть у V4.5 и V5)`;
   }
   const scene = { base: split.base, characters: chars.map((prompt) => ({ prompt })), negative: '' };
   const blob = await generateImage(ig, {
